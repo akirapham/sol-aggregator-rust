@@ -5,7 +5,10 @@ use solana_sdk::pubkey::Pubkey;
 
 use crate::{
     error::Result,
-    pool_data_types::{DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate},
+    pool_data_types::{
+        DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
+        RaydiumCpmmPoolUpdate,
+    },
 };
 
 /// Represents a token with its metadata
@@ -189,6 +192,7 @@ pub enum PoolUpdateEvent {
     PumpfunPoolUpdate(PumpfunPoolUpdate),
     PumpSwapPoolUpdate(PumpSwapPoolUpdate),
     RaydiumPoolUpdate(RaydiumAmmV4PoolUpdate),
+    RaydiumCpmmPoolUpdate(RaydiumCpmmPoolUpdate),
 }
 
 impl PoolUpdateEvent {
@@ -197,6 +201,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::PumpfunPoolUpdate(update) => update.address,
             PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.address,
             PoolUpdateEvent::RaydiumPoolUpdate(update) => update.address,
+            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.address,
         }
     }
 }

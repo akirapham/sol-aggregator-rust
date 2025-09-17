@@ -56,7 +56,9 @@ use tokio::sync::mpsc;
 
 use crate::{
     constants::is_base_token,
-    pool_data_types::{PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate},
+    pool_data_types::{
+        PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumCpmmPoolUpdate,
+    },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
 };
@@ -74,7 +76,7 @@ pub fn handle_dex_event(
         match_event!(event, {
             // -------------------------- block meta -----------------------
             BlockMetaEvent => |e: BlockMetaEvent| {
-                // println!("BlockMetaEvent: {:?}", e.metadata.handle_us);
+                // println!("BlockMetaEvent: {:?}", e.metadata.recv_us/1000000);
             },
             // -------------------------- bonk -----------------------
             BonkPoolCreateEvent => |e: BonkPoolCreateEvent| {
@@ -222,16 +224,113 @@ pub fn handle_dex_event(
             },
             // -------------------------- raydium_cpmm -----------------------
             RaydiumCpmmSwapEvent => |e: RaydiumCpmmSwapEvent| {
-                println!("RaydiumCpmmSwapEvent: {e:?}");
+                let token0_is_input = e.input_token_mint < e.output_token_mint;
+                let (token0_balance, token1_balance) = if token0_is_input {
+                    (post_token_balances.get(e.input_vault.to_string().as_str()), post_token_balances.get(e.output_vault.to_string().as_str()))
+                } else {
+                    (post_token_balances.get(e.output_vault.to_string().as_str()), post_token_balances.get(e.input_vault.to_string().as_str()))
+                };
+
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        let (token0_vault, token1_vault) = if token0_is_input {
+                            (e.input_vault, e.output_vault)
+                        } else {
+                            (e.output_vault, e.input_vault)
+                        };
+                        let raydium_pool_update = RaydiumCpmmPoolUpdate {
+                            address: Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                            slot: e.metadata.slot,
+                            transaction_index: e.metadata.transaction_index,
+                            token0: Pubkey::from_str(&t0b.mint).unwrap(),
+                            token1: Pubkey::from_str(&t1b.mint).unwrap(),
+                            token0_vault: Pubkey::new_from_array(token0_vault.as_array().clone()),
+                            token1_vault: Pubkey::new_from_array(token1_vault.as_array().clone()),
+                            token0_reserve: t0b.amount,
+                            token1_reserve: t1b.amount,
+                            amm_config: Pubkey::new_from_array(e.amm_config.as_array().clone()),
+                            observation_state: Pubkey::new_from_array(e.observation_state.as_array().clone()),
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
+                            status: None,
+                        };
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
+                    }
+                }
             },
             RaydiumCpmmDepositEvent => |e: RaydiumCpmmDepositEvent| {
-                println!("RaydiumCpmmDepositEvent: {e:?}");
+                let token0_balance = post_token_balances.get(e.token0_vault.to_string().as_str());
+                let token1_balance = post_token_balances.get(e.token1_vault.to_string().as_str());
+
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        let raydium_pool_update = RaydiumCpmmPoolUpdate {
+                            address: Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                            slot: e.metadata.slot,
+                            transaction_index: e.metadata.transaction_index,
+                            token0: Pubkey::from_str(&t0b.mint).unwrap(),
+                            token1: Pubkey::from_str(&t1b.mint).unwrap(),
+                            token0_vault: Pubkey::new_from_array(e.token0_vault.as_array().clone()),
+                            token1_vault: Pubkey::new_from_array(e.token1_vault.as_array().clone()),
+                            token0_reserve: t0b.amount,
+                            token1_reserve: t1b.amount,
+                            amm_config: Pubkey::default(),
+                            observation_state: Pubkey::default(),
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
+                            status: None,
+                        };
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
+                    }
+                }
             },
             RaydiumCpmmInitializeEvent => |e: RaydiumCpmmInitializeEvent| {
-                println!("RaydiumCpmmInitializeEvent: {e:?}");
+                let token0_balance = post_token_balances.get(e.token0_vault.to_string().as_str());
+                let token1_balance = post_token_balances.get(e.token1_vault.to_string().as_str());
+
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        let raydium_pool_update = RaydiumCpmmPoolUpdate {
+                            address: Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                            slot: e.metadata.slot,
+                            transaction_index: e.metadata.transaction_index,
+                            token0: Pubkey::from_str(&t0b.mint).unwrap(),
+                            token1: Pubkey::from_str(&t1b.mint).unwrap(),
+                            token0_vault: Pubkey::new_from_array(e.token0_vault.as_array().clone()),
+                            token1_vault: Pubkey::new_from_array(e.token1_vault.as_array().clone()),
+                            token0_reserve: t0b.amount,
+                            token1_reserve: t1b.amount,
+                            amm_config: Pubkey::default(),
+                            observation_state: Pubkey::default(),
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
+                            status: None,
+                        };
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
+                    }
+                }
             },
             RaydiumCpmmWithdrawEvent => |e: RaydiumCpmmWithdrawEvent| {
-                println!("RaydiumCpmmWithdrawEvent: {e:?}");
+                let token0_balance = post_token_balances.get(e.token0_vault.to_string().as_str());
+                let token1_balance = post_token_balances.get(e.token1_vault.to_string().as_str());
+
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        let raydium_pool_update = RaydiumCpmmPoolUpdate {
+                            address: Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                            slot: e.metadata.slot,
+                            transaction_index: e.metadata.transaction_index,
+                            token0: Pubkey::from_str(&t0b.mint).unwrap(),
+                            token1: Pubkey::from_str(&t1b.mint).unwrap(),
+                            token0_vault: Pubkey::new_from_array(e.token0_vault.as_array().clone()),
+                            token1_vault: Pubkey::new_from_array(e.token1_vault.as_array().clone()),
+                            token0_reserve: t0b.amount,
+                            token1_reserve: t1b.amount,
+                            amm_config: Pubkey::default(),
+                            observation_state: Pubkey::default(),
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
+                            status: None,
+                        };
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
+                    }
+                }
             },
             // -------------------------- raydium_clmm -----------------------
             RaydiumClmmSwapEvent => |e: RaydiumClmmSwapEvent| {
@@ -284,7 +383,7 @@ pub fn handle_dex_event(
                             serum_coin_vault_account: Pubkey::new_from_array(e.serum_coin_vault_account.as_array().clone()),
                             serum_pc_vault_account: Pubkey::new_from_array(e.serum_pc_vault_account.as_array().clone()),
                             serum_vault_signer: Pubkey::new_from_array(e.serum_vault_signer.as_array().clone()),
-                            last_updated: e.metadata.block_time as u64,
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                         };
@@ -317,7 +416,7 @@ pub fn handle_dex_event(
                             serum_coin_vault_account: Pubkey::default(),
                             serum_pc_vault_account: Pubkey::default(),
                             serum_vault_signer: Pubkey::default(),
-                            last_updated: e.metadata.block_time as u64,
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                         };
@@ -349,7 +448,7 @@ pub fn handle_dex_event(
                             serum_coin_vault_account: Pubkey::default(),
                             serum_pc_vault_account: Pubkey::default(),
                             serum_vault_signer: Pubkey::default(),
-                            last_updated: e.metadata.block_time as u64,
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                         };
@@ -381,7 +480,7 @@ pub fn handle_dex_event(
                             serum_coin_vault_account: Pubkey::new_from_array(e.serum_coin_vault_account.as_array().clone()),
                             serum_pc_vault_account: Pubkey::new_from_array(e.serum_pc_vault_account.as_array().clone()),
                             serum_vault_signer: Pubkey::new_from_array(e.serum_vault_signer.as_array().clone()),
-                            last_updated: e.metadata.block_time as u64,
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                         };
@@ -413,7 +512,7 @@ pub fn handle_dex_event(
                             serum_coin_vault_account: Pubkey::new_from_array(e.serum_coin_vault_account.as_array().clone()),
                             serum_pc_vault_account: Pubkey::new_from_array(e.serum_pc_vault_account.as_array().clone()),
                             serum_vault_signer: Pubkey::new_from_array(e.serum_vault_signer.as_array().clone()),
-                            last_updated: e.metadata.block_time as u64,
+                            last_updated: (e.metadata.recv_us/1000000) as u64,
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                         };
@@ -444,7 +543,7 @@ pub fn handle_dex_event(
                         quote_mint: Pubkey::new_from_array(e.pool.quote_mint.as_array().clone()),
                         pool_base_token_account: Pubkey::new_from_array(e.pool.pool_base_token_account.as_array().clone()),
                         pool_quote_token_account: Pubkey::new_from_array(e.pool.pool_quote_token_account.as_array().clone()),
-                        last_updated: e.metadata.block_time as u64,
+                        last_updated: (e.metadata.recv_us/1000000) as u64,
                         base_reserve: 0, // 0 means not updated by this event
                         quote_reserve: 0, // 0 means not updated by this event
                         slot: e.metadata.slot,
@@ -473,7 +572,22 @@ pub fn handle_dex_event(
                 // do nothing for now
             },
             RaydiumCpmmPoolStateAccountEvent => |e: RaydiumCpmmPoolStateAccountEvent| {
-                println!("RaydiumCpmmPoolStateAccountEvent: {e:?}");
+                let raydium_pool_update = RaydiumCpmmPoolUpdate {
+                    address: Pubkey::new_from_array(e.pubkey.as_array().clone()),
+                    slot: e.metadata.slot,
+                    transaction_index: e.metadata.transaction_index,
+                    token0: Pubkey::new_from_array(e.pool_state.token0_mint.as_array().clone()),
+                    token1: Pubkey::new_from_array(e.pool_state.token1_mint.as_array().clone()),
+                    token0_vault: Pubkey::new_from_array(e.pool_state.token0_vault.as_array().clone()),
+                    token1_vault: Pubkey::new_from_array(e.pool_state.token1_vault.as_array().clone()),
+                    token0_reserve: 0,
+                    token1_reserve: 0,
+                    amm_config: Pubkey::new_from_array(e.pool_state.amm_config.as_array().clone()),
+                    observation_state: Pubkey::new_from_array(e.pool_state.observation_key.as_array().clone()),
+                    last_updated: (e.metadata.recv_us/1000000) as u64,
+                    status: Some(e.pool_state.status),
+                };
+                pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
             },
             TokenAccountEvent => |e: TokenAccountEvent| {
                 // do nothing for now

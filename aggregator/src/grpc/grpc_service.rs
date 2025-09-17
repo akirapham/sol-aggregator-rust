@@ -252,6 +252,11 @@ impl GrpcService {
 
         Ok(())
     }
+
+    pub async fn stop(&self) {
+        self.grpc.stop().await;
+        log::info!("gRPC subscription stopped.");
+    }
 }
 pub async fn create_grpc_service(
     batch_size: usize,
@@ -272,7 +277,7 @@ pub async fn create_grpc_service(
 > {
     let agg_config = ConfigLoader::load().unwrap();
     // Create low-latency configuration
-    let mut config: ClientConfig = ClientConfig::low_latency();
+    let mut config: ClientConfig = ClientConfig::high_throughput();
     // Enable performance monitoring, has performance overhead, disabled by default
     config.enable_metrics = true;
     let grpc = YellowstoneGrpc::new_with_config(agg_config.yellowstone_grpc_url, None, config)?;
@@ -286,21 +291,21 @@ pub async fn create_grpc_service(
 
     // Filter accounts
     let account_include = vec![
-        // PUMPFUN_PROGRAM_ID.to_string(), // Listen to pumpfun program ID
+        // PUMPFUN_PROGRAM_ID.to_string(),  // Listen to pumpfun program ID
         // PUMPSWAP_PROGRAM_ID.to_string(), // Listen to pumpswap program ID
         // BONK_PROGRAM_ID.to_string(),           // Listen to bonk program ID
-        // RAYDIUM_CPMM_PROGRAM_ID.to_string(),   // Listen to raydium_cpmm program ID
-        // RAYDIUM_CLMM_PROGRAM_ID.to_string(),   // Listen to raydium_clmm program ID
-        RAYDIUM_AMM_V4_PROGRAM_ID.to_string(), // Listen to raydium_amm_v4 program ID
+        RAYDIUM_CPMM_PROGRAM_ID.to_string(), // Listen to raydium_cpmm program ID
+                                             // RAYDIUM_CLMM_PROGRAM_ID.to_string(),   // Listen to raydium_clmm program ID
+                                             // RAYDIUM_AMM_V4_PROGRAM_ID.to_string(), // Listen to raydium_amm_v4 program ID
     ];
 
     let protocols = vec![
         // Protocol::PumpFun,
         // Protocol::PumpSwap,
         // Protocol::Bonk,
-        // Protocol::RaydiumCpmm,
+        Protocol::RaydiumCpmm,
         // Protocol::RaydiumClmm,
-        Protocol::RaydiumAmmV4,
+        // Protocol::RaydiumAmmV4,
     ];
 
     let account_exclude = vec![];

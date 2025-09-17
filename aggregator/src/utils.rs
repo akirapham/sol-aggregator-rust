@@ -1,10 +1,12 @@
 use crate::constants::WSOL_MINT;
 use crate::error::DexAggregatorError;
 use crate::error::Result;
+use crate::pool_data_types::RaydiumCpmmPoolState;
 use crate::pool_data_types::{
     PoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState,
 };
 use crate::types::PoolUpdateEvent;
+use crate::types::Token;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
@@ -61,11 +63,6 @@ pub fn parse_pubkey(address: &str) -> Result<Pubkey> {
         .map_err(|_| DexAggregatorError::InvalidTokenAddress(address.to_string()))
 }
 
-/// Convert a Pubkey to base58 string
-pub fn pubkey_to_string(pubkey: &Pubkey) -> String {
-    bs58::encode(pubkey.as_ref()).into_string()
-}
-
 /// Calculate minimum output amount with slippage tolerance
 pub fn calculate_min_output_amount(
     expected_output: u64,
@@ -101,6 +98,7 @@ pub fn use_input_or_existing(input_key: &Pubkey, &existing: &Pubkey) -> Pubkey {
     }
 }
 
+// TODO: refactor this, we can update the input event directly instead of creating a new struct
 pub fn pool_update_event_to_pool_state(
     event: &PoolUpdateEvent,
     existing_state: Option<PoolState>,
@@ -232,6 +230,59 @@ pub fn pool_update_event_to_pool_state(
                 quote_mint: pump_swap_pool_update.quote_mint,
                 pool_base_token_account: pump_swap_pool_update.pool_base_token_account,
                 pool_quote_token_account: pump_swap_pool_update.pool_quote_token_account,
+            })
+        }
+        PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_cpmm_pool_update) => {
+            let existing_raydium_state = match existing_state {
+                Some(PoolState::RaydiumCpmmPoolState(state)) => Some(state),
+                _ => None,
+            };
+            let is_reserve_updated = raydium_cpmm_pool_update.token0_reserve != 0
+                && raydium_cpmm_pool_update.token1_reserve != 0;
+            let (token0_reserve, token1_reserve) = if is_reserve_updated {
+                (
+                    raydium_cpmm_pool_update.token0_reserve,
+                    raydium_cpmm_pool_update.token1_reserve,
+                )
+            } else if let Some(ref state) = existing_raydium_state {
+                (state.token0_reserve, state.token1_reserve)
+            } else {
+                (0, 0)
+            };
+            let updated_status = if let Some(status) = raydium_cpmm_pool_update.status.clone() {
+                status
+            } else if let Some(ref state) = existing_raydium_state {
+                state.status
+            } else {
+                0
+            };
+            let (existing_amm_config, existing_observation_state) =
+                if let Some(ref state) = existing_raydium_state {
+                    (state.amm_config, state.observation_state)
+                } else {
+                    (Pubkey::default(), Pubkey::default())
+                };
+            PoolState::RaydiumCpmmPoolState(RaydiumCpmmPoolState {
+                slot: raydium_cpmm_pool_update.slot,
+                transaction_index: raydium_cpmm_pool_update.transaction_index,
+                address: raydium_cpmm_pool_update.address,
+                status: updated_status,
+                token0: raydium_cpmm_pool_update.token0,
+                token1: raydium_cpmm_pool_update.token1,
+                token0_vault: raydium_cpmm_pool_update.token0_vault,
+                token1_vault: raydium_cpmm_pool_update.token1_vault,
+                token0_reserve,
+                token1_reserve,
+                amm_config: use_input_or_existing(
+                    &raydium_cpmm_pool_update.amm_config,
+                    &existing_amm_config,
+                ),
+                observation_state: use_input_or_existing(
+                    &raydium_cpmm_pool_update.observation_state,
+                    &existing_observation_state,
+                ),
+                last_updated: raydium_cpmm_pool_update.last_updated,
+                liquidity_usd: 0.0,
             })
         }
     }

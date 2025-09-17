@@ -5,7 +5,7 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
@@ -23,9 +23,9 @@ pub struct PoolStateManager {
     /// Pool states indexed by pool address
     pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
     /// Pool addresses indexed by token pair
-    pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), Vec<Pubkey>>>>,
+    pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>,
     /// DEX-specific pool addresses
-    dex_pools: Arc<RwLock<HashMap<DexType, Vec<Pubkey>>>>,
+    dex_pools: Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>,
     /// Token metadata cache
     token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
 
@@ -64,6 +64,10 @@ impl PoolStateManager {
         tokio::spawn(async move {
             let _ = grpc_service.start().await;
         });
+    }
+
+    pub async fn stop(&self) {
+        self.grpc_service.stop().await;
     }
 
     pub fn start_batch_event_processing(
@@ -134,8 +138,8 @@ impl PoolStateManager {
     async fn apply_pool_update(
         update: &PoolUpdateEvent,
         pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
-        pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), Vec<Pubkey>>>>,
-        dex_pools: Arc<RwLock<HashMap<DexType, Vec<Pubkey>>>>,
+        pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>,
+        dex_pools: Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         rpc_client: Arc<RpcClient>,
     ) {
@@ -155,7 +159,10 @@ impl PoolStateManager {
             if let Some(pool_mutex) = pool_mutex {
                 let mut pool_guard = pool_mutex.lock().await;
                 let pool_state = pool_update_event_to_pool_state(update, Some(pool_guard.clone()));
-
+                let dex = pool_state.dex();
+                if dex.to_string() == DexType::Raydium.to_string() {
+                    log::info!("Updated Raydium pool: address {:?}, dex {}, dex pool state {}, is raydium {}, slot {}", pool_address, dex.to_string(), DexType::Raydium.to_string(), dex.to_string() == DexType::Raydium.to_string(), pool_state.get_metadata().slot);
+                }
                 *pool_guard = pool_state;
             }
         } else {
@@ -175,12 +182,13 @@ impl PoolStateManager {
     async fn insert_new_pool(
         pool_state: PoolState,
         pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
-        pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), Vec<Pubkey>>>>,
-        dex_pools: Arc<RwLock<HashMap<DexType, Vec<Pubkey>>>>,
+        pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>,
+        dex_pools: Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         rpc_client: Arc<RpcClient>,
     ) {
         let pool_address = pool_state.address();
+        log::info!("Inserting new pool: address {:?}", pool_address);
         let dex = pool_state.dex();
         let (token_a, token_b) = pool_state.get_tokens();
 
@@ -195,13 +203,13 @@ impl PoolStateManager {
             let mut pair_to_pools_write = pair_to_pools.write().await;
             pair_to_pools_write
                 .entry((token_a, token_b))
-                .or_insert_with(Vec::new)
-                .push(pool_address);
+                .or_insert_with(HashSet::new)
+                .insert(pool_address);
             if (token_a, token_b) != (token_b, token_a) {
                 pair_to_pools_write
                     .entry((token_b, token_a))
-                    .or_insert_with(Vec::new)
-                    .push(pool_address);
+                    .or_insert_with(HashSet::new)
+                    .insert(pool_address);
             }
         }
 
@@ -209,8 +217,8 @@ impl PoolStateManager {
             let mut dex_pools_write = dex_pools.write().await;
             dex_pools_write
                 .entry(dex)
-                .or_insert_with(Vec::new)
-                .push(pool_address);
+                .or_insert_with(HashSet::new)
+                .insert(pool_address);
         }
 
         // check if token metadata is cached, if not cache it

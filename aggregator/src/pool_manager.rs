@@ -13,9 +13,9 @@ use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::fetch_token;
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{DexType, PoolState};
+use crate::types::PoolUpdateEvent;
 use crate::types::Token;
 use crate::utils::pool_update_event_to_pool_state;
-use crate::types::PoolUpdateEvent;
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
@@ -48,7 +48,9 @@ impl PoolStateManager {
                 CommitmentConfig::processed(),
             )),
         };
-        instance.start_pool_update_event_processing(pool_update_rx).await;
+        instance
+            .start_pool_update_event_processing(pool_update_rx)
+            .await;
         instance
     }
 
@@ -90,7 +92,10 @@ impl PoolStateManager {
         });
     }
 
-    async fn start_pool_update_event_processing(&self, mut pool_update_rx: mpsc::UnboundedReceiver<Vec<PoolUpdateEvent>>) {
+    async fn start_pool_update_event_processing(
+        &self,
+        mut pool_update_rx: mpsc::UnboundedReceiver<Vec<PoolUpdateEvent>>,
+    ) {
         log::info!("Starting pool update event processing loop...");
 
         let pools = Arc::clone(&self.pools);

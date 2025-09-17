@@ -57,8 +57,8 @@ use tokio::sync::mpsc;
 use crate::{
     constants::is_base_token,
     pool_data_types::{PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate},
-    utils::get_sol_mint,
     types::PoolUpdateEvent,
+    utils::get_sol_mint,
 };
 
 pub fn handle_dex_event(

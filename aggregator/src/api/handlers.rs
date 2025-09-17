@@ -1,5 +1,6 @@
 use crate::aggregator::DexAggregator;
 use crate::pool_data_types::PoolState;
+use crate::types::ExecutionPriority;
 use crate::types::{BestRoute, SwapParams};
 use axum::{
     extract::{Path, State},
@@ -7,7 +8,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use crate::types::ExecutionPriority;
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 

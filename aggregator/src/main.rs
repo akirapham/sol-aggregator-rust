@@ -1,7 +1,9 @@
 mod aggregator;
 mod api;
 mod config;
+mod constants;
 mod dex;
+mod error;
 mod fetchers;
 mod grpc;
 mod pool_data_types;
@@ -9,8 +11,6 @@ mod pool_manager;
 mod smart_routing;
 mod types;
 mod utils;
-mod error;
-mod constants;
 
 use axum::serve;
 use dotenv::dotenv;

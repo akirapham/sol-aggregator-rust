@@ -3,9 +3,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
-use crate::{pool_data_types::{
-    DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
-}, error::Result};
+use crate::{
+    error::Result,
+    pool_data_types::{DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate},
+};
 
 /// Represents a token with its metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]

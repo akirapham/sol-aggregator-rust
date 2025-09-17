@@ -1,4 +1,5 @@
 use crate::aggregator::DexAggregator;
+use crate::api::dto::PoolInfoResponse;
 use crate::pool_data_types::PoolState;
 use crate::types::ExecutionPriority;
 use crate::types::{BestRoute, SwapParams};
@@ -93,7 +94,7 @@ pub async fn get_quote(
 pub async fn get_pools(
     State(aggregator): State<Arc<DexAggregator>>,
     Path((token0, token1)): Path<(String, String)>,
-) -> Result<Json<Vec<PoolState>>, StatusCode> {
+) -> Result<Json<Vec<PoolInfoResponse>>, StatusCode> {
     // check if token0 and token1 are valid pubkeys
     let token0_key = Pubkey::try_from(token0.as_str()).map_err(|_| StatusCode::BAD_REQUEST)?;
     let token1_key = Pubkey::try_from(token1.as_str()).map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -103,8 +104,22 @@ pub async fn get_pools(
         .get_pool_manager()
         .get_pools_for_pair(&token0_key, &token1_key)
         .await;
+    // read get_tokens function and map to PoolInfoResponse
+    let pools_response = pools
+        .into_iter()
+        .map(|pool| {
+            let (base_pk, quote_pk) = pool.get_tokens();
+            PoolInfoResponse {
+                address: pool.address().to_string(),
+                dex: pool.dex().to_string(),
+                base_token: base_pk.to_string(),
+                quote_token: quote_pk.to_string(),
+                last_updated: pool.last_updated(),
+            }
+        })
+        .collect();
 
-    Ok(Json(pools))
+    Ok(Json(pools_response))
 }
 
 #[derive(Serialize)]

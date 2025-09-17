@@ -1,11 +1,9 @@
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
-use crate::pool_manager::PoolStateManager;
-use crate::types::{
-    AggregatorConfig, ExecutionPriority, SwapRoute,
-};
 use crate::grpc::create_grpc_service;
+use crate::pool_manager::PoolStateManager;
+use crate::types::{AggregatorConfig, ExecutionPriority, SwapRoute};
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
     config: AggregatorConfig,

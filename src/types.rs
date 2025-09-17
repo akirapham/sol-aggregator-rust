@@ -3,10 +3,9 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
-use crate::pool_data_types::{
-    DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
-    RaydiumAmmV4PoolUpdate,
-};
+use crate::{pool_data_types::{
+    DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
+}, error::Result};
 
 /// Represents a token with its metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,7 +267,7 @@ impl Default for SplitConfig {
 
 impl AggregatorConfig {
     /// Create configuration from environment variables
-    pub fn from_env() -> crate::error::Result<Self> {
+    pub fn from_env() -> Result<Self> {
         crate::config::ConfigLoader::load()
     }
 }

@@ -1,5 +1,5 @@
-use crate::DexAggregatorError;
-use crate::Token;
+use crate::error::DexAggregatorError;
+use crate::types::Token;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use spl_token_2022::extension::StateWithExtensions;

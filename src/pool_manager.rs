@@ -15,7 +15,7 @@ use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{DexType, PoolState};
 use crate::types::Token;
 use crate::utils::pool_update_event_to_pool_state;
-use crate::PoolUpdateEvent;
+use crate::types::PoolUpdateEvent;
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
@@ -30,43 +30,38 @@ pub struct PoolStateManager {
     token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
 
     pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
-    pool_update_rx: mpsc::UnboundedReceiver<Vec<PoolUpdateEvent>>,
     rpc_client: Arc<RpcClient>,
 }
 
 impl PoolStateManager {
     pub async fn new(grpc_service: Arc<GrpcService>) -> Self {
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
-        Self {
+        let instance = Self {
             grpc_service: grpc_service,
             pools: Arc::new(RwLock::new(HashMap::new())),
             pair_to_pools: Arc::new(RwLock::new(HashMap::new())),
             dex_pools: Arc::new(RwLock::new(HashMap::new())),
             token_cache: Arc::new(RwLock::new(HashMap::new())),
             pool_update_tx,
-            pool_update_rx,
             rpc_client: Arc::new(RpcClient::new_with_commitment(
                 ConfigLoader::load().unwrap().rpc_url.clone(),
                 CommitmentConfig::processed(),
             )),
-        }
+        };
+        instance.start_pool_update_event_processing(pool_update_rx).await;
+        instance
     }
 
     pub fn get_pool_update_sender(&self) -> mpsc::UnboundedSender<Vec<PoolUpdateEvent>> {
         self.pool_update_tx.clone()
     }
 
-    pub async fn start(&mut self) {
+    pub async fn start(&self) {
         let grpc_service = self.grpc_service.clone();
 
         tokio::spawn(async move {
             let _ = grpc_service.start().await;
         });
-
-        log::info!("Starting event handling loop...");
-
-        self.start_pool_update_event_processing().await;
-        log::info!("Event handling loop ended - no more batches to process");
     }
 
     pub fn start_batch_event_processing(
@@ -95,7 +90,7 @@ impl PoolStateManager {
         });
     }
 
-    async fn start_pool_update_event_processing(&mut self) {
+    async fn start_pool_update_event_processing(&self, mut pool_update_rx: mpsc::UnboundedReceiver<Vec<PoolUpdateEvent>>) {
         log::info!("Starting pool update event processing loop...");
 
         let pools = Arc::clone(&self.pools);
@@ -103,29 +98,32 @@ impl PoolStateManager {
         let dex_pools = Arc::clone(&self.dex_pools);
         let token_cache = Arc::clone(&self.token_cache);
         let rpc_client = self.rpc_client.clone();
-        while let Some(updates) = self.pool_update_rx.recv().await {
-            // Process pool updates concurrently
-            let pools_clone = Arc::clone(&pools);
-            let pair_to_pools_clone = Arc::clone(&pair_to_pools);
-            let dex_pools_clone = Arc::clone(&dex_pools);
-            let token_cache_clone = Arc::clone(&token_cache);
-            let rpc_client_clone = rpc_client.clone();
-            tokio::spawn(async move {
-                for update in updates.iter() {
-                    Self::apply_pool_update(
-                        update,
-                        Arc::clone(&pools_clone),
-                        Arc::clone(&pair_to_pools_clone),
-                        Arc::clone(&dex_pools_clone),
-                        Arc::clone(&token_cache_clone),
-                        Arc::clone(&rpc_client_clone),
-                    )
-                    .await;
-                }
-            });
-        }
 
-        log::info!("Pool update processing loop ended");
+        tokio::spawn(async move {
+            while let Some(updates) = pool_update_rx.recv().await {
+                // Process pool updates concurrently
+                let pools_clone = Arc::clone(&pools);
+                let pair_to_pools_clone = Arc::clone(&pair_to_pools);
+                let dex_pools_clone = Arc::clone(&dex_pools);
+                let token_cache_clone = Arc::clone(&token_cache);
+                let rpc_client_clone = rpc_client.clone();
+                tokio::spawn(async move {
+                    for update in updates.iter() {
+                        Self::apply_pool_update(
+                            update,
+                            Arc::clone(&pools_clone),
+                            Arc::clone(&pair_to_pools_clone),
+                            Arc::clone(&dex_pools_clone),
+                            Arc::clone(&token_cache_clone),
+                            Arc::clone(&rpc_client_clone),
+                        )
+                        .await;
+                    }
+                });
+            }
+
+            log::info!("Pool update processing loop ended");
+        });
     }
 
     async fn apply_pool_update(
@@ -152,14 +150,7 @@ impl PoolStateManager {
             if let Some(pool_mutex) = pool_mutex {
                 let mut pool_guard = pool_mutex.lock().await;
                 let pool_state = pool_update_event_to_pool_state(update, Some(pool_guard.clone()));
-                // if pool_guard.dex() == DexType::Raydium {
-                log::info!(
-                    "Updating existing pool: {}, dex {}, reserves: {:?}",
-                    pool_address,
-                    pool_guard.dex(),
-                    pool_state.get_reserves()
-                );
-                // }
+
                 *pool_guard = pool_state;
             }
         } else {

@@ -3,11 +3,11 @@ use crate::error::Result;
 use crate::pool_data_types::{
     PoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState,
 };
-use crate::PoolUpdateEvent;
+use crate::types::PoolUpdateEvent;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
-
+use crate::error::DexAggregatorError;
 /// Convert lamports to token amount based on decimals
 pub fn lamports_to_amount(lamports: u64, decimals: u8) -> Decimal {
     let divisor = 10_u64.pow(decimals as u32);
@@ -19,7 +19,7 @@ pub fn amount_to_lamports(amount: Decimal, decimals: u8) -> Result<u64> {
     let multiplier = 10_u64.pow(decimals as u32);
     let lamports = amount * Decimal::from(multiplier);
     lamports.to_u64().ok_or_else(|| {
-        crate::error::DexAggregatorError::PriceCalculationError(
+        DexAggregatorError::PriceCalculationError(
             "Amount too large to convert to lamports".to_string(),
         )
     })
@@ -58,7 +58,7 @@ pub fn calculate_slippage(expected_amount: u64, actual_amount: u64) -> Decimal {
 pub fn parse_pubkey(address: &str) -> Result<Pubkey> {
     address
         .parse()
-        .map_err(|_| crate::error::DexAggregatorError::InvalidTokenAddress(address.to_string()))
+        .map_err(|_| DexAggregatorError::InvalidTokenAddress(address.to_string()))
 }
 
 /// Convert a Pubkey to base58 string
@@ -74,7 +74,7 @@ pub fn calculate_min_output_amount(
     let slippage_factor = Decimal::ONE - slippage_tolerance;
     let min_output = Decimal::from(expected_output) * slippage_factor;
     min_output.to_u64().ok_or_else(|| {
-        crate::error::DexAggregatorError::PriceCalculationError(
+        DexAggregatorError::PriceCalculationError(
             "Invalid slippage calculation".to_string(),
         )
     })

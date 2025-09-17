@@ -1,21 +1,67 @@
+mod aggregator;
+mod api;
+mod config;
+mod dex;
+mod fetchers;
+mod grpc;
+mod pool_data_types;
+mod pool_manager;
+mod smart_routing;
+mod types;
+mod utils;
+mod error;
+mod constants;
+
+use axum::serve;
 use dotenv::dotenv;
 use env_logger::Env;
-use sol_agg_rust::grpc::create_grpc_service;
-use sol_agg_rust::pool_manager::PoolStateManager;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+
+use crate::aggregator::DexAggregator;
+use crate::config::ConfigLoader;
+use crate::grpc::create_grpc_service;
+use crate::pool_manager::PoolStateManager;
+use crate::types::AggregatorConfig;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
-
-    log::info!("Subscribing to Yellowstone gRPC events...");
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-    let (grpc_service, batch_rx) = create_grpc_service(50, 500).await.unwrap();
-    let mut psm = PoolStateManager::new(grpc_service).await;
 
-    PoolStateManager::start_batch_event_processing(batch_rx, psm.get_pool_update_sender().clone());
+    // 1. Start the pool manager and gRPC streaming
+    log::info!("Starting pool manager and gRPC streaming...");
+    let (grpc_service, batch_rx) = create_grpc_service(50, 500).await?;
+    let pool_manager = Arc::new(PoolStateManager::new(grpc_service).await);
 
-    psm.start().await;
+    // Start background event processing
+    let pool_update_sender = pool_manager.get_pool_update_sender().clone();
+    PoolStateManager::start_batch_event_processing(batch_rx, pool_update_sender);
 
-    log::info!("Waiting for Ctrl+C to stop...");
-    let _= tokio::signal::ctrl_c().await;
+    // Start pool manager
+    let pool_manager_clone = pool_manager.clone();
+    tokio::spawn(async move {
+        pool_manager_clone.start().await;
+    });
+
+    // 2. Create and configure the aggregator
+    log::info!("Creating DEX aggregator...");
+    let config = ConfigLoader::load().unwrap();
+    let aggregator = Arc::new(aggregator::DexAggregator::new(config, pool_manager));
+
+    // 3. Create and start the REST API server
+    log::info!("Starting REST API server on port 3000...");
+    let app = api::create_router(aggregator);
+    let listener = TcpListener::bind("0.0.0.0:3000").await?;
+
+    log::info!("Server running on http://0.0.0.0:3000");
+    log::info!("API endpoints:");
+    log::info!("  POST /quote - Get swap quotes");
+    log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");
+    log::info!("  GET  /health - Health check");
+
+    // 4. Start serving
+    serve(listener, app).await?;
+
+    Ok(())
 }

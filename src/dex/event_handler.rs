@@ -55,10 +55,10 @@ use solana_streamer_sdk::{
 use tokio::sync::mpsc;
 
 use crate::{
-    is_base_token,
+    constants::is_base_token,
     pool_data_types::{PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate},
     utils::get_sol_mint,
-    PoolUpdateEvent,
+    types::PoolUpdateEvent,
 };
 
 pub fn handle_dex_event(

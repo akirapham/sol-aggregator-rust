@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::dex::handle_dex_event;
-use crate::{config::ConfigLoader, PoolUpdateEvent};
+use crate::{config::ConfigLoader, types::PoolUpdateEvent};
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };

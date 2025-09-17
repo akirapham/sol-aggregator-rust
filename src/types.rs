@@ -3,6 +3,11 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
+use crate::pool_data_types::{
+    pumpfun::PumpfunPoolState, DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
+    RaydiumAmmV4PoolUpdate,
+};
+
 /// Represents a token with its metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Token {
@@ -20,10 +25,7 @@ pub struct SwapRoute {
     pub input_amount: u64,
     pub output_amount: u64,
     pub price_impact: Decimal,
-    pub fee: u64,
     pub route_path: Vec<Pubkey>, // For multi-hop swaps
-    pub gas_cost: u64,           // Estimated gas cost in lamports
-    pub execution_time_ms: u64,  // Estimated execution time
     pub mev_risk: MevRisk,       // MEV risk assessment
     pub liquidity_depth: u64,    // Available liquidity at this price level
 }
@@ -43,11 +45,8 @@ pub struct BestRoute {
     pub routes: Vec<SwapRoute>,
     pub total_input_amount: u64,
     pub total_output_amount: u64,
-    pub total_fee: u64,
     pub total_price_impact: Decimal,
     pub execution_priority: ExecutionPriority,
-    pub total_gas_cost: u64,
-    pub estimated_execution_time_ms: u64,
     pub max_mev_risk: MevRisk,
     pub route_type: RouteType,
     pub split_ratio: Option<Vec<Decimal>>, // For split trading
@@ -116,16 +115,6 @@ pub struct MevProtectionConfig {
     pub use_flashloan_protection: bool,
 }
 
-/// Different types of DEXs supported
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DexType {
-    PumpFun,
-    PumpFunSwap,
-    Raydium,
-    RaydiumCpmm,
-    Orca,
-}
-
 impl std::fmt::Display for DexType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -147,10 +136,10 @@ pub enum ExecutionPriority {
 }
 
 /// Swap parameters for executing a trade
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SwapParams {
-    pub input_token: Pubkey,
-    pub output_token: Pubkey,
+    pub input_token: Token,
+    pub output_token: Token,
     pub input_amount: u64,
     pub slippage_tolerance: Decimal, // e.g., 0.01 for 1%
     pub user_wallet: Pubkey,
@@ -158,7 +147,7 @@ pub struct SwapParams {
 }
 
 /// Price information for a token pair
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PriceInfo {
     pub dex: DexType,
     pub input_token: Pubkey,
@@ -169,14 +158,13 @@ pub struct PriceInfo {
 }
 
 /// Configuration for the aggregator
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AggregatorConfig {
     pub rpc_url: String,
     pub yellowstone_grpc_url: String,
     pub commitment: CommitmentLevel,
     pub max_slippage: Decimal,
     pub max_routes: usize,
-    pub enabled_dexs: Vec<DexType>,
     pub smart_routing: SmartRoutingConfig,
     pub gas_config: GasConfig,
     pub mev_protection: MevProtectionConfig,
@@ -199,31 +187,18 @@ pub struct SmartRoutingConfig {
 #[derive(Debug, Clone)]
 pub enum PoolUpdateEvent {
     PumpfunPoolUpdate(PumpfunPoolUpdate),
-    RaydiumPoolUpdate(RaydiumPoolUpdate),
+    PumpSwapPoolUpdate(PumpSwapPoolUpdate),
+    RaydiumPoolUpdate(RaydiumAmmV4PoolUpdate),
 }
 
-#[derive(Debug, Clone)]
-pub struct PumpfunPoolUpdate {
-    pub pool_address: Pubkey,
-    pub mint: Pubkey,
-    pub dex: DexType,
-    pub base_reserve: u64,
-    pub quote_reserve: u64,
-    pub real_base_reserve: u64,
-    pub fee_rate: u64,
-    pub lp_supply: u64,
-    pub last_updated: u64, // Unix timestamp
-}
-
-#[derive(Debug, Clone)]
-pub struct RaydiumPoolUpdate {
-    pub pool_address: Pubkey,
-    pub dex: DexType,
-    pub base_reserve: u64,
-    pub quote_reserve: u64,
-    pub fee_rate: u64,
-    pub lp_supply: u64,
-    pub last_updated: u64, // Unix timestamp
+impl PoolUpdateEvent {
+    pub fn address(&self) -> Pubkey {
+        match self {
+            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.address,
+            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.address,
+            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.address,
+        }
+    }
 }
 
 impl Default for AggregatorConfig {
@@ -234,13 +209,6 @@ impl Default for AggregatorConfig {
             commitment: CommitmentLevel::Processed,
             max_slippage: Decimal::new(5, 2), // 5%
             max_routes: 5,
-            enabled_dexs: vec![
-                DexType::PumpFun,
-                DexType::PumpFunSwap,
-                DexType::Raydium,
-                DexType::RaydiumCpmm,
-                DexType::Orca,
-            ],
             smart_routing: SmartRoutingConfig::default(),
             gas_config: GasConfig::default(),
             mev_protection: MevProtectionConfig::default(),
@@ -303,28 +271,4 @@ impl AggregatorConfig {
     pub fn from_env() -> crate::error::Result<Self> {
         crate::config::ConfigLoader::load()
     }
-}
-
-/// Real-time pool state with additional metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PoolState {
-    pub address: Pubkey,
-    pub dex: DexType,
-    pub token_a: Pubkey,
-    pub token_b: Pubkey,
-    pub reserve_a: u64,
-    pub reserve_b: u64,
-    pub fee_rate: f64,     // % fee rate as a float (e.g., 0.003 for 0.3%)
-    pub last_updated: u64, // Unix timestamp
-    pub liquidity_usd: f64,
-    // Whirlpool specific fields
-    pub tick_current: Option<i32>,
-    pub tick_spacing: Option<u16>,
-    pub sqrt_price: Option<u128>,
-    pub liquidity: Option<u128>,
-    // CPMM specific fields
-    pub amp_factor: Option<u64>,
-    // PumpFun specific fields
-    pub bonding_curve_reserve: Option<u64>,
-    pub complete: Option<bool>,
 }

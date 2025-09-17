@@ -62,7 +62,7 @@ solana-streamer-sdk = { path = "./crates/solana-streamer" }
 spl-token-2022 = "9.0.0"
 
 solana-commitment-config = "3.0.0"
-
+yellowstone-grpc-proto = {  version = "8.0.0" }
 
 # Anchor program dependencies for specific DEXs
 # These will be added as we implement each DEX

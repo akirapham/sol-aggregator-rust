@@ -1,26 +1,31 @@
-use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_commitment_config::CommitmentConfig;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
+use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
+    PubkeyData, SimplifiedTokenBalance,
+};
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::config::ConfigLoader;
+use crate::dex::TokenProviderInterface;
 use crate::error::{DexAggregatorError, Result};
 use crate::fetchers::fetchers::fetch_token;
 use crate::grpc::{create_grpc_service, BatchProcessor, GrpcService};
-use crate::types::{DexType, Token};
+use crate::pool_data_types::{DexType, PoolState};
+use crate::types::Token;
 use crate::utils::pool_update_event_to_pool_state;
-use crate::{AggregatorConfig, PoolState, PoolUpdateEvent};
+use crate::{AggregatorConfig, PoolUpdateEvent};
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
     grpc_service: Arc<GrpcService>,
     /// Pool states indexed by pool address
-    pools: Arc<RwLock<HashMap<Pubkey, PoolState>>>,
+    pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
     /// Pool addresses indexed by token pair
     pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), Vec<Pubkey>>>>,
     /// DEX-specific pool addresses
@@ -28,14 +33,14 @@ pub struct PoolStateManager {
     /// Token metadata cache
     token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
 
-    pool_update_tx: mpsc::UnboundedSender<PoolUpdateEvent>,
-    pool_update_rx: mpsc::UnboundedReceiver<PoolUpdateEvent>,
+    pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
+    pool_update_rx: mpsc::UnboundedReceiver<Vec<PoolUpdateEvent>>,
     rpc_client: Arc<RpcClient>,
 }
 
 impl PoolStateManager {
     pub async fn new(grpc_service: Arc<GrpcService>) -> Self {
-        let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<PoolUpdateEvent>();
+        let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
         Self {
             grpc_service: grpc_service,
             pools: Arc::new(RwLock::new(HashMap::new())),
@@ -44,11 +49,14 @@ impl PoolStateManager {
             token_cache: Arc::new(RwLock::new(HashMap::new())),
             pool_update_tx,
             pool_update_rx,
-            rpc_client: Arc::new(RpcClient::new_with_commitment(ConfigLoader::load().unwrap().rpc_url.clone(), CommitmentConfig::processed())),
+            rpc_client: Arc::new(RpcClient::new_with_commitment(
+                ConfigLoader::load().unwrap().rpc_url.clone(),
+                CommitmentConfig::processed(),
+            )),
         }
     }
 
-    pub fn get_pool_update_sender(&self) -> mpsc::UnboundedSender<PoolUpdateEvent> {
+    pub fn get_pool_update_sender(&self) -> mpsc::UnboundedSender<Vec<PoolUpdateEvent>> {
         self.pool_update_tx.clone()
     }
 
@@ -66,8 +74,15 @@ impl PoolStateManager {
     }
 
     pub fn start_batch_event_processing(
-        mut batch_rx: mpsc::UnboundedReceiver<Vec<Box<dyn UnifiedEvent>>>,
-        pool_update_tx: mpsc::UnboundedSender<PoolUpdateEvent>,
+        mut batch_rx: mpsc::UnboundedReceiver<
+            Vec<(
+                Vec<Box<dyn UnifiedEvent>>,
+                Vec<PubkeyData>,
+                Vec<u64>,
+                HashMap<String, SimplifiedTokenBalance>,
+            )>,
+        >,
+        pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
     ) {
         // run in its own task
         tokio::spawn(async move {
@@ -92,7 +107,7 @@ impl PoolStateManager {
         let dex_pools = Arc::clone(&self.dex_pools);
         let token_cache = Arc::clone(&self.token_cache);
         let rpc_client = self.rpc_client.clone();
-        while let Some(update) = self.pool_update_rx.recv().await {
+        while let Some(updates) = self.pool_update_rx.recv().await {
             // Process pool updates concurrently
             let pools_clone = Arc::clone(&pools);
             let pair_to_pools_clone = Arc::clone(&pair_to_pools);
@@ -100,15 +115,17 @@ impl PoolStateManager {
             let token_cache_clone = Arc::clone(&token_cache);
             let rpc_client_clone = rpc_client.clone();
             tokio::spawn(async move {
-                Self::apply_pool_update(
-                    &update,
-                    pools_clone,
-                    pair_to_pools_clone,
-                    dex_pools_clone,
-                    token_cache_clone,
-                    rpc_client_clone,
-                )
-                .await;
+                for update in updates.iter() {
+                    Self::apply_pool_update(
+                        update,
+                        Arc::clone(&pools_clone),
+                        Arc::clone(&pair_to_pools_clone),
+                        Arc::clone(&dex_pools_clone),
+                        Arc::clone(&token_cache_clone),
+                        Arc::clone(&rpc_client_clone),
+                    )
+                    .await;
+                }
             });
         }
 
@@ -117,55 +134,68 @@ impl PoolStateManager {
 
     async fn apply_pool_update(
         update: &PoolUpdateEvent,
-        pools: Arc<RwLock<HashMap<Pubkey, PoolState>>>,
+        pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
         pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), Vec<Pubkey>>>>,
         dex_pools: Arc<RwLock<HashMap<DexType, Vec<Pubkey>>>>,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         rpc_client: Arc<RpcClient>,
     ) {
-        let pool_state = pool_update_event_to_pool_state(update);
+        let pool_address = update.address();
         // check if pool exists
         let pool_exists = {
             let pools_read = pools.read().await;
-            pools_read.contains_key(&pool_state.address)
+            pools_read.contains_key(&pool_address)
         };
         if pool_exists {
-            // Update existing pool
-            let mut pools_write = pools.write().await;
-            if let Some(pool) = pools_write.get_mut(&pool_state.address) {
-                pool.reserve_a = pool_state.reserve_a;
-                pool.reserve_b = pool_state.reserve_b;
-                pool.last_updated = pool_state.last_updated;
-                pool.liquidity = pool_state.liquidity;
-                pool.liquidity_usd = pool_state.liquidity_usd;
-                pool.sqrt_price = pool_state.sqrt_price;
-                pool.tick_current = pool_state.tick_current;
-                pool.amp_factor = pool_state.amp_factor;
-                pool.tick_spacing = pool_state.tick_spacing;
+            // Get the pool's individual mutex (no blocking other pools)
+            let pool_mutex = {
+                let pools_read = pools.read().await;
+                pools_read.get(&pool_address).cloned()
+            };
+
+            if let Some(pool_mutex) = pool_mutex {
+                let mut pool_guard = pool_mutex.lock().await;
+                let pool_state = pool_update_event_to_pool_state(update, Some(pool_guard.clone()));
+                // if pool_guard.dex() == DexType::Raydium {
+                log::info!(
+                    "Updating existing pool: {}, dex {}, reserves: {:?}",
+                    pool_address,
+                    pool_guard.dex(),
+                    pool_state.get_reserves()
+                );
+                // }
+                *pool_guard = pool_state;
             }
         } else {
             // Insert new pool
-            Self::insert_new_pool(pool_state, pools, pair_to_pools, dex_pools, token_cache, rpc_client).await;
+            Self::insert_new_pool(
+                pool_update_event_to_pool_state(update, None),
+                pools,
+                pair_to_pools,
+                dex_pools,
+                token_cache,
+                rpc_client,
+            )
+            .await;
         }
     }
 
     async fn insert_new_pool(
         pool_state: PoolState,
-        pools: Arc<RwLock<HashMap<Pubkey, PoolState>>>,
+        pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
         pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), Vec<Pubkey>>>>,
         dex_pools: Arc<RwLock<HashMap<DexType, Vec<Pubkey>>>>,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         rpc_client: Arc<RpcClient>,
     ) {
-        let pool_address = pool_state.address;
-        let dex = pool_state.dex;
-        let token_a = pool_state.token_a;
-        let token_b = pool_state.token_b;
+        let pool_address = pool_state.address();
+        let dex = pool_state.dex();
+        let (token_a, token_b) = pool_state.get_tokens();
 
         // Insert pool
         {
             let mut pools_write = pools.write().await;
-            pools_write.insert(pool_address, pool_state.clone());
+            pools_write.insert(pool_address, Arc::new(Mutex::new(pool_state.clone())));
         }
 
         // Update mappings
@@ -216,23 +246,39 @@ impl PoolStateManager {
     /// Get pool state by address
     pub async fn get_pool(&self, pool_address: &Pubkey) -> Option<PoolState> {
         let pools = self.pools.read().await;
-        pools.get(pool_address).cloned()
+        if let Some(pool_mutex) = pools.get(pool_address) {
+            let pool_guard = pool_mutex.lock().await;
+            Some((*pool_guard).clone())
+        } else {
+            None
+        }
     }
 
     /// Get all pools for a token pair
     pub async fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState> {
-        let pair_to_pools = self.pair_to_pools.read().await;
-        let pools = self.pools.read().await;
+        // Step 1: Get pool addresses (quick map read)
+        let pool_addresses = {
+            let pair_to_pools = self.pair_to_pools.read().await;
+            let key = (*token_a, *token_b);
+            pair_to_pools.get(&key).cloned().unwrap_or_default()
+        };
 
-        let key = (*token_a, *token_b);
-        if let Some(pool_addresses) = pair_to_pools.get(&key) {
+        // Step 2: Get pool mutexes (another quick map read)
+        let pool_mutexes = {
+            let pools = self.pools.read().await;
             pool_addresses
                 .iter()
                 .filter_map(|addr| pools.get(addr).cloned())
-                .collect()
-        } else {
-            Vec::new()
+                .collect::<Vec<_>>()
+        };
+
+        // Step 3: Read pools concurrently (no map lock held)
+        let mut results = Vec::new();
+        for mutex in pool_mutexes {
+            let pool_guard = mutex.lock().await; // Only locks this specific pool
+            results.push((*pool_guard).clone());
         }
+        results
     }
 
     /// Get token metadata from cache
@@ -249,37 +295,59 @@ impl PoolStateManager {
 
     /// Get pools for a specific DEX
     pub async fn get_pools_for_dex(&self, dex: DexType) -> Vec<PoolState> {
-        let dex_pools = self.dex_pools.read().await;
-        let pools = self.pools.read().await;
+        // Step 1: Get pool addresses for this DEX
+        let pool_addresses = {
+            let dex_pools = self.dex_pools.read().await;
+            dex_pools.get(&dex).cloned().unwrap_or_default()
+        };
 
-        if let Some(pool_addresses) = dex_pools.get(&dex) {
+        // Step 2: Get pool mutexes
+        let pool_mutexes = {
+            let pools = self.pools.read().await;
             pool_addresses
                 .iter()
                 .filter_map(|addr| pools.get(addr).cloned())
-                .collect()
-        } else {
-            Vec::new()
+                .collect::<Vec<_>>()
+        };
+
+        // Step 3: Read all pools concurrently
+        let tasks: Vec<_> = pool_mutexes
+            .into_iter()
+            .map(|mutex| {
+                tokio::spawn(async move {
+                    let pool_guard = mutex.lock().await;
+                    (*pool_guard).clone()
+                })
+            })
+            .collect();
+
+        let mut results = Vec::new();
+        for task in tasks {
+            if let Ok(pool) = task.await {
+                results.push(pool);
+            }
         }
+        results
     }
 
     /// Get best pools for a token pair sorted by liquidity
-    pub async fn get_best_pools_for_pair(
-        &self,
-        token_a: &Pubkey,
-        token_b: &Pubkey,
-        limit: usize,
-    ) -> Vec<PoolState> {
-        let mut pools = self.get_pools_for_pair(token_a, token_b).await;
+    // pub async fn get_best_pools_for_pair(
+    //     &self,
+    //     token_a: &Pubkey,
+    //     token_b: &Pubkey,
+    //     limit: usize,
+    // ) -> Vec<PoolState> {
+    //     let mut pools = self.get_pools_for_pair(token_a, token_b).await;
 
-        // Sort by liquidity (reserve_a + reserve_b as proxy)
-        pools.sort_by(|a, b| {
-            let liquidity_a = a.reserve_a + a.reserve_b;
-            let liquidity_b = b.reserve_a + b.reserve_b;
-            liquidity_b.cmp(&liquidity_a)
-        });
+    //     // Sort by liquidity (reserve_a + reserve_b as proxy)
+    //     pools.sort_by(|a, b| {
+    //         let liquidity_a = a.reserve_a + a.reserve_b;
+    //         let liquidity_b = b.reserve_a + b.reserve_b;
+    //         liquidity_b.cmp(&liquidity_a)
+    //     });
 
-        pools.into_iter().take(limit).collect()
-    }
+    //     pools.into_iter().take(limit).collect()
+    // }
 
     /// Remove a pool from the manager
     pub async fn remove_pool(&self, pool_address: &Pubkey) {
@@ -314,17 +382,24 @@ impl PoolStateManager {
         }
     }
 
-    /// Clean up old or inactive pools
-    pub async fn cleanup_stale_pools(&self, max_age_seconds: u64) {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+    // Clean up old or inactive pools
+    // pub async fn cleanup_stale_pools(&self, max_age_seconds: u64) {
+    //     let current_time = std::time::SystemTime::now()
+    //         .duration_since(std::time::UNIX_EPOCH)
+    //         .unwrap()
+    //         .as_secs();
 
-        let mut pools = self.pools.write().await;
-        pools.retain(|_, pool| current_time - pool.last_updated < max_age_seconds);
-    }
+    //     let mut pools = self.pools.write().await;
+    //     pools.retain(|_, pool| current_time - pool.last_updated() < max_age_seconds);
+    // }
 }
+
+// impl TokenProviderInterface for PoolStateManager {
+//     async fn get_token_info(&self, mint: &Pubkey) -> Result<Option<Token>> {
+//         let token = self.get_token(mint).await;
+//         Ok(token)
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct PoolManagerStats {

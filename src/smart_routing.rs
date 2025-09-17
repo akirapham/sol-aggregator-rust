@@ -5,9 +5,10 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::dex::traits::DexInterface;
 use crate::error::{DexAggregatorError, Result};
+use crate::pool_data_types::DexType;
 use crate::types::{
-    BestRoute, DexType, GasConfig, MevProtectionConfig, MevRisk, RouteType, SmartRoutingConfig,
-    SplitConfig, SwapParams, SwapRoute, Token,
+    BestRoute, GasConfig, MevProtectionConfig, MevRisk, RouteType, SmartRoutingConfig, SplitConfig,
+    SwapParams, SwapRoute, Token,
 };
 use crate::utils::*;
 
@@ -57,11 +58,11 @@ impl SmartRoutingEngine {
             all_routes.extend(split_routes);
         }
 
-        // 4. Arbitrage opportunities (if enabled)
-        if self.config.enable_arbitrage_detection {
-            let arbitrage_routes = self.find_arbitrage_routes(params).await?;
-            all_routes.extend(arbitrage_routes);
-        }
+        // // 4. Arbitrage opportunities (if enabled)
+        // if self.config.enable_arbitrage_detection {
+        //     let arbitrage_routes = self.find_arbitrage_routes(params).await?;
+        //     all_routes.extend(arbitrage_routes);
+        // }
 
         if all_routes.is_empty() {
             return Err(DexAggregatorError::RouteNotFound);
@@ -87,7 +88,7 @@ impl SmartRoutingEngine {
             let dex_type_clone = *dex_type;
 
             let task = async move {
-                match dex_clone.get_best_route(&params_clone).await {
+                match dex_clone.get_quote(&params_clone).await {
                     Ok(Some(route)) => {
                         // Enhance route with smart routing data
                         let enhanced_route = Self::enhance_route(route, &dex_type_clone).await;
@@ -117,22 +118,22 @@ impl SmartRoutingEngine {
         // Build a graph of all possible token connections
         let token_graph = self.build_token_graph().await?;
 
-        // Find all possible paths from input to output token
-        let paths = self
-            .find_paths(
-                &token_graph,
-                &params.input_token,
-                &params.output_token,
-                self.config.max_hops,
-            )
-            .await?;
+        // // Find all possible paths from input to output token
+        // let paths = self
+        //     .find_paths(
+        //         &token_graph,
+        //         &params.input_token,
+        //         &params.output_token,
+        //         self.config.max_hops,
+        //     )
+        //     .await?;
 
-        // Convert paths to routes
-        for path in paths {
-            if let Ok(route) = self.path_to_route(path, params).await {
-                routes.push(route);
-            }
-        }
+        // // Convert paths to routes
+        // for path in paths {
+        //     if let Ok(route) = self.path_to_route(path, params).await {
+        //         routes.push(route);
+        //     }
+        // }
 
         Ok(routes)
     }
@@ -164,86 +165,31 @@ impl SmartRoutingEngine {
         Ok(routes)
     }
 
-    /// Find arbitrage opportunities
-    async fn find_arbitrage_routes(&self, params: &SwapParams) -> Result<Vec<SwapRoute>> {
-        let mut routes = Vec::new();
-
-        // Get price information from all DEXs
-        let mut price_tasks = Vec::new();
-
-        for (dex_type, dex) in &self.dexs {
-            let dex_clone = dex.as_ref();
-            let input_token = params.input_token;
-            let output_token = params.output_token;
-            let amount = params.input_amount;
-            let dex_type_clone = *dex_type;
-
-            let task = async move {
-                match dex_clone
-                    .get_price(&input_token, &output_token, amount)
-                    .await
-                {
-                    Ok(price_info) => Some((dex_type_clone, price_info)),
-                    _ => None,
-                }
-            };
-
-            price_tasks.push(task);
-        }
-
-        let price_results = futures::future::join_all(price_tasks).await;
-        let mut prices: Vec<_> = price_results.into_iter().flatten().collect();
-
-        // Sort by price (highest first)
-        prices.sort_by(|a, b| b.1.price.cmp(&a.1.price));
-
-        // Find arbitrage opportunities
-        if prices.len() >= 2 {
-            let best_price = &prices[0].1;
-            let worst_price = &prices[prices.len() - 1].1;
-
-            let price_diff = best_price.price - worst_price.price;
-            let min_profitable_diff = Decimal::new(1, 3); // 0.1% minimum profit
-
-            if price_diff > min_profitable_diff {
-                // Create arbitrage route
-                if let Ok(arbitrage_route) = self
-                    .create_arbitrage_route(&prices[0], &prices[prices.len() - 1], params)
-                    .await
-                {
-                    routes.push(arbitrage_route);
-                }
-            }
-        }
-
-        Ok(routes)
-    }
-
     /// Build a graph of all token connections across DEXs
     async fn build_token_graph(&self) -> Result<HashMap<Pubkey, Vec<(Pubkey, DexType, Pubkey)>>> {
         let mut graph = HashMap::new();
 
-        for (dex_type, dex) in &self.dexs {
-            // Get all supported tokens for this DEX
-            if let Ok(tokens) = dex.get_supported_tokens().await {
-                for token in &tokens {
-                    let connections = graph.entry(token.address).or_insert_with(Vec::new);
+        // for (dex_type, dex) in &self.dexs {
+        //     // Get all supported tokens for this DEX
+        //     if let Ok(tokens) = dex.get_supported_tokens().await {
+        //         for token in &tokens {
+        //             let connections = graph.entry(token.address).or_insert_with(Vec::new);
 
-                    // Find all other tokens this token can be swapped with
-                    for other_token in &tokens {
-                        if other_token.address != token.address {
-                            if dex
-                                .supports_token_pair(&token.address, &other_token.address)
-                                .await
-                                .unwrap_or(false)
-                            {
-                                connections.push((other_token.address, *dex_type, token.address));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        //             // Find all other tokens this token can be swapped with
+        //             for other_token in &tokens {
+        //                 if other_token.address != token.address {
+        //                     if dex
+        //                         .supports_token_pair(&token.address, &other_token.address)
+        //                         .await
+        //                         .unwrap_or(false)
+        //                     {
+        //                         connections.push((other_token.address, *dex_type, token.address));
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         Ok(graph)
     }
@@ -290,67 +236,62 @@ impl SmartRoutingEngine {
         Ok(paths)
     }
 
-    /// Convert a path to a route
-    async fn path_to_route(
-        &self,
-        path: Vec<(Pubkey, DexType, Pubkey)>,
-        params: &SwapParams,
-    ) -> Result<SwapRoute> {
-        if path.is_empty() {
-            return Err(DexAggregatorError::RouteNotFound);
-        }
+    // /// Convert a path to a route
+    // async fn path_to_route(
+    //     &self,
+    //     path: Vec<(Pubkey, DexType, Pubkey)>,
+    //     params: &SwapParams,
+    // ) -> Result<SwapRoute> {
+    //     if path.is_empty() {
+    //         return Err(DexAggregatorError::RouteNotFound);
+    //     }
 
-        let mut total_input = params.input_amount;
-        let mut total_output = 0u64;
-        let mut total_fee = 0u64;
-        let mut total_gas = 0u64;
-        let mut max_mev_risk = MevRisk::Low;
-        let mut route_path = Vec::new();
+    //     let mut total_input = params.input_amount;
+    //     let mut total_output = 0u64;
+    //     let mut total_fee = 0u64;
+    //     let mut total_gas = 0u64;
+    //     let mut max_mev_risk = MevRisk::Low;
+    //     let mut route_path = Vec::new();
 
-        for (token, dex_type, pool_address) in &path {
-            if let Some(dex) = self.dexs.get(dex_type) {
-                let hop_params = SwapParams {
-                    input_token: params.input_token,
-                    output_token: *token,
-                    input_amount: total_input,
-                    slippage_tolerance: params.slippage_tolerance,
-                    user_wallet: params.user_wallet,
-                    priority: params.priority,
-                };
+    //     for (token, dex_type, pool_address) in &path {
+    //         if let Some(dex) = self.dexs.get(dex_type) {
+    //             let hop_params = SwapParams {
+    //                 input_token: params.input_token,
+    //                 output_token: *token,
+    //                 input_amount: total_input,
+    //                 slippage_tolerance: params.slippage_tolerance,
+    //                 user_wallet: params.user_wallet,
+    //                 priority: params.priority,
+    //             };
 
-                if let Ok(Some(hop_route)) = dex.get_best_route(&hop_params).await {
-                    total_output = hop_route.output_amount;
-                    total_fee += hop_route.fee;
-                    total_gas += hop_route.gas_cost;
-                    max_mev_risk = std::cmp::max(max_mev_risk, hop_route.mev_risk);
-                    route_path.push(*pool_address);
-                    total_input = total_output; // For next hop
-                }
-            }
-        }
+    //             if let Ok(Some(hop_route)) = dex.get_quote(&hop_params).await {
+    //                 total_output = hop_route.output_amount;
+    //                 max_mev_risk = std::cmp::max(max_mev_risk, hop_route.mev_risk);
+    //                 route_path.push(*pool_address);
+    //                 total_input = total_output; // For next hop
+    //             }
+    //         }
+    //     }
 
-        // Calculate price impact for the entire path
-        let price_impact = calculate_price_impact(
-            params.input_amount,
-            total_output,
-            Decimal::new(1, 0), // Placeholder market price
-        )?;
+    //     // Calculate price impact for the entire path
+    //     let price_impact = calculate_price_impact(
+    //         params.input_amount,
+    //         total_output,
+    //         Decimal::new(1, 0), // Placeholder market price
+    //     )?;
 
-        Ok(SwapRoute {
-            dex: path[0].1, // First DEX in the path
-            input_token: self.get_token_info(&params.input_token).await?,
-            output_token: self.get_token_info(&params.output_token).await?,
-            input_amount: params.input_amount,
-            output_amount: total_output,
-            price_impact,
-            fee: total_fee,
-            route_path,
-            gas_cost: total_gas,
-            execution_time_ms: self.estimate_execution_time(&path),
-            mev_risk: max_mev_risk,
-            liquidity_depth: self.calculate_liquidity_depth(&path).await?,
-        })
-    }
+    //     Ok(SwapRoute {
+    //         dex: path[0].1, // First DEX in the path
+    //         input_token: params.input_token,
+    //         output_token: params.output_token,
+    //         input_amount: params.input_amount,
+    //         output_amount: total_output,
+    //         price_impact,
+    //         route_path,
+    //         mev_risk: max_mev_risk,
+    //         liquidity_depth: self.calculate_liquidity_depth(&path).await?,
+    //     })
+    // }
 
     /// Generate split trading combinations
     fn generate_split_combinations(
@@ -432,15 +373,12 @@ impl SmartRoutingEngine {
 
         Ok(SwapRoute {
             dex: DexType::Raydium, // Placeholder
-            input_token: self.get_token_info(&params.input_token).await?,
-            output_token: self.get_token_info(&params.output_token).await?,
+            input_token: params.input_token.clone(),
+            output_token: params.output_token.clone(),
             input_amount: params.input_amount,
             output_amount: total_output,
             price_impact,
-            fee: total_fee,
             route_path,
-            gas_cost: total_gas,
-            execution_time_ms: 1000, // 1 second
             mev_risk: max_mev_risk,
             liquidity_depth: 1000000000, // 1B placeholder
         })
@@ -458,15 +396,12 @@ impl SmartRoutingEngine {
 
         Ok(SwapRoute {
             dex: buy_dex.0,
-            input_token: self.get_token_info(&params.input_token).await?,
-            output_token: self.get_token_info(&params.output_token).await?,
+            input_token: params.input_token.clone(),
+            output_token: params.output_token.clone(),
             input_amount: params.input_amount,
             output_amount: params.input_amount + profit.to_u64().unwrap_or(0),
             price_impact: Decimal::ZERO,
-            fee: params.input_amount / 1000, // 0.1% fee
             route_path: vec![],
-            gas_cost: 10000,         // Higher gas for arbitrage
-            execution_time_ms: 2000, // 2 seconds
             mev_risk: MevRisk::High,
             liquidity_depth: 1000000000,
         })
@@ -474,8 +409,6 @@ impl SmartRoutingEngine {
 
     /// Enhance a route with smart routing data
     async fn enhance_route(mut route: SwapRoute, dex_type: &DexType) -> SwapRoute {
-        route.gas_cost = Self::estimate_gas_cost(dex_type);
-        route.execution_time_ms = Self::estimate_execution_time_single(dex_type);
         route.mev_risk = Self::assess_mev_risk(&route);
         route.liquidity_depth = route.output_amount * 100; // Simplified
 
@@ -548,22 +481,6 @@ impl SmartRoutingEngine {
         Ok(0)
     }
 
-    /// Get token information
-    async fn get_token_info(&self, token_address: &Pubkey) -> Result<Token> {
-        // Try to get token info from any DEX
-        for dex in self.dexs.values() {
-            if let Ok(token) = dex.get_token_info(token_address).await {
-                return Ok(token);
-            }
-        }
-
-        // Fallback to placeholder
-        Ok(Token {
-            address: *token_address,
-            decimals: 6,
-        })
-    }
-
     /// Optimize routes using various criteria
     async fn optimize_routes(
         &self,
@@ -591,8 +508,6 @@ impl SmartRoutingEngine {
     /// Calculate a composite score for route optimization
     fn calculate_route_score(&self, route: &SwapRoute, params: &SwapParams) -> f64 {
         let output_score = route.output_amount as f64 / params.input_amount as f64;
-        let fee_penalty = route.fee as f64 / params.input_amount as f64;
-        let gas_penalty = route.gas_cost as f64 / 1000000.0; // Normalize gas cost
         let mev_penalty = match route.mev_risk {
             MevRisk::Low => 0.0,
             MevRisk::Medium => 0.1,
@@ -601,7 +516,7 @@ impl SmartRoutingEngine {
         };
         let liquidity_bonus = (route.liquidity_depth as f64 / 1000000000.0).min(1.0);
 
-        output_score - fee_penalty - gas_penalty - mev_penalty + liquidity_bonus
+        output_score - mev_penalty + liquidity_bonus
     }
 
     /// Select the best route from optimized routes
@@ -615,27 +530,18 @@ impl SmartRoutingEngine {
         }
 
         let best_route = routes[0].clone();
-        let total_gas_cost = routes.iter().map(|r| r.gas_cost).sum();
         let max_mev_risk = routes
             .iter()
             .map(|r| r.mev_risk)
             .max()
             .unwrap_or(MevRisk::Low);
-        let estimated_time = routes
-            .iter()
-            .map(|r| r.execution_time_ms)
-            .max()
-            .unwrap_or(0);
 
         Ok(BestRoute {
             routes,
             total_input_amount: params.input_amount,
             total_output_amount: best_route.output_amount,
-            total_fee: best_route.fee,
             total_price_impact: best_route.price_impact,
             execution_priority: params.priority,
-            total_gas_cost,
-            estimated_execution_time_ms: estimated_time,
             max_mev_risk,
             route_type: RouteType::Optimal,
             split_ratio: None,

@@ -1,7 +1,11 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::dex::handle_dex_event;
 use crate::{config::ConfigLoader, PoolUpdateEvent};
+use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
+    PubkeyData, SimplifiedTokenBalance,
+};
 use solana_streamer_sdk::streaming::{
     event_parser::{
         protocols::{
@@ -17,21 +21,50 @@ use solana_streamer_sdk::streaming::{
     yellowstone_grpc::{AccountFilter, TransactionFilter},
     YellowstoneGrpc,
 };
+use yellowstone_grpc_proto::geyser::CommitmentLevel;
+
 use tokio::{sync::mpsc, time::interval};
 
 pub struct BatchProcessor {
     batch_size: usize,
     timeout_duration: Duration,
-    event_tx: mpsc::UnboundedSender<Box<dyn UnifiedEvent>>,
+    event_tx: mpsc::UnboundedSender<(
+        Vec<Box<dyn UnifiedEvent>>,
+        Vec<PubkeyData>,
+        Vec<u64>,
+        HashMap<String, SimplifiedTokenBalance>,
+    )>,
 }
 
 impl BatchProcessor {
     pub fn new(
         batch_size: usize,
         timeout_duration: Duration,
-    ) -> (Self, mpsc::UnboundedReceiver<Vec<Box<dyn UnifiedEvent>>>) {
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<Box<dyn UnifiedEvent>>();
-        let (batch_tx, batch_rx) = mpsc::unbounded_channel::<Vec<Box<dyn UnifiedEvent>>>();
+    ) -> (
+        Self,
+        mpsc::UnboundedReceiver<
+            Vec<(
+                Vec<Box<dyn UnifiedEvent>>,
+                Vec<PubkeyData>,
+                Vec<u64>,
+                HashMap<String, SimplifiedTokenBalance>,
+            )>,
+        >,
+    ) {
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<(
+            Vec<Box<dyn UnifiedEvent>>,
+            Vec<PubkeyData>,
+            Vec<u64>,
+            HashMap<String, SimplifiedTokenBalance>,
+        )>();
+        let (batch_tx, batch_rx) = mpsc::unbounded_channel::<
+            Vec<(
+                Vec<Box<dyn UnifiedEvent>>,
+                Vec<PubkeyData>,
+                Vec<u64>,
+                HashMap<String, SimplifiedTokenBalance>,
+            )>,
+        >();
 
         let processor = Self {
             batch_size,
@@ -50,13 +83,33 @@ impl BatchProcessor {
         (processor, batch_rx)
     }
 
-    pub fn send_event(&self, event: Box<dyn UnifiedEvent>) {
-        let _ = self.event_tx.send(event);
+    pub fn send_event(
+        &self,
+        events: Vec<Box<dyn UnifiedEvent>>,
+        accounts: Vec<PubkeyData>,
+        post_balances: Vec<u64>,
+        post_token_balances: HashMap<String, SimplifiedTokenBalance>,
+    ) {
+        let _ = self
+            .event_tx
+            .send((events, accounts, post_balances, post_token_balances));
     }
 
     async fn process_batches(
-        mut event_rx: mpsc::UnboundedReceiver<Box<dyn UnifiedEvent>>, // Receive individual events
-        batch_tx: mpsc::UnboundedSender<Vec<Box<dyn UnifiedEvent>>>,  // Send batches
+        mut event_rx: mpsc::UnboundedReceiver<(
+            Vec<Box<dyn UnifiedEvent>>,
+            Vec<PubkeyData>,
+            Vec<u64>,
+            HashMap<String, SimplifiedTokenBalance>,
+        )>, // Receive individual events
+        batch_tx: mpsc::UnboundedSender<
+            Vec<(
+                Vec<Box<dyn UnifiedEvent>>,
+                Vec<PubkeyData>,
+                Vec<u64>,
+                HashMap<String, SimplifiedTokenBalance>,
+            )>,
+        >, // Send batches
         batch_size: usize,
         timeout_duration: Duration,
     ) {
@@ -101,18 +154,30 @@ impl BatchProcessor {
     }
 
     pub async fn process_batch(
-        batch: Vec<Box<dyn UnifiedEvent>>,
-        pool_update_tx: mpsc::UnboundedSender<PoolUpdateEvent>,
+        batch: Vec<(
+            Vec<Box<dyn UnifiedEvent>>,
+            Vec<PubkeyData>,
+            Vec<u64>,
+            HashMap<String, SimplifiedTokenBalance>,
+        )>,
+        pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
     ) {
         log::trace!("Processing batch of {} events", batch.len());
 
         // Process events concurrently within the batch
         let tasks: Vec<_> = batch
             .into_iter()
-            .map(|event| {
+            .map(|(events, accounts, post_balances, post_token_balances)| {
                 let pool_update_tx_clone = pool_update_tx.clone();
                 tokio::spawn(async move {
-                    Self::process_single_event(event, pool_update_tx_clone).await;
+                    Self::process_single_event(
+                        events,
+                        accounts,
+                        post_balances,
+                        post_token_balances,
+                        pool_update_tx_clone,
+                    )
+                    .await;
                 })
             })
             .collect();
@@ -124,10 +189,19 @@ impl BatchProcessor {
     }
 
     async fn process_single_event(
-        event: Box<dyn UnifiedEvent>,
-        pool_update_tx: mpsc::UnboundedSender<PoolUpdateEvent>,
+        events: Vec<Box<dyn UnifiedEvent>>,
+        accounts: Vec<PubkeyData>,
+        post_balances: Vec<u64>,
+        post_token_balances: HashMap<String, SimplifiedTokenBalance>,
+        pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
     ) {
-        handle_dex_event(event, pool_update_tx);
+        handle_dex_event(
+            events,
+            accounts,
+            post_balances,
+            post_token_balances,
+            pool_update_tx,
+        );
     }
 }
 
@@ -136,57 +210,25 @@ use std::sync::Arc;
 pub struct GrpcService {
     grpc: YellowstoneGrpc,
     batch_processor: Arc<BatchProcessor>,
+    transaction_filter: TransactionFilter,
+    account_filter: AccountFilter,
+    accounts_being_tracked: HashMap<String, bool>,
+    accounts_being_tracked_list: Vec<String>,
+    protocols: Vec<Protocol>,
 }
 
 impl GrpcService {
     /// Start the gRPC service with batch processing
     pub async fn start(self: Arc<Self>) -> Result<(), Box<dyn std::error::Error>> {
-        // Filter accounts
-        let account_include = vec![
-            PUMPFUN_PROGRAM_ID.to_string(), // Listen to pumpfun program ID
-                                            // PUMPSWAP_PROGRAM_ID.to_string(),       // Listen to pumpswap program ID
-                                            // BONK_PROGRAM_ID.to_string(),           // Listen to bonk program ID
-                                            // RAYDIUM_CPMM_PROGRAM_ID.to_string(),   // Listen to raydium_cpmm program ID
-                                            // RAYDIUM_CLMM_PROGRAM_ID.to_string(),   // Listen to raydium_clmm program ID
-                                            // RAYDIUM_AMM_V4_PROGRAM_ID.to_string(), // Listen to raydium_amm_v4 program ID
-        ];
-
-        let protocols = vec![
-            Protocol::PumpFun,
-            Protocol::PumpSwap,
-            Protocol::Bonk,
-            Protocol::RaydiumCpmm,
-            Protocol::RaydiumClmm,
-            Protocol::RaydiumAmmV4,
-        ];
-
-        let account_exclude = vec![];
-        let account_required = vec![];
-
-        // Listen to transaction data
-        let transaction_filter = TransactionFilter {
-            account_include: account_include.clone(),
-            account_exclude,
-            account_required,
-        };
-
-        // Listen to account data belonging to owner programs -> account event monitoring
-        let account_filter = AccountFilter {
-            account: vec![],
-            owner: account_include.clone(),
-            filters: vec![],
-        };
-
-        // Event filtering
-        // No event filtering, includes all events
-        let event_type_filter = None;
-
         // Clone Arc for the callback
         let batch_processor = Arc::clone(&self.batch_processor);
 
         // Create callback that sends events to batch processor
-        let callback = move |event: Box<dyn UnifiedEvent>| {
-            batch_processor.send_event(event);
+        let callback = move |events: Vec<Box<dyn UnifiedEvent>>,
+                             accounts,
+                             post_balances,
+                             post_token_balances| {
+            batch_processor.send_event(events, accounts, post_balances, post_token_balances);
         };
 
         log::info!("Starting gRPC subscription with batch processing...");
@@ -195,15 +237,15 @@ impl GrpcService {
             self.batch_processor.batch_size,
             self.batch_processor.timeout_duration.as_millis()
         );
-        log::info!("Monitoring programs: {:?}", account_include);
+        log::info!("Monitoring programs: {:?}", self.account_filter.owner);
         self.grpc
             .subscribe_events_immediate(
-                protocols,
+                self.protocols.clone(),
                 None,
-                vec![transaction_filter],
-                vec![account_filter],
-                event_type_filter,
+                vec![self.transaction_filter.clone()],
+                vec![self.account_filter.clone()],
                 None,
+                Some(CommitmentLevel::Processed),
                 callback,
             )
             .await?;
@@ -212,6 +254,11 @@ impl GrpcService {
 
         Ok(())
     }
+
+    pub async fn add_more_accounts_to_filter(self: Arc<Self>, account_filter: AccountFilter) {
+        // let _ = self.grpc
+        //     .update_subscription(vec![self.transaction_filter.clone()], account_filter).await;
+    }
 }
 pub async fn create_grpc_service(
     batch_size: usize,
@@ -219,7 +266,14 @@ pub async fn create_grpc_service(
 ) -> Result<
     (
         Arc<GrpcService>,
-        mpsc::UnboundedReceiver<Vec<Box<dyn UnifiedEvent>>>,
+        mpsc::UnboundedReceiver<
+            Vec<(
+                Vec<Box<dyn UnifiedEvent>>,
+                Vec<PubkeyData>,
+                Vec<u64>,
+                HashMap<String, SimplifiedTokenBalance>,
+            )>,
+        >,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -237,10 +291,51 @@ pub async fn create_grpc_service(
 
     let batch_processor = Arc::new(batch_processor);
 
+    // Filter accounts
+    let mut account_include = vec![
+        // PUMPFUN_PROGRAM_ID.to_string(), // Listen to pumpfun program ID
+        // PUMPSWAP_PROGRAM_ID.to_string(), // Listen to pumpswap program ID
+        // BONK_PROGRAM_ID.to_string(),           // Listen to bonk program ID
+        // RAYDIUM_CPMM_PROGRAM_ID.to_string(),   // Listen to raydium_cpmm program ID
+        // RAYDIUM_CLMM_PROGRAM_ID.to_string(),   // Listen to raydium_clmm program ID
+        RAYDIUM_AMM_V4_PROGRAM_ID.to_string(), // Listen to raydium_amm_v4 program ID
+    ];
+
+    let protocols = vec![
+        // Protocol::PumpFun,
+        // Protocol::PumpSwap,
+        // Protocol::Bonk,
+        // Protocol::RaydiumCpmm,
+        // Protocol::RaydiumClmm,
+        Protocol::RaydiumAmmV4,
+    ];
+
+    let account_exclude = vec![];
+    let account_required = vec![];
+
+    // Listen to transaction data
+    let transaction_filter = TransactionFilter {
+        account_include: account_include.clone(),
+        account_exclude,
+        account_required,
+    };
+
+    // Listen to account data belonging to owner programs -> account event monitoring
+    let account_filter = AccountFilter {
+        account: vec![], // Raydium AMM V4 program's authority account
+        owner: account_include.clone(),
+        filters: vec![],
+    };
+
     Ok((
         Arc::new(GrpcService {
             grpc,
             batch_processor,
+            transaction_filter,
+            account_filter,
+            accounts_being_tracked: HashMap::new(),
+            accounts_being_tracked_list: vec![],
+            protocols,
         }),
         batch_rx,
     ))

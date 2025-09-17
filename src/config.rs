@@ -2,10 +2,10 @@ use anchor_client::solana_sdk::commitment_config::CommitmentLevel;
 use rust_decimal::Decimal;
 use std::env;
 
+use crate::constants::BASE_TOKENS;
 use crate::error::{DexAggregatorError, Result};
 use crate::types::{
-    AggregatorConfig, DexType, GasConfig, MevProtectionConfig, MevRisk, SmartRoutingConfig,
-    SplitConfig,
+    AggregatorConfig, GasConfig, MevProtectionConfig, MevRisk, SmartRoutingConfig, SplitConfig,
 };
 
 /// Configuration loader that reads from environment variables
@@ -26,7 +26,6 @@ impl ConfigLoader {
             commitment: Self::get_commitment_level()?,
             max_slippage: Self::get_decimal("MAX_SLIPPAGE", Decimal::new(5, 2))?,
             max_routes: Self::get_usize("MAX_ROUTES", 5)?,
-            enabled_dexs: Self::get_enabled_dexs()?,
             smart_routing: Self::load_smart_routing_config()?,
             gas_config: Self::load_gas_config()?,
             mev_protection: Self::load_mev_protection_config()?,
@@ -86,40 +85,6 @@ impl ConfigLoader {
             )?,
             prefer_low_mev: Self::get_bool("PREFER_LOW_MEV", true)?,
         })
-    }
-
-    /// Get enabled DEXs from environment variables
-    fn get_enabled_dexs() -> Result<Vec<DexType>> {
-        let mut dexs = Vec::new();
-
-        if Self::get_bool("ENABLE_PUMPFUN", true)? {
-            dexs.push(DexType::PumpFun);
-        }
-        if Self::get_bool("ENABLE_PUMPFUN_SWAP", true)? {
-            dexs.push(DexType::PumpFunSwap);
-        }
-        if Self::get_bool("ENABLE_RAYDIUM", true)? {
-            dexs.push(DexType::Raydium);
-        }
-        if Self::get_bool("ENABLE_RAYDIUM_CPMM", true)? {
-            dexs.push(DexType::RaydiumCpmm);
-        }
-        if Self::get_bool("ENABLE_ORCA", true)? {
-            dexs.push(DexType::Orca);
-        }
-
-        if dexs.is_empty() {
-            // Default to all DEXs if none are enabled
-            dexs = vec![
-                DexType::PumpFun,
-                DexType::PumpFunSwap,
-                DexType::Raydium,
-                DexType::RaydiumCpmm,
-                DexType::Orca,
-            ];
-        }
-
-        Ok(dexs)
     }
 
     /// Get commitment level from environment

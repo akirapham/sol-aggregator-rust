@@ -40,18 +40,24 @@ impl PumpFunDex {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    async fn calculate_output_amount(
+    fn calculate_output_amount(
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-    ) -> Result<u64> {
-        // This is a simplified calculation
-        // In reality, you'd need to implement the actual bonding curve math
-        // which involves virtual reserves and bonding curve parameters
+    ) -> u64 {
+        let is_buy = tokens_equal(input_token, &get_sol_mint());
+        let (token_reserve, sol_reserve) = (self.pool_state.token_reserve, self.pool_state.sol_reserve);
+        let output_amount = if is_buy {
+            let new_sol_reserve = sol_reserve + input_amount;
+            let new_token_reserve = (token_reserve as u128 * sol_reserve as u128 / new_sol_reserve as u128) as u64;
+            token_reserve - new_token_reserve
+        } else {
+            let new_token_reserve = token_reserve + input_amount;
+            let new_sol_reserve = (sol_reserve as u128 * token_reserve as u128 / new_token_reserve as u128) as u64;
+            sol_reserve - new_sol_reserve
+        };
 
-        // For now, return a placeholder calculation
-        // The actual implementation would require reading the bonding curve state
-        Ok(input_amount * 1000) // Placeholder: 1000x multiplier
+        output_amount * 99 / 100 // Apply 1% fee
     }
 }
 
@@ -68,8 +74,7 @@ impl DexInterface for PumpFunDex {
         }
 
         let output_amount = self
-            .calculate_output_amount(&params.input_token.address, params.input_amount)
-            .await?;
+            .calculate_output_amount(&params.input_token.address, params.input_amount);
 
         let input_token = params.input_token.clone();
         let output_token = params.output_token.clone();

@@ -1,5 +1,4 @@
 use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::parser::PUMPFUN_PROGRAM_ID;
 
 use crate::{
     constants::wsol,

@@ -15,3 +15,4 @@ pub use aggregator::DexAggregator;
 pub use constants::*;
 pub use error::*;
 pub use types::*;
+pub use pool_manager::*;

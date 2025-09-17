@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use std::{collections::HashMap, str::FromStr};
 
 use anchor_lang::Event;

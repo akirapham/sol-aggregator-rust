@@ -2,7 +2,6 @@ use anchor_client::solana_sdk::commitment_config::CommitmentLevel;
 use rust_decimal::Decimal;
 use std::env;
 
-use crate::constants::BASE_TOKENS;
 use crate::error::{DexAggregatorError, Result};
 use crate::types::{
     AggregatorConfig, GasConfig, MevProtectionConfig, MevRisk, SmartRoutingConfig, SplitConfig,

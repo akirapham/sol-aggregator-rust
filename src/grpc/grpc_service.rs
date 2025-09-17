@@ -212,8 +212,6 @@ pub struct GrpcService {
     batch_processor: Arc<BatchProcessor>,
     transaction_filter: TransactionFilter,
     account_filter: AccountFilter,
-    accounts_being_tracked: HashMap<String, bool>,
-    accounts_being_tracked_list: Vec<String>,
     protocols: Vec<Protocol>,
 }
 
@@ -254,11 +252,6 @@ impl GrpcService {
 
         Ok(())
     }
-
-    pub async fn add_more_accounts_to_filter(self: Arc<Self>, account_filter: AccountFilter) {
-        // let _ = self.grpc
-        //     .update_subscription(vec![self.transaction_filter.clone()], account_filter).await;
-    }
 }
 pub async fn create_grpc_service(
     batch_size: usize,
@@ -292,7 +285,7 @@ pub async fn create_grpc_service(
     let batch_processor = Arc::new(batch_processor);
 
     // Filter accounts
-    let mut account_include = vec![
+    let account_include = vec![
         // PUMPFUN_PROGRAM_ID.to_string(), // Listen to pumpfun program ID
         // PUMPSWAP_PROGRAM_ID.to_string(), // Listen to pumpswap program ID
         // BONK_PROGRAM_ID.to_string(),           // Listen to bonk program ID
@@ -333,8 +326,6 @@ pub async fn create_grpc_service(
             batch_processor,
             transaction_filter,
             account_filter,
-            accounts_being_tracked: HashMap::new(),
-            accounts_being_tracked_list: vec![],
             protocols,
         }),
         batch_rx,

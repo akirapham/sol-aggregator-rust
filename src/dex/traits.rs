@@ -1,12 +1,8 @@
 use async_trait::async_trait;
 use solana_sdk::pubkey::Pubkey;
-use std::sync::Arc;
 
 use crate::error::Result;
-use crate::pool_data_types::DexType;
-use crate::pool_manager::PoolStateManager;
-use crate::types::{PriceInfo, SwapParams, SwapRoute, Token};
-use crate::DexAggregatorError;
+use crate::types::{SwapParams, SwapRoute, Token};
 
 /// Common trait for all DEX implementations
 #[async_trait]

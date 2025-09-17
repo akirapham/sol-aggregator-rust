@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::Client;
 use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
 
 use crate::dex::traits::DexInterface;
-use crate::dex::TokenProviderInterface;
-use crate::error::{DexAggregatorError, Result};
+use crate::error::Result;
 use crate::pool_data_types::{DexType, PumpfunPoolState};
-use crate::types::{PriceInfo, SwapParams, SwapRoute, Token};
+use crate::types::{SwapParams, SwapRoute};
 use crate::utils::*;
 
 /// PumpFun DEX implementation

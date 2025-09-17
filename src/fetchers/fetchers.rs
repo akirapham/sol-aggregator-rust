@@ -2,7 +2,6 @@ use crate::DexAggregatorError;
 use crate::Token;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use spl_token_2022::extension::BaseStateWithExtensions;
 use spl_token_2022::extension::StateWithExtensions;
 use spl_token_2022::state::Mint;
 use std::sync::Arc;

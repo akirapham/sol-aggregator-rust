@@ -1,25 +1,14 @@
-use futures::future;
 use rust_decimal::Decimal;
-use solana_sdk::pubkey::Pubkey;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
 
-use crate::dex::DexInterface;
-use crate::error::{DexAggregatorError, Result};
-use crate::pool_data_types::DexType;
 use crate::pool_manager::PoolStateManager;
-use crate::smart_routing::SmartRoutingEngine;
 use crate::types::{
-    AggregatorConfig, BestRoute, ExecutionPriority, MevRisk, PriceInfo, RouteType, SwapParams,
-    SwapRoute,
+    AggregatorConfig, ExecutionPriority, SwapRoute,
 };
-
+use crate::grpc::create_grpc_service;
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
     config: AggregatorConfig,
-    dexs: HashMap<DexType, Box<dyn DexInterface + Send + Sync>>,
-    smart_routing: SmartRoutingEngine,
     pool_manager: Arc<PoolStateManager>,
 }
 
@@ -34,100 +23,8 @@ impl DexAggregator {
         config: AggregatorConfig,
         pool_manager: Arc<PoolStateManager>,
     ) -> Self {
-        let mut dexs: HashMap<DexType, Box<dyn DexInterface + Send + Sync>> = HashMap::new();
-
-        // // Initialize DEXs based on configuration
-        // for dex_type in &config.enabled_dexs {
-        //     match dex_type {
-        //         DexType::PumpFun => {
-        //             dexs.insert(
-        //                 DexType::PumpFun,
-        //                 Box::new(PumpFunDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::PumpFunSwap => {
-        //             dexs.insert(
-        //                 DexType::PumpFunSwap,
-        //                 Box::new(PumpFunSwapDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::Raydium => {
-        //             dexs.insert(
-        //                 DexType::Raydium,
-        //                 Box::new(RaydiumDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::RaydiumCpmm => {
-        //             dexs.insert(
-        //                 DexType::RaydiumCpmm,
-        //                 Box::new(RaydiumCpmmDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::Orca => {
-        //             dexs.insert(
-        //                 DexType::Orca,
-        //                 Box::new(OrcaDex::new(
-        //                     config.rpc_url.clone(),
-        //                     Arc::clone(&pool_manager),
-        //                 )),
-        //             );
-        //         }
-        //     }
-        // }
-
-        // Create a copy of dexs for smart routing
-        let mut smart_dexs: HashMap<DexType, Box<dyn DexInterface + Send + Sync>> = HashMap::new();
-        // for (dex_type, _dex) in &dexs {
-        //     // This is a simplified approach - in practice, you'd need to clone the DEXs properly
-        //     match dex_type {
-        //         DexType::PumpFun => {
-        //             smart_dexs.insert(
-        //                 DexType::PumpFun,
-        //                 Box::new(PumpFunDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::PumpFunSwap => {
-        //             smart_dexs.insert(
-        //                 DexType::PumpFunSwap,
-        //                 Box::new(PumpFunSwapDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::Raydium => {
-        //             smart_dexs.insert(
-        //                 DexType::Raydium,
-        //                 Box::new(RaydiumDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::RaydiumCpmm => {
-        //             smart_dexs.insert(
-        //                 DexType::RaydiumCpmm,
-        //                 Box::new(RaydiumCpmmDex::new(config.rpc_url.clone())),
-        //             );
-        //         }
-        //         DexType::Orca => {
-        //             smart_dexs.insert(
-        //                 DexType::Orca,
-        //                 Box::new(OrcaDex::new(
-        //                     config.rpc_url.clone(),
-        //                     Arc::clone(&pool_manager),
-        //                 )),
-        //             );
-        //         }
-        //     }
-        // }
-
-        let smart_routing = SmartRoutingEngine::new(
-            config.smart_routing.clone(),
-            config.gas_config.clone(),
-            config.mev_protection.clone(),
-            config.split_config.clone(),
-            smart_dexs,
-        );
-
         Self {
             config,
-            dexs,
-            smart_routing,
             pool_manager,
         }
     }
@@ -138,18 +35,18 @@ impl DexAggregator {
     }
 
     /// Find the best route for a swap using smart routing
-    pub async fn find_best_route(&self, params: &SwapParams) -> Result<BestRoute> {
-        // Use smart routing engine for advanced route finding
-        self.smart_routing.find_optimal_route(params).await
-    }
+    // pub async fn find_best_route(&self, params: &SwapParams) -> Result<BestRoute> {
+    //     // Use smart routing engine for advanced route finding
+    //     self.smart_routing.find_optimal_route(params).await
+    // }
 
     /// Alias for find_best_route to maintain compatibility
-    pub async fn get_best_route(&self, params: &SwapParams) -> Result<Option<BestRoute>> {
-        match self.find_best_route(params).await {
-            Ok(route) => Ok(Some(route)),
-            Err(_) => Ok(None),
-        }
-    }
+    // pub async fn get_best_route(&self, params: &SwapParams) -> Result<Option<BestRoute>> {
+    //     match self.find_best_route(params).await {
+    //         Ok(route) => Ok(Some(route)),
+    //         Err(_) => Ok(None),
+    //     }
+    // }
 
     // /// Find the best route using basic routing (fallback)
     // pub async fn find_best_route_basic(&self, params: &SwapParams) -> Result<BestRoute> {
@@ -287,4 +184,15 @@ impl DexAggregator {
             }
         }
     }
+}
+
+pub async fn start_aggregator() {
+    log::info!("Subscribing to Yellowstone gRPC events...");
+    // env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    let (grpc_service, batch_rx) = create_grpc_service(50, 500).await.unwrap();
+    let mut psm = PoolStateManager::new(grpc_service).await;
+
+    PoolStateManager::start_batch_event_processing(batch_rx, psm.get_pool_update_sender().clone());
+
+    psm.start().await;
 }

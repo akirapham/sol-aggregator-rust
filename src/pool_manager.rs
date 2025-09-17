@@ -1,5 +1,3 @@
-use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
@@ -12,14 +10,12 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::config::ConfigLoader;
-use crate::dex::TokenProviderInterface;
-use crate::error::{DexAggregatorError, Result};
 use crate::fetchers::fetchers::fetch_token;
-use crate::grpc::{create_grpc_service, BatchProcessor, GrpcService};
+use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{DexType, PoolState};
 use crate::types::Token;
 use crate::utils::pool_update_event_to_pool_state;
-use crate::{AggregatorConfig, PoolUpdateEvent};
+use crate::PoolUpdateEvent;
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {

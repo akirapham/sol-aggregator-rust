@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
 use crate::pool_data_types::{
-    pumpfun::PumpfunPoolState, DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
+    DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
     RaydiumAmmV4PoolUpdate,
 };
 

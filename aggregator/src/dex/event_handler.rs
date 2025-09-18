@@ -62,6 +62,7 @@ use crate::{
     types::PoolUpdateEvent,
     utils::get_sol_mint,
 };
+use crate::pool_data_types::BonkPoolUpdate;
 
 pub fn handle_dex_event(
     events: Vec<Box<dyn UnifiedEvent>>,
@@ -524,12 +525,37 @@ pub fn handle_dex_event(
             // -------------------------- account -----------------------
             BonkPoolStateAccountEvent => |e: BonkPoolStateAccountEvent| {
                 println!("BonkPoolStateAccountEvent: {e:?}");
+
+                pool_update_events.push(PoolUpdateEvent::BonkPoolUpdate(
+                    BonkPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: Pubkey::new_from_array(e.pubkey.as_array().clone()), // bondin
+                        status: e.pool_state.status,
+                        base_decimals: e.pool_state.base_decimals,
+                        quote_decimals: e.pool_state.quote_decimals,
+                        total_base_sell: e.pool_state.total_base_sell,
+                        base_reserve: e.pool_state.virtual_base, // virtual_base
+                        quote_reserve: e.pool_state.virtual_quote, // virtual_quote
+                        real_base: e.pool_state.real_base,
+                        real_quote: e.pool_state.real_quote,
+                        quote_protocol_fee: e.pool_state.quote_protocol_fee,
+                        platform_fee: e.pool_state.platform_fee,
+                        global_config: Pubkey::new_from_array(e.pool_state.global_config.as_array().clone()),
+                        platform_config: Pubkey::new_from_array(e.pool_state.platform_config.as_array().clone()),
+                        base_mint: Pubkey::new_from_array(e.pool_state.base_mint.as_array().clone()),
+                        quote_mint: Pubkey::new_from_array(e.pool_state.quote_mint.as_array().clone()),
+                        base_vault: Pubkey::new_from_array(e.pool_state.base_vault.as_array().clone()),
+                        quote_vault: Pubkey::new_from_array(e.pool_state.quote_vault.as_array().clone()),
+                        creator: Pubkey::new_from_array(e.pool_state.creator.as_array().clone()),
+                        last_updated: (e.metadata.recv_us/1000000) as u64, // Unix timestamp
+                    }));
             },
             BonkGlobalConfigAccountEvent => |e: BonkGlobalConfigAccountEvent| {
-                println!("BonkGlobalConfigAccountEvent: {e:?}");
+                // println!("BonkGlobalConfigAccountEvent: {e:?}");
             },
             BonkPlatformConfigAccountEvent => |e: BonkPlatformConfigAccountEvent| {
-                println!("BonkPlatformConfigAccountEvent: {e:?}");
+                // println!("BonkPlatformConfigAccountEvent: {e:?}");
             },
             PumpSwapGlobalConfigAccountEvent => |e: PumpSwapGlobalConfigAccountEvent| {
                 // do nothing for now

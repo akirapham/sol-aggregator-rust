@@ -7,7 +7,7 @@ use crate::{
     error::Result,
     pool_data_types::{
         DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
-        RaydiumCpmmPoolUpdate,
+        RaydiumCpmmPoolUpdate, BonkPoolUpdate
     },
 };
 
@@ -126,6 +126,7 @@ impl std::fmt::Display for DexType {
             DexType::Raydium => write!(f, "Raydium"),
             DexType::RaydiumCpmm => write!(f, "Raydium CPMM"),
             DexType::Orca => write!(f, "Orca"),
+            DexType::Bonk => write!(f, "Bonk"),
         }
     }
 }
@@ -193,6 +194,7 @@ pub enum PoolUpdateEvent {
     PumpSwapPoolUpdate(PumpSwapPoolUpdate),
     RaydiumPoolUpdate(RaydiumAmmV4PoolUpdate),
     RaydiumCpmmPoolUpdate(RaydiumCpmmPoolUpdate),
+    BonkPoolUpdate(BonkPoolUpdate),
 }
 
 impl PoolUpdateEvent {
@@ -202,6 +204,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.address,
             PoolUpdateEvent::RaydiumPoolUpdate(update) => update.address,
             PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.address,
+            PoolUpdateEvent::BonkPoolUpdate(update) => update.address,
         }
     }
 }

@@ -3,12 +3,14 @@ pub mod pumpfun;
 pub mod pumpswap;
 pub mod raydium;
 pub mod raydium_cpmm;
+pub mod bonk;
 
 pub use pool_state::*;
 pub use pumpfun::*;
 pub use pumpswap::*;
 pub use raydium::*;
 pub use raydium_cpmm::*;
+pub use bonk::*;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,4 +22,5 @@ pub enum DexType {
     Raydium,
     RaydiumCpmm,
     Orca,
+    Bonk
 }

@@ -1,7 +1,7 @@
 use crate::constants::WSOL_MINT;
 use crate::error::DexAggregatorError;
 use crate::error::Result;
-use crate::pool_data_types::RaydiumCpmmPoolState;
+use crate::pool_data_types::{BonkPoolState, RaydiumCpmmPoolState};
 use crate::pool_data_types::{
     PoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState,
 };
@@ -283,6 +283,32 @@ pub fn pool_update_event_to_pool_state(
                 ),
                 last_updated: raydium_cpmm_pool_update.last_updated,
                 liquidity_usd: 0.0,
+            })
+        }
+
+        PoolUpdateEvent::BonkPoolUpdate(bonk_pool_update) => {
+            PoolState::BonkPoolState(BonkPoolState {
+                slot: bonk_pool_update.slot,
+                transaction_index: bonk_pool_update.transaction_index,
+                address: bonk_pool_update.address,
+                status: bonk_pool_update.status,
+                base_decimals: bonk_pool_update.base_decimals,
+                quote_decimals: bonk_pool_update.quote_decimals,
+                total_base_sell: bonk_pool_update.total_base_sell,
+                base_reserve: bonk_pool_update.base_reserve,
+                quote_reserve: bonk_pool_update.quote_reserve,
+                real_base: bonk_pool_update.real_base,
+                real_quote: bonk_pool_update.real_quote,
+                quote_protocol_fee: bonk_pool_update.quote_protocol_fee,
+                platform_fee: bonk_pool_update.platform_fee,
+                global_config: bonk_pool_update.global_config,
+                platform_config: bonk_pool_update.platform_config,
+                base_mint: bonk_pool_update.base_mint,
+                quote_mint: bonk_pool_update.quote_mint,
+                base_vault: bonk_pool_update.base_vault,
+                quote_vault: bonk_pool_update.quote_vault,
+                creator: bonk_pool_update.creator,
+                last_updated: bonk_pool_update.last_updated,
             })
         }
     }

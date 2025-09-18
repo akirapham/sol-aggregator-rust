@@ -3,7 +3,8 @@ use solana_sdk::pubkey::Pubkey;
 use crate::{
     constants::wsol,
     pool_data_types::{
-        DexType, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState, RaydiumCpmmPoolState, BonkPoolState
+        BonkPoolState, DexType, PumpSwapPoolState, PumpfunPoolState, RadyiumClmmPoolState,
+        RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
     },
 };
 
@@ -14,6 +15,7 @@ pub enum PoolState {
     RaydiumAmmV4PoolState(RaydiumAmmV4PoolState),
     RaydiumCpmmPoolState(RaydiumCpmmPoolState),
     BonkPoolState(BonkPoolState),
+    RadyiumClmmPoolState(RadyiumClmmPoolState),
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +32,7 @@ impl PoolState {
             PoolState::RaydiumAmmV4PoolState(state) => state.last_updated,
             PoolState::RaydiumCpmmPoolState(state) => state.last_updated,
             PoolState::BonkPoolState(state) => state.last_updated,
+            PoolState::RadyiumClmmPoolState(state) => state.last_updated,
         }
     }
 
@@ -40,6 +43,7 @@ impl PoolState {
             PoolState::RaydiumAmmV4PoolState(state) => state.address,
             PoolState::RaydiumCpmmPoolState(state) => state.address,
             PoolState::BonkPoolState(state) => state.address,
+            PoolState::RadyiumClmmPoolState(state) => state.address,
         }
     }
 
@@ -50,6 +54,7 @@ impl PoolState {
             PoolState::RaydiumAmmV4PoolState(state) => (state.base_mint, state.quote_mint),
             PoolState::RaydiumCpmmPoolState(state) => (state.token0, state.token1),
             PoolState::BonkPoolState(state) => (state.base_mint, state.quote_mint),
+            PoolState::RadyiumClmmPoolState(state) => (state.token_mint0, state.token_mint1),
         }
     }
 
@@ -60,6 +65,7 @@ impl PoolState {
             PoolState::RaydiumAmmV4PoolState(_) => DexType::Raydium,
             PoolState::RaydiumCpmmPoolState(_) => DexType::RaydiumCpmm,
             PoolState::BonkPoolState(_) => DexType::Bonk,
+            PoolState::RadyiumClmmPoolState(_) => DexType::RaydiumClmm,
         }
     }
 
@@ -85,6 +91,10 @@ impl PoolState {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
+            PoolState::RadyiumClmmPoolState(state) => PoolStateMetadata {
+                slot: state.slot,
+                transaction_index: state.transaction_index,
+            },
         }
     }
     pub fn get_reserves(&self) -> (u64, u64) {
@@ -94,6 +104,7 @@ impl PoolState {
             PoolState::RaydiumAmmV4PoolState(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RaydiumCpmmPoolState(state) => (state.token0_reserve, state.token1_reserve),
             PoolState::BonkPoolState(state) => (state.base_reserve, state.quote_reserve),
+            PoolState::RadyiumClmmPoolState(state) => (state.token0_reserve, state.token1_reserve),
         }
     }
 }

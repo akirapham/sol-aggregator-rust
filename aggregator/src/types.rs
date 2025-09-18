@@ -6,8 +6,7 @@ use solana_sdk::pubkey::Pubkey;
 use crate::{
     error::Result,
     pool_data_types::{
-        DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
-        RaydiumCpmmPoolUpdate, BonkPoolUpdate
+        BonkPoolUpdate, DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate
     },
 };
 
@@ -127,6 +126,7 @@ impl std::fmt::Display for DexType {
             DexType::RaydiumCpmm => write!(f, "Raydium CPMM"),
             DexType::Orca => write!(f, "Orca"),
             DexType::Bonk => write!(f, "Bonk"),
+            DexType::RaydiumClmm => write!(f, "Raydium CLMM"),
         }
     }
 }
@@ -195,6 +195,7 @@ pub enum PoolUpdateEvent {
     RaydiumPoolUpdate(RaydiumAmmV4PoolUpdate),
     RaydiumCpmmPoolUpdate(RaydiumCpmmPoolUpdate),
     BonkPoolUpdate(BonkPoolUpdate),
+    RaydiumClmmPoolUpdate(RaydiumClmmPoolUpdate),
 }
 
 impl PoolUpdateEvent {
@@ -205,6 +206,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumPoolUpdate(update) => update.address,
             PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.address,
             PoolUpdateEvent::BonkPoolUpdate(update) => update.address,
+            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.address,
         }
     }
 }

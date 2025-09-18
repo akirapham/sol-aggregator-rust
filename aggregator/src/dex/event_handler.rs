@@ -54,15 +54,17 @@ use solana_streamer_sdk::{
 };
 use tokio::sync::mpsc;
 
+use crate::pool_data_types::BonkPoolUpdate;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumCpmmPoolUpdate,
+        PumpSwapPoolUpdate, PumpfunPoolUpdate, RadyiumClmmPoolReservePart,
+        RadyiumClmmPoolStatePart, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate,
+        RaydiumCpmmPoolUpdate, TickArrayState, TickState,
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
 };
-use crate::pool_data_types::BonkPoolUpdate;
 
 pub fn handle_dex_event(
     events: Vec<Box<dyn UnifiedEvent>>,
@@ -336,28 +338,142 @@ pub fn handle_dex_event(
             },
             // -------------------------- raydium_clmm -----------------------
             RaydiumClmmSwapEvent => |e: RaydiumClmmSwapEvent| {
-                // println!("RaydiumClmmSwapEvent: {e:?}");
+                let input_balance = post_token_balances.get(e.input_vault.to_string().as_str());
+                let output_balance = post_token_balances.get(e.output_vault.to_string().as_str());
+                if let (Some(inputb), Some(outputb)) = (input_balance, output_balance) {
+                    if is_base_token(&inputb.mint) || is_base_token(&outputb.mint) {
+                        let token0_is_input = Pubkey::from_str(&inputb.mint).unwrap() < Pubkey::from_str(&outputb.mint).unwrap();
+                        pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                            RaydiumClmmPoolUpdate {
+                                address:Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: (e.metadata.recv_us / 1000000) as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                    token0_reserve: if token0_is_input { inputb.amount } else { outputb.amount },
+                                    token1_reserve: if token0_is_input { outputb.amount } else { inputb.amount }
+                                }),
+                                tick_array_state: None
+                            }));
+                    }
+                }
             },
             RaydiumClmmSwapV2Event => |e: RaydiumClmmSwapV2Event| {
-                // println!("RaydiumClmmSwapV2Event: {e:?}");
+                let input_balance = post_token_balances.get(e.input_vault.to_string().as_str());
+                let output_balance = post_token_balances.get(e.output_vault.to_string().as_str());
+                if let (Some(inputb), Some(outputb)) = (input_balance, output_balance) {
+                    if is_base_token(&inputb.mint) || is_base_token(&outputb.mint) {
+                        let token0_is_input = Pubkey::from_str(&inputb.mint).unwrap() < Pubkey::from_str(&outputb.mint).unwrap();
+                        pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                            RaydiumClmmPoolUpdate {
+                                address:Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: (e.metadata.recv_us / 1000000) as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                    token0_reserve: if token0_is_input { inputb.amount } else { outputb.amount },
+                                    token1_reserve: if token0_is_input { outputb.amount } else { inputb.amount }
+                                }),
+                                tick_array_state: None
+                            }));
+                    }
+                }
             },
             RaydiumClmmClosePositionEvent => |e: RaydiumClmmClosePositionEvent| {
                 // println!("RaydiumClmmClosePositionEvent: {e:?}");
             },
             RaydiumClmmDecreaseLiquidityV2Event => |e: RaydiumClmmDecreaseLiquidityV2Event| {
-                // println!("RaydiumClmmDecreaseLiquidityV2Event: {e:?}");
+                let token0_balance = post_token_balances.get(e.token_vault0.to_string().as_str());
+                let token1_balance = post_token_balances.get(e.token_vault1.to_string().as_str());
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        // println!("RaydiumClmmIncreaseLiquidityV2Event: {e:?}");
+                        pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                            RaydiumClmmPoolUpdate {
+                                address:Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: (e.metadata.recv_us / 1000000) as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                    token0_reserve: todo!(),
+                                    token1_reserve: todo!()
+                                }),
+                                tick_array_state: None
+                            }));
+                    }
+                }
             },
             RaydiumClmmCreatePoolEvent => |e: RaydiumClmmCreatePoolEvent| {
                 // println!("RaydiumClmmCreatePoolEvent: {e:?}");
             },
             RaydiumClmmIncreaseLiquidityV2Event => |e: RaydiumClmmIncreaseLiquidityV2Event| {
-                // println!("RaydiumClmmIncreaseLiquidityV2Event: {e:?}");
+                let token0_balance = post_token_balances.get(e.token_account0.to_string().as_str());
+                let token1_balance = post_token_balances.get(e.token_account1.to_string().as_str());
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        // println!("RaydiumClmmIncreaseLiquidityV2Event: {e:?}");
+                        pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                            RaydiumClmmPoolUpdate {
+                                address:Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: (e.metadata.recv_us / 1000000) as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                    token0_reserve: todo!(),
+                                    token1_reserve: todo!()
+                                }),
+                                tick_array_state: None
+                            }));
+                    }
+                }
             },
             RaydiumClmmOpenPositionWithToken22NftEvent => |e: RaydiumClmmOpenPositionWithToken22NftEvent| {
-                // println!("RaydiumClmmOpenPositionWithToken22NftEvent: {e:?}");
+                let token0_balance = post_token_balances.get(e.token_account0.to_string().as_str());
+                let token1_balance = post_token_balances.get(e.token_account1.to_string().as_str());
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        // println!("RaydiumClmmIncreaseLiquidityV2Event: {e:?}");
+                        pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                            RaydiumClmmPoolUpdate {
+                                address: Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: (e.metadata.recv_us / 1000000) as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                    token0_reserve: todo!(),
+                                    token1_reserve: todo!()
+                                }),
+                                tick_array_state: None
+                            }));
+                    }
+                }
             },
             RaydiumClmmOpenPositionV2Event => |e: RaydiumClmmOpenPositionV2Event| {
-                // println!("RaydiumClmmOpenPositionV2Event: {e:?}");
+                let token0_balance = post_token_balances.get(e.token_account0.to_string().as_str());
+                let token1_balance = post_token_balances.get(e.token_account1.to_string().as_str());
+                if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
+                    if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
+                        // println!("RaydiumClmmIncreaseLiquidityV2Event: {e:?}");
+                        pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                            RaydiumClmmPoolUpdate {
+                                address:Pubkey::new_from_array(e.pool_state.as_array().clone()),
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: (e.metadata.recv_us / 1000000) as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                    token0_reserve: todo!(),
+                                    token1_reserve: todo!()
+                                }),
+                                tick_array_state: None
+                            }));
+                    }
+                }
             },
             // -------------------------- raydium_amm_v4 -----------------------
             RaydiumAmmV4SwapEvent => |e: RaydiumAmmV4SwapEvent| {
@@ -590,10 +706,55 @@ pub fn handle_dex_event(
                 // println!("RaydiumClmmAmmConfigAccountEvent: {e:?}");
             },
             RaydiumClmmPoolStateAccountEvent => |e: RaydiumClmmPoolStateAccountEvent| {
-                println!("RaydiumClmmPoolStateAccountEvent: {e:?}");
+                if is_base_token(&e.pool_state.token_mint0.to_string()) || is_base_token(&e.pool_state.token_mint1.to_string()) {
+                    pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                    RaydiumClmmPoolUpdate {
+                        address:Pubkey::new_from_array(e.pubkey.as_array().clone()),
+                        slot:e.metadata.slot,
+                        transaction_index:e.metadata.transaction_index,
+                        last_updated:(e.metadata.recv_us/1000000) as u64,
+                        pool_state_part: Some(RadyiumClmmPoolStatePart {
+                            amm_config: Pubkey::new_from_array(e.pool_state.amm_config.as_array().clone()),
+                            token_mint0: Pubkey::new_from_array(e.pool_state.token_mint0.as_array().clone()),
+                            token_mint1: Pubkey::new_from_array(e.pool_state.token_mint1.as_array().clone()),
+                            token_vault0: Pubkey::new_from_array(e.pool_state.token_vault0.as_array().clone()),
+                            token_vault1: Pubkey::new_from_array(e.pool_state.token_vault1.as_array().clone()),
+                            observation_key: Pubkey::new_from_array(e.pool_state.observation_key.as_array().clone()),
+                            tick_spacing: e.pool_state.tick_spacing,
+                            liquidity: e.pool_state.liquidity,
+                            sqrt_price_x64: e.pool_state.sqrt_price_x64,
+                            tick_current_index: e.pool_state.tick_current,
+                            status: e.pool_state.status,
+                            tick_array_bitmap: e.pool_state.tick_array_bitmap,
+                            open_time: e.pool_state.open_time,
+                        }),
+                        reserve_part: None,
+                        tick_array_state: None
+                    }));
+                }
             },
             RaydiumClmmTickArrayStateAccountEvent => |e: RaydiumClmmTickArrayStateAccountEvent| {
-                println!("RaydiumClmmTickArrayStateAccountEvent: {e:?}");
+                pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                    RaydiumClmmPoolUpdate {
+                        address:Pubkey::new_from_array(e.pubkey.as_array().clone()),
+                        slot:e.metadata.slot,
+                        transaction_index:e.metadata.transaction_index,
+                        last_updated:(e.metadata.recv_us/1000000) as u64,
+                        pool_state_part: None,
+                        reserve_part: None,
+                        tick_array_state: Some(TickArrayState {
+                            start_tick_index:e.tick_array_state.start_tick_index,
+                            ticks: std::array::from_fn(|i| {
+                                let t = e.tick_array_state.ticks.get(i).unwrap();
+                                TickState {
+                                    liquidity_net: t.liquidity_net,
+                                    liquidity_gross: t.liquidity_gross,
+                                    tick: t.tick,
+                                }
+                            }),
+                            initialized_tick_count: e.tick_array_state.initialized_tick_count,
+                        })
+                    }));
             },
             RaydiumCpmmAmmConfigAccountEvent => |e: RaydiumCpmmAmmConfigAccountEvent| {
                 // do nothing for now

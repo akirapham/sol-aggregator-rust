@@ -24,5 +24,6 @@ pub enum DexType {
     Raydium,
     RaydiumCpmm,
     Orca,
-    Bonk
+    Bonk,
+    RaydiumClmm,
 }

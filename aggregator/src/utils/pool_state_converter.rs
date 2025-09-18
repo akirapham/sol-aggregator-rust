@@ -1,21 +1,20 @@
 use solana_sdk::pubkey::Pubkey;
+use tokio::sync::MutexGuard;
 
-use crate::pool_data_types::{PoolState, TickArrayState, TickState};
 use crate::pool_data_types::{
-    BonkPoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
-    RadyiumClmmPoolState
+    BonkPoolState, PumpSwapPoolState, PumpfunPoolState, RadyiumClmmPoolState,
+    RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
 };
+use crate::pool_data_types::{PoolState, TickArrayState, TickState};
 use crate::types::PoolUpdateEvent;
-use crate::utils::use_input_or_existing;
+use crate::utils::{tokens_equal, use_input_or_existing};
 
-// TODO: refactor this, we can update the input event directly instead of creating a new struct
 pub fn pool_update_event_to_pool_state(
-    event: &PoolUpdateEvent,
-    existing_state: Option<PoolState>,
-) -> PoolState {
+    event: &PoolUpdateEvent
+) -> Option<PoolState> {
     match event {
         PoolUpdateEvent::PumpfunPoolUpdate(pumpfun_pool_update) => {
-            PoolState::PumpfunPoolState(PumpfunPoolState {
+            Some(PoolState::PumpfunPoolState(PumpfunPoolState {
                 address: pumpfun_pool_update.address,
                 last_updated: pumpfun_pool_update.last_updated,
                 liquidity_usd: 0.0,
@@ -26,46 +25,11 @@ pub fn pool_update_event_to_pool_state(
                 real_token_reserve: pumpfun_pool_update.real_token_reserve,
                 slot: pumpfun_pool_update.slot,
                 transaction_index: pumpfun_pool_update.transaction_index,
-            })
+                is_state_keys_initialized: pumpfun_pool_update.is_account_state_update,
+            }))
         }
         PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update) => {
-            let existing_raydium_state = match existing_state {
-                Some(PoolState::RaydiumAmmV4PoolState(state)) => Some(state),
-                _ => None,
-            };
-            let (
-                existing_serum_program,
-                existing_serum_market,
-                existing_serum_bids,
-                existing_serum_asks,
-                existing_serum_event_queue,
-                existing_serum_coin_vault_account,
-                existing_serum_pc_vault_account,
-                existing_serum_vault_signer,
-            ) = if let Some(state) = existing_raydium_state {
-                (
-                    state.serum_program,
-                    state.serum_market,
-                    state.serum_bids,
-                    state.serum_asks,
-                    state.serum_event_queue,
-                    state.serum_coin_vault_account,
-                    state.serum_pc_vault_account,
-                    state.serum_vault_signer,
-                )
-            } else {
-                (
-                    Pubkey::default(),
-                    Pubkey::default(),
-                    Pubkey::default(),
-                    Pubkey::default(),
-                    Pubkey::default(),
-                    Pubkey::default(),
-                    Pubkey::default(),
-                    Pubkey::default(),
-                )
-            };
-            PoolState::RaydiumAmmV4PoolState(RaydiumAmmV4PoolState {
+            Some(PoolState::RaydiumAmmV4PoolState(RaydiumAmmV4PoolState {
                 slot: raydium_pool_update.slot,
                 transaction_index: raydium_pool_update.transaction_index,
                 address: raydium_pool_update.address,
@@ -76,61 +40,25 @@ pub fn pool_update_event_to_pool_state(
                 amm_target_orders: raydium_pool_update.amm_target_orders,
                 pool_coin_token_account: raydium_pool_update.pool_coin_token_account,
                 pool_pc_token_account: raydium_pool_update.pool_pc_token_account,
-                serum_program: use_input_or_existing(
-                    &raydium_pool_update.serum_program,
-                    &existing_serum_program,
-                ),
-                serum_market: use_input_or_existing(
-                    &raydium_pool_update.serum_market,
-                    &existing_serum_market,
-                ),
-                serum_bids: use_input_or_existing(
-                    &raydium_pool_update.serum_bids,
-                    &existing_serum_bids,
-                ),
-                serum_asks: use_input_or_existing(
-                    &raydium_pool_update.serum_asks,
-                    &existing_serum_asks,
-                ),
-                serum_event_queue: use_input_or_existing(
-                    &raydium_pool_update.serum_event_queue,
-                    &existing_serum_event_queue,
-                ),
-                serum_coin_vault_account: use_input_or_existing(
-                    &raydium_pool_update.serum_coin_vault_account,
-                    &existing_serum_coin_vault_account,
-                ),
-                serum_pc_vault_account: use_input_or_existing(
-                    &raydium_pool_update.serum_pc_vault_account,
-                    &existing_serum_pc_vault_account,
-                ),
-                serum_vault_signer: use_input_or_existing(
-                    &raydium_pool_update.serum_vault_signer,
-                    &existing_serum_vault_signer,
-                ),
+                serum_program: raydium_pool_update.serum_program.unwrap_or_default(),
+                serum_market: raydium_pool_update.serum_market.unwrap_or_default(),
+                serum_bids: raydium_pool_update.serum_bids.unwrap_or_default(),
+                serum_asks: raydium_pool_update.serum_asks.unwrap_or_default(),
+                serum_event_queue: raydium_pool_update.serum_event_queue.unwrap_or_default(),
+                serum_coin_vault_account: raydium_pool_update.serum_coin_vault_account.unwrap_or_default(),
+                serum_pc_vault_account: raydium_pool_update.serum_pc_vault_account.unwrap_or_default(),
+                serum_vault_signer: raydium_pool_update.serum_vault_signer.unwrap_or_default(),
                 last_updated: raydium_pool_update.last_updated,
                 base_reserve: raydium_pool_update.base_reserve,
                 quote_reserve: raydium_pool_update.quote_reserve,
-            })
+                is_state_keys_initialized: raydium_pool_update.is_account_state_update,
+            }))
         }
         PoolUpdateEvent::PumpSwapPoolUpdate(pump_swap_pool_update) => {
-            let existing_pump_swap_state = match existing_state {
-                Some(PoolState::PumpSwapPoolState(state)) => Some(state),
-                _ => None,
-            };
-            let (existing_index, existing_creator) = if let Some(state) = existing_pump_swap_state {
-                (state.index, state.creator)
-            } else {
-                (0, None)
-            };
-            PoolState::PumpSwapPoolState(PumpSwapPoolState {
+            Some(PoolState::PumpSwapPoolState(PumpSwapPoolState {
                 address: pump_swap_pool_update.address,
-                index: pump_swap_pool_update.index.unwrap_or(existing_index),
-                creator: if existing_creator.is_some() {
-                    existing_creator
-                } else {
-                    pump_swap_pool_update.creator
-                },
+                index: pump_swap_pool_update.index.unwrap_or_default(),
+                creator: pump_swap_pool_update.creator,
                 last_updated: pump_swap_pool_update.last_updated,
                 base_reserve: pump_swap_pool_update.base_reserve,
                 quote_reserve: pump_swap_pool_update.quote_reserve,
@@ -140,69 +68,34 @@ pub fn pool_update_event_to_pool_state(
                 quote_mint: pump_swap_pool_update.quote_mint,
                 pool_base_token_account: pump_swap_pool_update.pool_base_token_account,
                 pool_quote_token_account: pump_swap_pool_update.pool_quote_token_account,
-            })
+                is_state_keys_initialized: pump_swap_pool_update.is_account_state_update,
+            }))
         }
         PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_cpmm_pool_update) => {
-            let existing_raydium_state = match existing_state {
-                Some(PoolState::RaydiumCpmmPoolState(state)) => Some(state),
-                _ => None,
-            };
-            let is_reserve_updated = raydium_cpmm_pool_update.token0_reserve != 0
-                && raydium_cpmm_pool_update.token1_reserve != 0;
-            let (token0_reserve, token1_reserve) = if is_reserve_updated {
-                (
-                    raydium_cpmm_pool_update.token0_reserve,
-                    raydium_cpmm_pool_update.token1_reserve,
-                )
-            } else if let Some(ref state) = existing_raydium_state {
-                (state.token0_reserve, state.token1_reserve)
-            } else {
-                (0, 0)
-            };
-            let updated_status = if let Some(status) = raydium_cpmm_pool_update.status.clone() {
-                status
-            } else if let Some(ref state) = existing_raydium_state {
-                state.status
-            } else {
-                0
-            };
-            let (existing_amm_config, existing_observation_state) =
-                if let Some(ref state) = existing_raydium_state {
-                    (state.amm_config, state.observation_state)
-                } else {
-                    (Pubkey::default(), Pubkey::default())
-                };
-            PoolState::RaydiumCpmmPoolState(RaydiumCpmmPoolState {
+            Some(PoolState::RaydiumCpmmPoolState(RaydiumCpmmPoolState {
                 slot: raydium_cpmm_pool_update.slot,
                 transaction_index: raydium_cpmm_pool_update.transaction_index,
                 address: raydium_cpmm_pool_update.address,
-                status: updated_status,
+                status: raydium_cpmm_pool_update.status.unwrap_or_default(),
                 token0: raydium_cpmm_pool_update.token0,
                 token1: raydium_cpmm_pool_update.token1,
                 token0_vault: raydium_cpmm_pool_update.token0_vault,
                 token1_vault: raydium_cpmm_pool_update.token1_vault,
-                token0_reserve,
-                token1_reserve,
-                amm_config: use_input_or_existing(
-                    &raydium_cpmm_pool_update.amm_config,
-                    &existing_amm_config,
-                ),
-                observation_state: use_input_or_existing(
-                    &raydium_cpmm_pool_update.observation_state,
-                    &existing_observation_state,
-                ),
+                token0_reserve: raydium_cpmm_pool_update.token0_reserve,
+                token1_reserve: raydium_cpmm_pool_update.token1_reserve,
+                amm_config: raydium_cpmm_pool_update.amm_config,
+                observation_state: raydium_cpmm_pool_update.observation_state,
                 last_updated: raydium_cpmm_pool_update.last_updated,
                 liquidity_usd: 0.0,
-            })
+                is_state_keys_initialized: raydium_cpmm_pool_update.is_account_state_update,
+            }))
         }
         PoolUpdateEvent::BonkPoolUpdate(bonk_pool_update) => {
-            PoolState::BonkPoolState(BonkPoolState {
+            Some(PoolState::BonkPoolState(BonkPoolState {
                 slot: bonk_pool_update.slot,
                 transaction_index: bonk_pool_update.transaction_index,
                 address: bonk_pool_update.address,
                 status: bonk_pool_update.status,
-                base_decimals: bonk_pool_update.base_decimals,
-                quote_decimals: bonk_pool_update.quote_decimals,
                 total_base_sell: bonk_pool_update.total_base_sell,
                 base_reserve: bonk_pool_update.base_reserve,
                 quote_reserve: bonk_pool_update.quote_reserve,
@@ -218,45 +111,45 @@ pub fn pool_update_event_to_pool_state(
                 quote_vault: bonk_pool_update.quote_vault,
                 creator: bonk_pool_update.creator,
                 last_updated: bonk_pool_update.last_updated,
-            })
+                is_state_keys_initialized: bonk_pool_update.is_account_state_update,
+            }))
         }
         PoolUpdateEvent::RaydiumClmmPoolUpdate(raydium_clmm_pool_update) => {
-            let mut pool_state = match existing_state {
-                Some(PoolState::RadyiumClmmPoolState(state)) => state,
-                _ => RadyiumClmmPoolState {
-                    slot: raydium_clmm_pool_update.slot,
-                    transaction_index: raydium_clmm_pool_update.transaction_index,
-                    address: raydium_clmm_pool_update.address,
-                    amm_config: Pubkey::default(),
-                    token_mint0: Pubkey::default(),
-                    token_mint1: Pubkey::default(),
-                    token_vault0: Pubkey::default(),
-                    token_vault1: Pubkey::default(),
-                    observation_key: Pubkey::default(),
-                    tick_spacing: 0,
-                    liquidity: 0,
-                    sqrt_price_x64: 0,
-                    tick_current_index: 0,
-                    status: 0,
-                    tick_array_bitmap: [0; 16],
-                    open_time: 0,
-                    tick_array_state: TickArrayState {
-                        start_tick_index: 0,
-                        ticks: std::array::from_fn(|i| TickState {
-                            tick: i as i32,
-                            liquidity_net: 0,
-                            liquidity_gross: 0,
-                        }),
-                        initialized_tick_count: 0,
-                    },
-                    last_updated: raydium_clmm_pool_update.last_updated,
-                    token0_reserve: 0,
-                    token1_reserve: 0,
+            let mut pool_state = RadyiumClmmPoolState {
+                slot: raydium_clmm_pool_update.slot,
+                transaction_index: raydium_clmm_pool_update.transaction_index,
+                address: raydium_clmm_pool_update.address,
+                amm_config: Pubkey::default(),
+                token_mint0: Pubkey::default(),
+                token_mint1: Pubkey::default(),
+                token_vault0: Pubkey::default(),
+                token_vault1: Pubkey::default(),
+                observation_key: Pubkey::default(),
+                tick_spacing: 0,
+                liquidity: 0,
+                sqrt_price_x64: 0,
+                tick_current_index: 0,
+                status: 0,
+                tick_array_bitmap: [0; 16],
+                open_time: 0,
+                tick_array_state: TickArrayState {
+                    start_tick_index: 0,
+                    ticks: std::array::from_fn(|i| TickState {
+                        tick: i as i32,
+                        liquidity_net: 0,
+                        liquidity_gross: 0,
+                    }),
+                    initialized_tick_count: 0,
                 },
+                last_updated: raydium_clmm_pool_update.last_updated,
+                token0_reserve: 0,
+                token1_reserve: 0,
+                is_state_keys_initialized: raydium_clmm_pool_update.is_account_state_update,
             };
             pool_state.slot = raydium_clmm_pool_update.slot;
             pool_state.transaction_index = raydium_clmm_pool_update.transaction_index;
             pool_state.last_updated = raydium_clmm_pool_update.last_updated;
+
             if let Some(ref pool_state_part) = raydium_clmm_pool_update.pool_state_part {
                 pool_state.amm_config = pool_state_part.amm_config.clone();
                 pool_state.token_mint0 = pool_state_part.token_mint0.clone();
@@ -280,13 +173,238 @@ pub fn pool_update_event_to_pool_state(
 
             if let Some(ref tick_array_update) = raydium_clmm_pool_update.tick_array_state {
                 let start_tick_index = tick_array_update.start_tick_index;
-                pool_state.tick_array_state.ticks[..60].copy_from_slice(&tick_array_update.ticks[..60]);
+                pool_state.tick_array_state.ticks[..60]
+                    .copy_from_slice(&tick_array_update.ticks[..60]);
                 pool_state.tick_array_state.start_tick_index = start_tick_index;
                 pool_state.tick_array_state.initialized_tick_count =
                     tick_array_update.initialized_tick_count;
             }
 
-            PoolState::RadyiumClmmPoolState(pool_state)
-        },
+            Some(PoolState::RadyiumClmmPoolState(pool_state))
+        }
+    }
+}
+
+pub fn update_pool_state_by_event(
+    event: &PoolUpdateEvent,
+    existing_state: &mut MutexGuard<PoolState>,
+) {
+    // let last_updated = event.last_updated();
+    // if existing_state.last_updated() > last_updated {
+    //     log::warn!("Received out-of-order event. Existing state last updated at {}, event last updated at {}. Ignoring event.", existing_state.last_updated(), last_updated);
+    //     return;
+    // }
+    match event {
+        PoolUpdateEvent::PumpfunPoolUpdate(pumpfun_pool_update) => {
+            match &mut **existing_state {
+                PoolState::PumpfunPoolState(state) => {
+                    // only update last_updated if it's transaction event update that we can collect reserves
+                    if !pumpfun_pool_update.is_account_state_update {
+                        state.last_updated = pumpfun_pool_update.last_updated;
+                    }
+                    state.liquidity_usd = 0.0;
+                    state.complete = pumpfun_pool_update.complete;
+                    state.sol_reserve = pumpfun_pool_update.sol_reserve;
+                    state.token_reserve = pumpfun_pool_update.token_reserve;
+                    state.real_token_reserve = pumpfun_pool_update.real_token_reserve;
+                    state.slot = pumpfun_pool_update.slot;
+                    state.transaction_index = pumpfun_pool_update.transaction_index;
+                }
+                _ => {}
+            }
+        }
+        PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update) => {
+            match &mut **existing_state {
+                PoolState::RaydiumAmmV4PoolState(state) => {
+                    // only update last_updated if it's transaction event update that we can collect reserves
+                    if !raydium_pool_update.is_account_state_update {
+                        state.last_updated = raydium_pool_update.last_updated;
+                    }
+                    state.slot = raydium_pool_update.slot;
+                    state.transaction_index = raydium_pool_update.transaction_index;
+                    if let Some(serum_program) = raydium_pool_update.serum_program {
+                        if !tokens_equal(&serum_program, &state.serum_program) {
+                            state.serum_program = serum_program;
+                        }
+                    }
+                    if let Some(serum_market) = raydium_pool_update.serum_market {
+                        if !tokens_equal(&serum_market, &state.serum_market) {
+                            state.serum_market = serum_market;
+                        }
+                    }
+                    if let Some(serum_bids) = raydium_pool_update.serum_bids {
+                        if !tokens_equal(&serum_bids, &state.serum_bids) {
+                            state.serum_bids = serum_bids;
+                        }
+                    }
+                    if let Some(serum_asks) = raydium_pool_update.serum_asks {
+                        if !tokens_equal(&serum_asks, &state.serum_asks) {
+                            state.serum_asks = serum_asks;
+                        }
+                    }
+                    if let Some(serum_event_queue) = raydium_pool_update.serum_event_queue {
+                        if !tokens_equal(&serum_event_queue, &state.serum_event_queue) {
+                            state.serum_event_queue = serum_event_queue;
+                        }
+                    }
+                    if let Some(serum_coin_vault_account) = raydium_pool_update.serum_coin_vault_account {
+                        if !tokens_equal(&serum_coin_vault_account, &state.serum_coin_vault_account) {
+                            state.serum_coin_vault_account = serum_coin_vault_account;
+                        }
+                    }
+                    if let Some(serum_pc_vault_account) = raydium_pool_update.serum_pc_vault_account {
+                        if !tokens_equal(&serum_pc_vault_account, &state.serum_pc_vault_account) {
+                            state.serum_pc_vault_account = serum_pc_vault_account;
+                        }
+                    }
+                    if let Some(serum_vault_signer) = raydium_pool_update.serum_vault_signer {
+                        if !tokens_equal(&serum_vault_signer, &state.serum_vault_signer) {
+                            state.serum_vault_signer = serum_vault_signer;
+                        }
+                    }
+                    if !raydium_pool_update.is_account_state_update {
+                        state.base_reserve = raydium_pool_update.base_reserve;
+                        state.quote_reserve = raydium_pool_update.quote_reserve;
+                    }
+                }
+                _ => {}
+
+            }
+        }
+        PoolUpdateEvent::PumpSwapPoolUpdate(pump_swap_pool_update) => {
+            match &mut **existing_state {
+                PoolState::PumpSwapPoolState(state) => {
+                    // only update last_updated if it's transaction event update that we can collect reserves
+                    if !pump_swap_pool_update.is_account_state_update {
+                        state.last_updated = pump_swap_pool_update.last_updated;
+                    }
+                    state.slot = pump_swap_pool_update.slot;
+                    state.transaction_index = pump_swap_pool_update.transaction_index;
+                    state.index = pump_swap_pool_update.index.unwrap_or(state.index);
+                    if let Some(creator) = pump_swap_pool_update.creator {
+                        if state.creator.is_none() {
+                            state.creator = Some(creator);
+                        }
+                    }
+                    if !pump_swap_pool_update.is_account_state_update {
+                        state.base_reserve = pump_swap_pool_update.base_reserve;
+                        state.quote_reserve = pump_swap_pool_update.quote_reserve;
+                    }
+                }
+                _ => {}
+            }
+        }
+        PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_cpmm_pool_update) => {
+            match &mut **existing_state {
+                PoolState::RaydiumCpmmPoolState(state) => {
+                    // only update last_updated if it's transaction event update that we can collect reserves
+                    if !raydium_cpmm_pool_update.is_account_state_update {
+                        state.last_updated = raydium_cpmm_pool_update.last_updated;
+                    }
+                    state.slot = raydium_cpmm_pool_update.slot;
+                    state.transaction_index = raydium_cpmm_pool_update.transaction_index;
+                    state.status = raydium_cpmm_pool_update.status.unwrap_or(state.status);
+                    if !raydium_cpmm_pool_update.is_account_state_update {
+                        if raydium_cpmm_pool_update.token0_reserve != 0 {
+                            state.token0_reserve = raydium_cpmm_pool_update.token0_reserve;
+                        }
+                        if raydium_cpmm_pool_update.token1_reserve != 0 {
+                            state.token1_reserve = raydium_cpmm_pool_update.token1_reserve;
+                        }
+                    }
+                    if !tokens_equal(&raydium_cpmm_pool_update.amm_config, &state.amm_config) {
+                        state.amm_config = raydium_cpmm_pool_update.amm_config;
+                    }
+                    if !tokens_equal(&raydium_cpmm_pool_update.observation_state, &state.observation_state) {
+                        state.observation_state = raydium_cpmm_pool_update.observation_state;
+                    }
+                }
+                _ => {}
+            }
+        }
+        PoolUpdateEvent::BonkPoolUpdate(bonk_pool_update) => {
+            match &mut **existing_state {
+                PoolState::BonkPoolState(state) => {
+                    // only update last_updated if it's transaction event update that we can collect reserves
+                    if !bonk_pool_update.is_account_state_update {
+                        state.last_updated = bonk_pool_update.last_updated;
+                    }
+                    state.slot = bonk_pool_update.slot;
+                    state.transaction_index = bonk_pool_update.transaction_index;
+                    state.status = bonk_pool_update.status;
+                    state.total_base_sell = bonk_pool_update.total_base_sell;
+                    state.base_reserve = bonk_pool_update.base_reserve;
+                    state.quote_reserve = bonk_pool_update.quote_reserve;
+                    state.real_base = bonk_pool_update.real_base;
+                    state.real_quote = bonk_pool_update.real_quote;
+                    state.quote_protocol_fee = bonk_pool_update.quote_protocol_fee;
+                    state.platform_fee = bonk_pool_update.platform_fee;
+                    state.global_config = bonk_pool_update.global_config;
+                    state.platform_config = bonk_pool_update.platform_config;
+                }
+                _ => {}
+            }
+        }
+        PoolUpdateEvent::RaydiumClmmPoolUpdate(raydium_clmm_pool_update) => {
+            match &mut **existing_state {
+                PoolState::RadyiumClmmPoolState(state) => {
+                    // only update last_updated if it's transaction event update that we can collect reserves
+                    if !raydium_clmm_pool_update.is_account_state_update {
+                        state.last_updated = raydium_clmm_pool_update.last_updated;
+                    }
+                    state.slot = raydium_clmm_pool_update.slot;
+                    state.transaction_index = raydium_clmm_pool_update.transaction_index;
+                    let default_pubkey = Pubkey::default();
+                    if let Some(ref pool_state_part) = raydium_clmm_pool_update.pool_state_part {
+                        if !tokens_equal(&pool_state_part.amm_config, &default_pubkey) && !tokens_equal(&pool_state_part.amm_config, &state.amm_config) {
+                            state.amm_config = pool_state_part.amm_config;
+                        }
+                        if !tokens_equal(&pool_state_part.token_mint0, &default_pubkey) && !tokens_equal(&pool_state_part.token_mint0, &state.token_mint0) {
+                            state.token_mint0 = pool_state_part.token_mint0;
+                        }
+                        if !tokens_equal(&pool_state_part.token_mint1, &default_pubkey) && !tokens_equal(&pool_state_part.token_mint1, &state.token_mint1) {
+                            state.token_mint1 = pool_state_part.token_mint1;
+                        }
+                        if !tokens_equal(&pool_state_part.token_vault0, &default_pubkey) && !tokens_equal(&pool_state_part.token_vault0, &state.token_vault0) {
+                            state.token_vault0 = pool_state_part.token_vault0;
+                        }
+                        if !tokens_equal(&pool_state_part.token_vault1, &default_pubkey) && !tokens_equal(&pool_state_part.token_vault1, &state.token_vault1) {
+                            state.token_vault1 = pool_state_part.token_vault1;
+                        }
+                        if !tokens_equal(&pool_state_part.observation_key, &default_pubkey) && !tokens_equal(&pool_state_part.observation_key, &state.observation_key) {
+                            state.observation_key = pool_state_part.observation_key;
+                        }
+
+                        state.tick_spacing = if pool_state_part.tick_spacing != 0 { pool_state_part.tick_spacing } else { state.tick_spacing };
+                        state.liquidity = if pool_state_part.liquidity != 0 { pool_state_part.liquidity } else { state.liquidity };
+                        state.sqrt_price_x64 = if pool_state_part.sqrt_price_x64 != 0 { pool_state_part.sqrt_price_x64 } else { state.sqrt_price_x64 };
+                        state.tick_current_index = if pool_state_part.tick_current_index != 0 { pool_state_part.tick_current_index } else { state.tick_current_index };
+                        state.status = if pool_state_part.status != 0 { pool_state_part.status } else { state.status };
+                        if pool_state_part.tick_array_bitmap != [0; 16] {
+                            state.tick_array_bitmap = pool_state_part.tick_array_bitmap;
+                        }
+                        state.open_time = if pool_state_part.open_time != 0 { pool_state_part.open_time } else { state.open_time };
+                    }
+
+                    if let Some(ref token_reserves) = raydium_clmm_pool_update.reserve_part {
+                        if token_reserves.token0_reserve != 0 {
+                            state.token0_reserve = token_reserves.token0_reserve;
+                        }
+                        if token_reserves.token1_reserve != 0 {
+                            state.token1_reserve = token_reserves.token1_reserve;
+                        }
+                    }
+                    if let Some(ref tick_array_update) = raydium_clmm_pool_update.tick_array_state {
+                        let start_tick_index = tick_array_update.start_tick_index;
+                        state.tick_array_state.ticks[..60]
+                            .copy_from_slice(&tick_array_update.ticks[..60]);
+                        state.tick_array_state.start_tick_index = start_tick_index;
+                        state.tick_array_state.initialized_tick_count =
+                            tick_array_update.initialized_tick_count;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }

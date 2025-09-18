@@ -9,9 +9,10 @@ pub struct PumpfunPoolState {
     pub sol_reserve: u64,
     pub token_reserve: u64,
     pub real_token_reserve: u64,
-    pub last_updated: u64, // Unix timestamp
+    pub last_updated: u64,
     pub liquidity_usd: f64,
     pub complete: bool,
+    pub is_state_keys_initialized: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +24,7 @@ pub struct PumpfunPoolUpdate {
     pub token_reserve: u64,
     pub sol_reserve: u64,
     pub real_token_reserve: u64,
-    pub last_updated: u64, // Unix timestamp
+    pub last_updated: u64,
     pub complete: bool,
+    pub is_account_state_update: bool,
 }

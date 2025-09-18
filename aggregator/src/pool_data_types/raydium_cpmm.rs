@@ -16,6 +16,7 @@ pub struct RaydiumCpmmPoolState {
     pub observation_state: Pubkey,
     pub last_updated: u64,
     pub liquidity_usd: f64,
+    pub is_state_keys_initialized: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -33,4 +34,5 @@ pub struct RaydiumCpmmPoolUpdate {
     pub amm_config: Pubkey,
     pub observation_state: Pubkey,
     pub last_updated: u64,
+    pub is_account_state_update: bool,
 }

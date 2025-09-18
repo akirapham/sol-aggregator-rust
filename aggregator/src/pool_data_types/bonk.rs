@@ -4,10 +4,8 @@ use solana_sdk::pubkey::Pubkey;
 pub struct BonkPoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
-    pub address: Pubkey, // bonding pubkey
+    pub address: Pubkey,
     pub status: u8,
-    pub base_decimals: u8,
-    pub quote_decimals: u8,
     pub total_base_sell: u64,
     pub base_reserve: u64,  // virtual_base
     pub quote_reserve: u64, // virtual_quote
@@ -22,17 +20,16 @@ pub struct BonkPoolState {
     pub base_vault: Pubkey,
     pub quote_vault: Pubkey,
     pub creator: Pubkey,
-    pub last_updated: u64, // Unix timestamp
+    pub last_updated: u64,
+    pub is_state_keys_initialized: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct BonkPoolUpdate {
     pub slot: u64,
     pub transaction_index: Option<u64>,
-    pub address: Pubkey, // bonding pubkey
+    pub address: Pubkey,
     pub status: u8,
-    pub base_decimals: u8,
-    pub quote_decimals: u8,
     pub total_base_sell: u64,
     pub base_reserve: u64,  // virtual_base
     pub quote_reserve: u64, // virtual_quote
@@ -47,5 +44,6 @@ pub struct BonkPoolUpdate {
     pub base_vault: Pubkey,
     pub quote_vault: Pubkey,
     pub creator: Pubkey,
-    pub last_updated: u64, // Unix timestamp
+    pub last_updated: u64,
+    pub is_account_state_update: bool,
 }

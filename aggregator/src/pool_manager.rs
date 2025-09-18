@@ -15,7 +15,7 @@ use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{DexType, PoolState};
 use crate::types::PoolUpdateEvent;
 use crate::types::Token;
-use crate::utils::pool_update_event_to_pool_state;
+use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
@@ -158,24 +158,26 @@ impl PoolStateManager {
 
             if let Some(pool_mutex) = pool_mutex {
                 let mut pool_guard = pool_mutex.lock().await;
-                let pool_state = pool_update_event_to_pool_state(update, Some(pool_guard.clone()));
-                let dex = pool_state.dex();
-                if dex.to_string() == DexType::Raydium.to_string() {
-                    log::info!("Updated Raydium pool: address {:?}, dex {}, dex pool state {}, is raydium {}, slot {}", pool_address, dex.to_string(), DexType::Raydium.to_string(), dex.to_string() == DexType::Raydium.to_string(), pool_state.get_metadata().slot);
-                }
-                *pool_guard = pool_state;
+                update_pool_state_by_event(update, &mut pool_guard);
             }
         } else {
             // Insert new pool
-            Self::insert_new_pool(
-                pool_update_event_to_pool_state(update, None),
-                pools,
-                pair_to_pools,
-                dex_pools,
-                token_cache,
-                rpc_client,
-            )
-            .await;
+            let pool_state = pool_update_event_to_pool_state(update);
+            if let Some(pool_state) = pool_state {
+                let (token0, token1) = pool_state.get_tokens();
+                if token0 == Pubkey::default() || token1 == Pubkey::default() {
+                    return;
+                }
+                Self::insert_new_pool(
+                    pool_state,
+                    pools,
+                    pair_to_pools,
+                    dex_pools,
+                    token_cache,
+                    rpc_client,
+                )
+                .await;
+            }
         }
     }
 
@@ -195,7 +197,17 @@ impl PoolStateManager {
         // Insert pool
         {
             let mut pools_write = pools.write().await;
-            pools_write.insert(pool_address, Arc::new(Mutex::new(pool_state.clone())));
+            match pools_write.entry(pool_address) {
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    // move pool_state in (no clone)
+                    v.insert(Arc::new(Mutex::new(pool_state)));
+                }
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    // Another task inserted concurrently — keep existing one
+                    log::warn!("Pool {:?} was inserted concurrently, skipping insert", pool_address);
+                    return;
+                }
+            }
         }
 
         // Update mappings

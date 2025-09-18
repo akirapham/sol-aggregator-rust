@@ -210,6 +210,17 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.address,
         }
     }
+
+    pub fn last_updated(&self) -> u64 {
+        match self {
+            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.last_updated,
+            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.last_updated,
+            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.last_updated,
+            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.last_updated,
+            PoolUpdateEvent::BonkPoolUpdate(update) => update.last_updated,
+            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.last_updated,
+        }
+    }
 }
 
 impl Default for AggregatorConfig {

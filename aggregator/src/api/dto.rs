@@ -7,4 +7,7 @@ pub struct PoolInfoResponse {
     pub base_token: String,
     pub quote_token: String,
     pub last_updated: u64,
+    pub base_reserve: u64,
+    pub quote_reserve: u64,
+    pub slot: u64,
 }

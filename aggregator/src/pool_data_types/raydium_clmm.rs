@@ -59,6 +59,7 @@ pub struct RadyiumClmmPoolState {
     pub last_updated: u64, // Unix timestamp
     pub token0_reserve: u64,
     pub token1_reserve: u64,
+    pub is_state_keys_initialized: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -69,5 +70,6 @@ pub struct RaydiumClmmPoolUpdate {
     pub pool_state_part: Option<RadyiumClmmPoolStatePart>,
     pub reserve_part: Option<RadyiumClmmPoolReservePart>,
     pub tick_array_state: Option<TickArrayState>,
-    pub last_updated: u64, // Unix timestamp
+    pub last_updated: u64,
+    pub is_account_state_update: bool,
 }

@@ -109,12 +109,16 @@ pub async fn get_pools(
         .into_iter()
         .map(|pool| {
             let (base_pk, quote_pk) = pool.get_tokens();
+            let (base_reserve, quote_reserve) = pool.get_reserves();
             PoolInfoResponse {
                 address: pool.address().to_string(),
                 dex: pool.dex().to_string(),
                 base_token: base_pk.to_string(),
                 quote_token: quote_pk.to_string(),
                 last_updated: pool.last_updated(),
+                base_reserve,
+                quote_reserve,
+                slot: pool.get_metadata().slot,
             }
         })
         .collect();

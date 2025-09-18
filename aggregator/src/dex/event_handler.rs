@@ -138,6 +138,7 @@ pub fn handle_dex_event(
             },
             // -------------------------- pumpswap -----------------------
             PumpSwapBuyEvent => |e: PumpSwapBuyEvent| {
+                log::info!("PumpSwapBuyEvent: reserve {:?}", e.pool_base_token_reserves);
                 pool_update_events.push(PoolUpdateEvent::PumpSwapPoolUpdate(
                     PumpSwapPoolUpdate {
                         address: Pubkey::new_from_array(e.pool.as_array().clone()),
@@ -334,28 +335,28 @@ pub fn handle_dex_event(
             },
             // -------------------------- raydium_clmm -----------------------
             RaydiumClmmSwapEvent => |e: RaydiumClmmSwapEvent| {
-                println!("RaydiumClmmSwapEvent: {e:?}");
+                // println!("RaydiumClmmSwapEvent: {e:?}");
             },
             RaydiumClmmSwapV2Event => |e: RaydiumClmmSwapV2Event| {
-                println!("RaydiumClmmSwapV2Event: {e:?}");
+                // println!("RaydiumClmmSwapV2Event: {e:?}");
             },
             RaydiumClmmClosePositionEvent => |e: RaydiumClmmClosePositionEvent| {
-                println!("RaydiumClmmClosePositionEvent: {e:?}");
+                // println!("RaydiumClmmClosePositionEvent: {e:?}");
             },
             RaydiumClmmDecreaseLiquidityV2Event => |e: RaydiumClmmDecreaseLiquidityV2Event| {
-                println!("RaydiumClmmDecreaseLiquidityV2Event: {e:?}");
+                // println!("RaydiumClmmDecreaseLiquidityV2Event: {e:?}");
             },
             RaydiumClmmCreatePoolEvent => |e: RaydiumClmmCreatePoolEvent| {
-                println!("RaydiumClmmCreatePoolEvent: {e:?}");
+                // println!("RaydiumClmmCreatePoolEvent: {e:?}");
             },
             RaydiumClmmIncreaseLiquidityV2Event => |e: RaydiumClmmIncreaseLiquidityV2Event| {
-                println!("RaydiumClmmIncreaseLiquidityV2Event: {e:?}");
+                // println!("RaydiumClmmIncreaseLiquidityV2Event: {e:?}");
             },
             RaydiumClmmOpenPositionWithToken22NftEvent => |e: RaydiumClmmOpenPositionWithToken22NftEvent| {
-                println!("RaydiumClmmOpenPositionWithToken22NftEvent: {e:?}");
+                // println!("RaydiumClmmOpenPositionWithToken22NftEvent: {e:?}");
             },
             RaydiumClmmOpenPositionV2Event => |e: RaydiumClmmOpenPositionV2Event| {
-                println!("RaydiumClmmOpenPositionV2Event: {e:?}");
+                // println!("RaydiumClmmOpenPositionV2Event: {e:?}");
             },
             // -------------------------- raydium_amm_v4 -----------------------
             RaydiumAmmV4SwapEvent => |e: RaydiumAmmV4SwapEvent| {
@@ -560,7 +561,7 @@ pub fn handle_dex_event(
                 // do nothing for now
             },
             RaydiumClmmAmmConfigAccountEvent => |e: RaydiumClmmAmmConfigAccountEvent| {
-                println!("RaydiumClmmAmmConfigAccountEvent: {e:?}");
+                // println!("RaydiumClmmAmmConfigAccountEvent: {e:?}");
             },
             RaydiumClmmPoolStateAccountEvent => |e: RaydiumClmmPoolStateAccountEvent| {
                 println!("RaydiumClmmPoolStateAccountEvent: {e:?}");

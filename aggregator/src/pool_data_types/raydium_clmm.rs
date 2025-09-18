@@ -1,6 +1,6 @@
 use solana_sdk::pubkey::Pubkey;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct TickState {
     pub tick: i32,
     pub liquidity_net: i128,

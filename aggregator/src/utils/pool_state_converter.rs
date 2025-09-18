@@ -1,8 +1,9 @@
 use solana_sdk::pubkey::Pubkey;
 
-use crate::pool_data_types::PoolState;
+use crate::pool_data_types::{PoolState, TickArrayState, TickState};
 use crate::pool_data_types::{
     BonkPoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
+    RadyiumClmmPoolState
 };
 use crate::types::PoolUpdateEvent;
 use crate::utils::use_input_or_existing;
@@ -219,6 +220,73 @@ pub fn pool_update_event_to_pool_state(
                 last_updated: bonk_pool_update.last_updated,
             })
         }
-        PoolUpdateEvent::RaydiumClmmPoolUpdate(raydium_clmm_pool_update) => todo!(),
+        PoolUpdateEvent::RaydiumClmmPoolUpdate(raydium_clmm_pool_update) => {
+            let mut pool_state = match existing_state {
+                Some(PoolState::RadyiumClmmPoolState(state)) => state,
+                _ => RadyiumClmmPoolState {
+                    slot: raydium_clmm_pool_update.slot,
+                    transaction_index: raydium_clmm_pool_update.transaction_index,
+                    address: raydium_clmm_pool_update.address,
+                    amm_config: Pubkey::default(),
+                    token_mint0: Pubkey::default(),
+                    token_mint1: Pubkey::default(),
+                    token_vault0: Pubkey::default(),
+                    token_vault1: Pubkey::default(),
+                    observation_key: Pubkey::default(),
+                    tick_spacing: 0,
+                    liquidity: 0,
+                    sqrt_price_x64: 0,
+                    tick_current_index: 0,
+                    status: 0,
+                    tick_array_bitmap: [0; 16],
+                    open_time: 0,
+                    tick_array_state: TickArrayState {
+                        start_tick_index: 0,
+                        ticks: std::array::from_fn(|i| TickState {
+                            tick: i as i32,
+                            liquidity_net: 0,
+                            liquidity_gross: 0,
+                        }),
+                        initialized_tick_count: 0,
+                    },
+                    last_updated: raydium_clmm_pool_update.last_updated,
+                    token0_reserve: 0,
+                    token1_reserve: 0,
+                },
+            };
+            pool_state.slot = raydium_clmm_pool_update.slot;
+            pool_state.transaction_index = raydium_clmm_pool_update.transaction_index;
+            pool_state.last_updated = raydium_clmm_pool_update.last_updated;
+            if let Some(ref pool_state_part) = raydium_clmm_pool_update.pool_state_part {
+                pool_state.amm_config = pool_state_part.amm_config.clone();
+                pool_state.token_mint0 = pool_state_part.token_mint0.clone();
+                pool_state.token_mint1 = pool_state_part.token_mint1.clone();
+                pool_state.token_vault0 = pool_state_part.token_vault0.clone();
+                pool_state.token_vault1 = pool_state_part.token_vault1.clone();
+                pool_state.observation_key = pool_state_part.observation_key.clone();
+                pool_state.tick_spacing = pool_state_part.tick_spacing;
+                pool_state.liquidity = pool_state_part.liquidity;
+                pool_state.sqrt_price_x64 = pool_state_part.sqrt_price_x64;
+                pool_state.tick_current_index = pool_state_part.tick_current_index;
+                pool_state.status = pool_state_part.status;
+                pool_state.tick_array_bitmap = pool_state_part.tick_array_bitmap;
+                pool_state.open_time = pool_state_part.open_time;
+            }
+
+            if let Some(ref token_reserves) = raydium_clmm_pool_update.reserve_part {
+                pool_state.token0_reserve = token_reserves.token0_reserve;
+                pool_state.token1_reserve = token_reserves.token1_reserve;
+            }
+
+            if let Some(ref tick_array_update) = raydium_clmm_pool_update.tick_array_state {
+                let start_tick_index = tick_array_update.start_tick_index;
+                pool_state.tick_array_state.ticks[..60].copy_from_slice(&tick_array_update.ticks[..60]);
+                pool_state.tick_array_state.start_tick_index = start_tick_index;
+                pool_state.tick_array_state.initialized_tick_count =
+                    tick_array_update.initialized_tick_count;
+            }
+
+            PoolState::RadyiumClmmPoolState(pool_state)
+        },
     }
 }

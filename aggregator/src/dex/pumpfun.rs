@@ -41,20 +41,19 @@ impl PumpFunDex {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    fn calculate_output_amount(
-        &self,
-        input_token: &Pubkey,
-        input_amount: u64,
-    ) -> u64 {
+    fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
-        let (token_reserve, sol_reserve) = (self.pool_state.token_reserve, self.pool_state.sol_reserve);
+        let (token_reserve, sol_reserve) =
+            (self.pool_state.token_reserve, self.pool_state.sol_reserve);
         let output_amount = if is_buy {
             let new_sol_reserve = sol_reserve + input_amount;
-            let new_token_reserve = (token_reserve as u128 * sol_reserve as u128 / new_sol_reserve as u128) as u64;
+            let new_token_reserve =
+                (token_reserve as u128 * sol_reserve as u128 / new_sol_reserve as u128) as u64;
             token_reserve - new_token_reserve
         } else {
             let new_token_reserve = token_reserve + input_amount;
-            let new_sol_reserve = (sol_reserve as u128 * token_reserve as u128 / new_token_reserve as u128) as u64;
+            let new_sol_reserve =
+                (sol_reserve as u128 * token_reserve as u128 / new_token_reserve as u128) as u64;
             sol_reserve - new_sol_reserve
         };
 

@@ -4,7 +4,7 @@ use solana_sdk::pubkey::Pubkey;
 pub struct TickState {
     pub tick: i32,
     pub liquidity_net: i128,
-    pub liquidity_gross: u128
+    pub liquidity_gross: u128,
 }
 
 #[derive(Clone, Debug)]

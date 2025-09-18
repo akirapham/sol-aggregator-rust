@@ -29,11 +29,7 @@ impl PumpSwapDex {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    fn calculate_output_amount(
-        &self,
-        input_token: &Pubkey,
-        input_amount: u64,
-    ) -> u64 {
+    fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         0
     }
 }

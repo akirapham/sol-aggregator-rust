@@ -9,7 +9,7 @@ pub struct BonkPoolState {
     pub base_decimals: u8,
     pub quote_decimals: u8,
     pub total_base_sell: u64,
-    pub base_reserve: u64, // virtual_base
+    pub base_reserve: u64,  // virtual_base
     pub quote_reserve: u64, // virtual_quote
     pub real_base: u64,
     pub real_quote: u64,
@@ -34,7 +34,7 @@ pub struct BonkPoolUpdate {
     pub base_decimals: u8,
     pub quote_decimals: u8,
     pub total_base_sell: u64,
-    pub base_reserve: u64, // virtual_base
+    pub base_reserve: u64,  // virtual_base
     pub quote_reserve: u64, // virtual_quote
     pub real_base: u64,
     pub real_quote: u64,

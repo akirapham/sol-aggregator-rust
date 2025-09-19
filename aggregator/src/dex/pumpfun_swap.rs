@@ -3,7 +3,7 @@ use std::sync::Arc;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::parser::PUMPSWAP_PROGRAM_ID;
 
-use crate::{pool_data_types::PumpSwapPoolState, utils::tokens_equal};
+use crate::{dex::DexInterface, pool_data_types::PumpSwapPoolState, utils::tokens_equal};
 
 pub struct PumpSwapDex {
     pool_state: Arc<PumpSwapPoolState>,
@@ -17,13 +17,15 @@ impl PumpSwapDex {
             program_id: Self::get_program_id(),
         }
     }
+}
 
-    pub fn get_program_id() -> Pubkey {
+impl DexInterface for PumpSwapDex {
+    fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*PUMPSWAP_PROGRAM_ID.as_array())
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         let (base_token, _quote_token) = (self.pool_state.base_mint, self.pool_state.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);
         let (input_reserve, output_reserve) = if input_is_base {

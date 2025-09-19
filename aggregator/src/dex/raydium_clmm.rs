@@ -2,7 +2,7 @@ use std::sync::Arc;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
 
-use crate::{pool_data_types::RadyiumClmmPoolState, utils::tokens_equal};
+use crate::{dex::DexInterface, pool_data_types::RadyiumClmmPoolState, utils::tokens_equal};
 
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
@@ -20,12 +20,19 @@ impl RaydiumClmmDex {
         }
     }
 
-    pub fn get_program_id() -> Pubkey {
+    fn get_output_amount(&self, _input_amount: u64, _zero_for_one: bool, _sqrt_price_limit_x64: u128) -> u64 {
+        // TODO: implement the actual CLMM swap logic here
+        0
+    }
+}
+
+impl DexInterface for RaydiumClmmDex {
+    fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*RAYDIUM_CLMM_PROGRAM_ID.as_array())
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         let (token0, token1) = (self.pool_state.token_mint0, self.pool_state.token_mint1);
         let input_is_token0 = tokens_equal(input_token, &token0);
         let sqrt_price_limit_x64 = if input_is_token0 {
@@ -37,10 +44,5 @@ impl RaydiumClmmDex {
         // dont take transfer tax into account for now, users should account for it un their slippage
         let real_input_amount = input_amount;
         self.get_output_amount(real_input_amount, input_is_token0, sqrt_price_limit_x64)
-    }
-
-    fn get_output_amount(&self, _input_amount: u64, _zero_for_one: bool, _sqrt_price_limit_x64: u128) -> u64 {
-        // TODO: implement the actual CLMM swap logic here
-        0
     }
 }

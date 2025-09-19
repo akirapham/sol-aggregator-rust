@@ -42,7 +42,7 @@ pub enum MevRisk {
 /// Represents the best route found by the aggregator
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BestRoute {
-    pub routes: Vec<SwapStep>,
+    pub swap_plan: Vec<SwapStep>,
     pub input_amount: u64,
     pub output_amount: u64,
     pub price_impact: f64,
@@ -101,7 +101,7 @@ pub struct SwapParams {
     pub input_token: Token,
     pub output_token: Token,
     pub input_amount: u64,
-    pub slippage_bps: Decimal, // e.g., 0.01 for 1%
+    pub slippage_bps: u16,
     pub user_wallet: Pubkey,
     pub priority: ExecutionPriority,
 }

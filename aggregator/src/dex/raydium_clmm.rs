@@ -33,7 +33,7 @@ impl DexInterface for RaydiumClmmDex {
 
     /// Calculate output amount for PumpFun bonding curve
     fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
-        let (token0, token1) = (self.pool_state.token_mint0, self.pool_state.token_mint1);
+        let (token0, _) = (self.pool_state.token_mint0, self.pool_state.token_mint1);
         let input_is_token0 = tokens_equal(input_token, &token0);
         let sqrt_price_limit_x64 = if input_is_token0 {
             MIN_SQRT_PRICE_X64 + 1
@@ -44,5 +44,13 @@ impl DexInterface for RaydiumClmmDex {
         // dont take transfer tax into account for now, users should account for it un their slippage
         let real_input_amount = input_amount;
         self.get_output_amount(real_input_amount, input_is_token0, sqrt_price_limit_x64)
+    }
+
+    fn get_pool_address(&self) -> Pubkey {
+        self.pool_state.address
+    }
+
+    fn get_dex(&self) -> crate::pool_data_types::DexType {
+        crate::pool_data_types::DexType::RaydiumClmm
     }
 }

@@ -1,12 +1,33 @@
 use rust_decimal::Decimal;
+use solana_sdk::pubkey::Pubkey;
+use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::constants::BASE_TOKENS;
 use crate::pool_manager::PoolStateManager;
-use crate::types::{AggregatorConfig, ExecutionPriority};
+use crate::types::{AggregatorConfig, ExecutionPriority, SwapParams};
+use crate::utils::calculate_min_output_amount;
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
     config: AggregatorConfig,
     pool_manager: Arc<PoolStateManager>,
+}
+
+pub struct SwapPath {
+    pub pool_addresses: Vec<Pubkey>,
+    pub input_token: Pubkey,
+    pub output_token: Pubkey,
+    pub input_amount: u64,
+    pub output_amount: u64,
+}
+
+pub struct SwapRoute {
+    pub paths: Vec<SwapPath>,
+    pub input_amount: u64,
+    pub output_amount: u64,
+    pub other_output_amount: u64,
+    pub slippage_bps: u16,
 }
 
 impl DexAggregator {
@@ -29,6 +50,76 @@ impl DexAggregator {
     /// Get access to the pool manager
     pub fn get_pool_manager(&self) -> &Arc<PoolStateManager> {
         &self.pool_manager
+    }
+
+    pub async fn get_swap_route(&self, swap_param: &SwapParams) -> Option<SwapRoute> {
+        // first, direct path
+        let direct_pool_addresses = self
+            .pool_manager
+            .get_pool_addresses_for_pair(&swap_param.input_token.address, &swap_param.output_token.address).await;
+
+        // then, 2-hop route through an intermediary base token
+        // input -> base -> output
+        let mut input_to_base_pools = HashSet::new();
+        // loop over BASE_TOKENS
+        for base_token in BASE_TOKENS.iter() {
+            let base_token_key = Pubkey::from_str(base_token).unwrap();
+            let pools = self
+                .pool_manager
+                .get_pool_addresses_for_pair(&swap_param.input_token.address, &base_token_key)
+                .await;
+            input_to_base_pools.extend(pools);
+        }
+
+        let mut all_pool_state = HashMap::new();
+        for pool_address in direct_pool_addresses.iter().chain(input_to_base_pools.iter()) {
+            if let Some(pool_state) = self.pool_manager.get_pool_state_by_address(pool_address).await {
+                all_pool_state.insert(*pool_address, pool_state);
+            }
+        }
+
+        // find top direct oaths with highest liquidity, then sort by liquidity
+        let mut top_direct_paths = direct_pool_addresses.iter().filter_map(|pool_address| {
+            all_pool_state.get(pool_address).map(|pool_state| {
+                (pool_address, pool_state.get_liquidity_usd())
+            })
+        }).collect::<Vec<_>>();
+        top_direct_paths.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // only keep top 3
+        top_direct_paths.truncate(3);
+
+        // compute output amount for each direct path
+        let mut current_best_output = 0 as u64;
+        let mut best_direct_pool = None;
+        for (pool_address, _liquidity) in top_direct_paths.iter() {
+            if let Some(pool_state) = all_pool_state.get(pool_address) {
+                let output_amount = pool_state.calculate_output_amount(&swap_param.input_token.address, swap_param.input_amount);
+                if output_amount > current_best_output {
+                    current_best_output = output_amount;
+                    best_direct_pool = Some(*pool_address);
+                }
+            }
+        }
+
+        if let Some(best_pool) = best_direct_pool {
+            return Some(SwapRoute {
+                paths: vec![SwapPath {
+                    pool_addresses: vec![best_pool.clone()],
+                    input_token: swap_param.input_token.address,
+                    output_token: swap_param.output_token.address,
+                    input_amount: swap_param.input_amount,
+                    output_amount: current_best_output,
+                }],
+                input_amount: swap_param.input_amount,
+                output_amount: current_best_output,
+                other_output_amount: calculate_min_output_amount(current_best_output, swap_param.slippage_bps as u64),
+                slippage_bps: swap_param.slippage_bps,
+            });
+        }
+
+        None
+
+        // find best path for direct route
     }
 
     /// Find the best route for a swap using smart routing

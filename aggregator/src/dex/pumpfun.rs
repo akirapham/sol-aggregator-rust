@@ -57,4 +57,12 @@ impl DexInterface for PumpFunDex {
 
         output_amount * 99 / 100 // Apply 1% fee
     }
+
+    fn get_pool_address(&self) -> Pubkey {
+        self.pool_state.address
+    }
+
+    fn get_dex(&self) -> crate::pool_data_types::DexType {
+        crate::pool_data_types::DexType::PumpFun
+    }
 }

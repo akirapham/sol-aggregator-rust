@@ -15,13 +15,10 @@ pub fn parse_pubkey(address: &str) -> Result<Pubkey> {
 /// Calculate minimum output amount with slippage tolerance
 pub fn calculate_min_output_amount(
     expected_output: u64,
-    slippage_tolerance: Decimal,
-) -> Result<u64> {
-    let slippage_factor = Decimal::ONE - slippage_tolerance;
-    let min_output = Decimal::from(expected_output) * slippage_factor;
-    min_output.to_u64().ok_or_else(|| {
-        DexAggregatorError::PriceCalculationError("Invalid slippage calculation".to_string())
-    })
+    slippage_bps: u64,
+) -> u64 {
+    let min_output = Decimal::from(expected_output) * Decimal::from(10000 - slippage_bps) / Decimal::from(10000);
+    min_output.to_u64().unwrap()
 }
 
 /// Check if two tokens are the same

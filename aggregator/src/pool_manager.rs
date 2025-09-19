@@ -143,7 +143,7 @@ impl PoolStateManager {
                         }
                         v
                     };
-                    let drain_ns = drain_start.elapsed();
+                    let _ = drain_start.elapsed();
 
                     // instrumentation: how many updates we drained
                     let count_account = draineds_account_event.len();
@@ -156,7 +156,7 @@ impl PoolStateManager {
                     // Process account events and normal events in parallel using join!
                     let apply_start = std::time::Instant::now();
 
-                    let (apply_account_result, apply_normal_result) = tokio::join!(
+                    let (_, _) = tokio::join!(
                         // Account events processing
                         async {
                             let start = std::time::Instant::now();
@@ -213,8 +213,6 @@ impl PoolStateManager {
                         }
                     );
 
-                    let apply_account_ns = apply_account_result;
-                    let apply_normal_ns = apply_normal_result;
                     let total_apply_ns = apply_start.elapsed();
 
                     // log summary / throughput
@@ -503,6 +501,44 @@ impl PoolStateManager {
         results
     }
 
+    pub async fn get_pool_states_by_addresses(&self, pool_addresses: &HashSet<Pubkey>) -> HashMap<Pubkey, PoolState> {
+        let pool_mutexes = {
+            let pools = self.pools.read().await;
+            pool_addresses
+                .iter()
+                .filter_map(|addr| pools.get(addr).cloned())
+                .collect::<Vec<_>>()
+        };
+
+        let mut results = HashMap::new();
+        for mutex in pool_mutexes {
+            let pool_guard = mutex.lock().await; // Only locks this specific pool
+            let pool_cloned = (*pool_guard).clone();
+            results.insert(pool_cloned.address(), pool_cloned);
+        }
+        results
+    }
+
+    pub  async fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState> {
+        let pools = self.pools.read().await;
+        if let Some(pool_mutex) = pools.get(pool_address) {
+            let pool_guard = pool_mutex.lock().await;
+            Some((*pool_guard).clone())
+        } else {
+            None
+        }
+    }
+
+    pub async fn get_pool_addresses_for_pair(
+        &self,
+        token_a: &Pubkey,
+        token_b: &Pubkey,
+    ) -> HashSet<Pubkey> {
+        let pair_to_pools = self.pair_to_pools.read().await;
+        let key = (*token_a, *token_b);
+        pair_to_pools.get(&key).cloned().unwrap_or_default()
+    }
+
     /// Get token metadata from cache
     pub async fn get_token(&self, token_address: &Pubkey) -> Option<Token> {
         let cache = self.token_cache.read().await;
@@ -551,25 +587,6 @@ impl PoolStateManager {
         }
         results
     }
-
-    /// Get best pools for a token pair sorted by liquidity
-    // pub async fn get_best_pools_for_pair(
-    //     &self,
-    //     token_a: &Pubkey,
-    //     token_b: &Pubkey,
-    //     limit: usize,
-    // ) -> Vec<PoolState> {
-    //     let mut pools = self.get_pools_for_pair(token_a, token_b).await;
-
-    //     // Sort by liquidity (reserve_a + reserve_b as proxy)
-    //     pools.sort_by(|a, b| {
-    //         let liquidity_a = a.reserve_a + a.reserve_b;
-    //         let liquidity_b = b.reserve_a + b.reserve_b;
-    //         liquidity_b.cmp(&liquidity_a)
-    //     });
-
-    //     pools.into_iter().take(limit).collect()
-    // }
 
     /// Remove a pool from the manager
     pub async fn remove_pool(&self, pool_address: &Pubkey) {
@@ -742,17 +759,6 @@ impl PoolStateManager {
     pub async fn get_sol_price(&self) -> f64 {
         self.price_service.get_sol_price().await.unwrap_or_default()
     }
-
-    // Clean up old or inactive pools
-    // pub async fn cleanup_stale_pools(&self, max_age_seconds: u64) {
-    //     let current_time = std::time::SystemTime::now()
-    //         .duration_since(std::time::UNIX_EPOCH)
-    //         .unwrap()
-    //         .as_secs();
-
-    //     let mut pools = self.pools.write().await;
-    //     pools.retain(|_, pool| current_time - pool.last_updated() < max_age_seconds);
-    // }
 }
 
 #[derive(Debug, Clone)]

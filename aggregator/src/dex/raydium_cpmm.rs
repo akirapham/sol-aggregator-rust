@@ -25,7 +25,7 @@ impl DexInterface for RaydiumCpmmDex {
 
     /// Calculate output amount for PumpFun bonding curve
     fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
-        let (base_token, quote_token) = (self.pool_state.token0, self.pool_state.token1);
+        let (base_token, _) = (self.pool_state.token0, self.pool_state.token1);
         let input_is_base = tokens_equal(input_token, &base_token);
         let (input_reserve, output_reserve) = if input_is_base {
             (self.pool_state.token0_reserve, self.pool_state.token1_reserve)
@@ -38,5 +38,13 @@ impl DexInterface for RaydiumCpmmDex {
         let output_amount = output_reserve - new_output_reserve;
 
         output_amount * 9975 / 10000 // Apply 0.25% fee
+    }
+
+    fn get_pool_address(&self) -> Pubkey {
+        self.pool_state.address
+    }
+
+    fn get_dex(&self) -> crate::pool_data_types::DexType {
+        crate::pool_data_types::DexType::RaydiumCpmm
     }
 }

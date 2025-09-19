@@ -4,7 +4,7 @@ pub mod handlers;
 
 use crate::aggregator::DexAggregator;
 use axum::{
-    routing::{get, post},
+    routing::get,
     Router,
 };
 use std::sync::Arc;

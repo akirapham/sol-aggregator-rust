@@ -280,7 +280,12 @@ pub async fn create_grpc_service(
     let mut config: ClientConfig = ClientConfig::high_throughput();
     // Enable performance monitoring, has performance overhead, disabled by default
     config.enable_metrics = true;
-    let grpc = YellowstoneGrpc::new_with_config(agg_config.yellowstone_grpc_url, None, config)?;
+    let grpc = YellowstoneGrpc::new_with_config(
+        agg_config.yellowstone_grpc_url,
+        None,
+        agg_config.backup_grpc_url,
+        config,
+    )?;
     log::info!("GRPC client created successfully");
 
     // Create batch processor

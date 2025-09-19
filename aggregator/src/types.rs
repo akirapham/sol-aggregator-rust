@@ -167,6 +167,7 @@ pub struct PriceInfo {
 pub struct AggregatorConfig {
     pub rpc_url: String,
     pub yellowstone_grpc_url: String,
+    pub backup_grpc_url: Option<String>,
     pub commitment: CommitmentLevel,
     pub max_slippage: Decimal,
     pub max_routes: usize,
@@ -227,7 +228,8 @@ impl Default for AggregatorConfig {
     fn default() -> Self {
         Self {
             rpc_url: "https://api.mainnet-beta.solana.com".to_string(),
-            yellowstone_grpc_url: "http://grpc.solana.com:10000".to_string(),
+            yellowstone_grpc_url: "https://solana-yellowstone-grpc.publicnode.com:443".to_string(),
+            backup_grpc_url: Some("https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
             commitment: CommitmentLevel::Processed,
             max_slippage: Decimal::new(5, 2), // 5%
             max_routes: 5,

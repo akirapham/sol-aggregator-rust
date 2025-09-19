@@ -12,9 +12,9 @@ pub async fn fetch_token(
     mint: &Pubkey,
     rpc_client: &Arc<RpcClient>,
 ) -> Result<Token, DexAggregatorError> {
-    if tokens_equal(mint, &&get_sol_mint()) {
+    if tokens_equal(mint, &get_sol_mint()) {
         return Ok(Token {
-            address: mint.clone(),
+            address: *mint,
             decimals: 9,
             is_token_2022: false,
         });
@@ -25,7 +25,7 @@ pub async fn fetch_token(
     let mint_data = rpc_client.get_account_data(mint).await;
     match mint_data {
         Err(_) => {
-            return Err(DexAggregatorError::RpcError(
+            Err(DexAggregatorError::RpcError(
                 "Failed to fetch mint account data".to_string(),
             ))
         }
@@ -34,7 +34,7 @@ pub async fn fetch_token(
             let is_token_2022 = len > Mint::LEN;
             let mint_extentions = StateWithExtensions::<Mint>::unpack(&data).unwrap();
             Ok(Token {
-                address: mint.clone(),
+                address: *mint,
                 decimals: mint_extentions.base.decimals,
                 is_token_2022,
             })

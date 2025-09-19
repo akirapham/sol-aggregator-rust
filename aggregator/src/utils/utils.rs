@@ -1,8 +1,6 @@
 use crate::constants::WSOL_MINT;
 use crate::error::DexAggregatorError;
 use crate::error::Result;
-use crate::types::PoolUpdateEvent;
-use crate::types::Token;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
@@ -78,7 +76,7 @@ pub fn tokens_equal(token_a: &Pubkey, token_b: &Pubkey) -> bool {
 
 /// Calculate the fee for a given amount and fee rate
 pub fn calculate_fee(amount: u64, fee_rate: f64) -> u64 {
-    let fee = amount as f64 * fee_rate as f64;
+    let fee = amount as f64 * fee_rate;
     fee as u64
 }
 
@@ -88,8 +86,8 @@ pub fn get_sol_mint() -> Pubkey {
 
 pub fn use_input_or_existing(input_key: &Pubkey, &existing: &Pubkey) -> Pubkey {
     if *input_key != Pubkey::default() {
-        input_key.clone()
+        *input_key
     } else {
-        existing.clone()
+        existing
     }
 }

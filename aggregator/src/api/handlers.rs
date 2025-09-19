@@ -1,7 +1,6 @@
 use crate::aggregator::DexAggregator;
 use crate::api::dto::PoolInfoResponse;
 use crate::types::ExecutionPriority;
-use crate::types::{BestRoute, SwapParams};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -118,7 +117,7 @@ pub async fn get_pools(
                 base_reserve,
                 quote_reserve,
                 slot: pool.get_metadata().slot,
-                liquidity: pool.get_liquidity_usd()
+                liquidity: pool.get_liquidity_usd(),
             }
         })
         .collect();

@@ -1,5 +1,4 @@
 use crate::pool_manager::PoolStateManager;
-use rust_decimal::Decimal;
 use std::sync::Arc;
 
 pub struct SmartRoutingEngine {

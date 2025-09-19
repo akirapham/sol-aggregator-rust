@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::parser::PUMPFUN_PROGRAM_ID;
 
-use crate::dex::traits::DexInterface;
 use crate::error::Result;
-use crate::pool_data_types::{DexType, PumpfunPoolState};
-use crate::types::{SwapParams, SwapRoute};
+use crate::pool_data_types::PumpfunPoolState;
 use crate::utils::*;
 
 /// PumpFun DEX implementation
@@ -26,7 +22,7 @@ impl PumpFunDex {
     }
 
     pub fn get_program_id() -> Pubkey {
-        Pubkey::new_from_array(PUMPFUN_PROGRAM_ID.as_array().clone())
+        Pubkey::new_from_array(*PUMPFUN_PROGRAM_ID.as_array())
     }
 
     /// Get the bonding curve address for a token

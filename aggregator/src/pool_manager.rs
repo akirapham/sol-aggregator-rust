@@ -74,7 +74,7 @@ impl PoolStateManager {
 
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
         let mut instance = Self {
-            grpc_service: grpc_service,
+            grpc_service,
             pools: Arc::new(RwLock::new(HashMap::new())),
             pair_to_pools: Arc::new(RwLock::new(HashMap::new())),
             dex_pools: Arc::new(RwLock::new(HashMap::new())),
@@ -665,20 +665,20 @@ impl PoolStateManager {
             // Add to pair_to_pools mapping (both directions)
             pair_to_pools_map
                 .entry((token_a, token_b))
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(*pool_address);
 
             if (token_a, token_b) != (token_b, token_a) {
                 pair_to_pools_map
                     .entry((token_b, token_a))
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(*pool_address);
             }
 
             // Add to dex_pools mapping
             dex_pools_map
                 .entry(dex_type)
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(*pool_address);
         }
 
@@ -720,7 +720,7 @@ impl PoolStateManager {
         .await?;
         let pool_count = pools_data.len();
         let serialized_pools = bincode::serde::encode_to_vec(
-            &SerializablePools(pools_data),
+            SerializablePools(pools_data),
             bincode::config::standard(),
         )?;
         db.put(b"pools", serialized_pools)?;
@@ -730,7 +730,7 @@ impl PoolStateManager {
         let token_read = token_cache.read().await;
         let token_count = token_read.len();
         let serialized_token = bincode::serde::encode_to_vec(
-            &SerializableTokenCache((*token_read).clone()),
+            SerializableTokenCache((*token_read).clone()),
             bincode::config::standard(),
         )?; // Changed
         db.put(b"token_cache", serialized_token)?;

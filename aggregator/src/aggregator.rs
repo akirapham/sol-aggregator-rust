@@ -1,7 +1,6 @@
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
-use crate::grpc::create_grpc_service;
 use crate::pool_manager::PoolStateManager;
 use crate::types::{AggregatorConfig, ExecutionPriority, SwapRoute};
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
@@ -163,8 +162,8 @@ impl DexAggregator {
     ) -> ExecutionPriority {
         // If user specified priority, use it
         match user_priority {
-            ExecutionPriority::High => return ExecutionPriority::High,
-            ExecutionPriority::Low => return ExecutionPriority::Low,
+            ExecutionPriority::High => ExecutionPriority::High,
+            ExecutionPriority::Low => ExecutionPriority::Low,
             ExecutionPriority::Medium => {
                 // Determine based on route characteristics
                 if routes.is_empty() {

@@ -18,11 +18,9 @@ use env_logger::Env;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-use crate::aggregator::DexAggregator;
 use crate::config::ConfigLoader;
 use crate::grpc::create_grpc_service;
 use crate::pool_manager::PoolStateManager;
-use crate::types::AggregatorConfig;
 use crate::utils::BinancePriceService;
 
 #[tokio::main]

@@ -1,15 +1,9 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::parser::PUMPSWAP_PROGRAM_ID;
 
-use crate::dex::traits::DexInterface;
-use crate::error::Result;
-use crate::pool_data_types::{DexType, PumpSwapPoolState};
-use crate::types::{SwapParams, SwapRoute};
-use crate::utils::*;
+use crate::pool_data_types::PumpSwapPoolState;
 
 pub struct PumpSwapDex {
     pool_state: Arc<PumpSwapPoolState>,
@@ -25,7 +19,7 @@ impl PumpSwapDex {
     }
 
     pub fn get_program_id() -> Pubkey {
-        Pubkey::new_from_array(PUMPSWAP_PROGRAM_ID.as_array().clone())
+        Pubkey::new_from_array(*PUMPSWAP_PROGRAM_ID.as_array())
     }
 
     /// Calculate output amount for PumpFun bonding curve

@@ -20,8 +20,12 @@ impl ConfigLoader {
             rpc_url: Self::get_string("RPC_URL", "https://api.mainnet-beta.solana.com")?,
             yellowstone_grpc_url: Self::get_string(
                 "YELLOWSTONE_GRPC_URL",
-                "https://api.mainnet-beta.solana.com",
+                "https://solana-yellowstone-grpc.publicnode.com:443",
             )?,
+            backup_grpc_url: match env::var("BACKUP_GRPC_URL") {
+                Ok(url) if !url.trim().is_empty() => Some(url),
+                _ => Some("https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
+            },
             commitment: Self::get_commitment_level()?,
             max_slippage: Self::get_decimal("MAX_SLIPPAGE", Decimal::new(5, 2))?,
             max_routes: Self::get_usize("MAX_ROUTES", 5)?,

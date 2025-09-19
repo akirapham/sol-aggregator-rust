@@ -16,7 +16,7 @@ use crate::{
 pub struct Token {
     pub address: Pubkey,
     pub decimals: u8,
-    // pub is_token_2022: bool,
+    pub is_token_2022: bool,
 }
 
 /// Represents a swap route through a specific DEX
@@ -211,14 +211,14 @@ impl PoolUpdateEvent {
         }
     }
 
-    pub fn last_updated(&self) -> u64 {
+    pub fn is_account_state_update(&self) -> bool {
         match self {
-            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::BonkPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.last_updated,
+            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.is_account_state_update,
+            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.is_account_state_update,
+            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.is_account_state_update,
+            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.is_account_state_update,
+            PoolUpdateEvent::BonkPoolUpdate(update) => update.is_account_state_update,
+            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.is_account_state_update,
         }
     }
 }

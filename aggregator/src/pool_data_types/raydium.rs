@@ -1,6 +1,6 @@
 use solana_sdk::pubkey::Pubkey;
-
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaydiumAmmV4PoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,

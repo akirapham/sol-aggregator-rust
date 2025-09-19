@@ -71,9 +71,14 @@ tower-http = { workspace = true, features = ["cors", "trace"] }
 tracing = { workspace = true}
 tracing-subscriber = { workspace = true}
 redis = { workspace = true, optional = true }
-
+rocksdb = { workspace = true }
+bincode = { workspace = true }
 # Anchor program dependencies for specific DEXs
 # These will be added as we implement each DEX
+
+[features]
+default = ["bincode"]  # Enable bincode by default (or add it to default features)
+bincode = []  # Define the feature (empty since bincode doesn't have sub-features)
 
 [dev-dependencies]
 tokio-test = { workspace = true}

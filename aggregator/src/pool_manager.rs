@@ -1,3 +1,7 @@
+use bincode::config::Configuration;
+use rocksdb::{DB, Options};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
@@ -5,10 +9,12 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
+use futures::stream::{self, StreamExt};
+use tokio::time::interval;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
-
 use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::fetch_token;
 use crate::grpc::{BatchProcessor, GrpcService};
@@ -16,7 +22,6 @@ use crate::pool_data_types::{DexType, PoolState};
 use crate::types::PoolUpdateEvent;
 use crate::types::Token;
 use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
-
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
     grpc_service: Arc<GrpcService>,
@@ -31,12 +36,38 @@ pub struct PoolStateManager {
 
     pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
     rpc_client: Arc<RpcClient>,
+
+    /// Coalescing buffer: latest update per pool address
+    pending_updates: Arc<Mutex<HashMap<Pubkey, PoolUpdateEvent>>>,
+    /// Coalescing buffer: latest update per pool address
+    pending_updates_account_event: Arc<Mutex<HashMap<Pubkey, PoolUpdateEvent>>>,
+    /// RocksDB instance for persistence
+    db: Arc<DB>,
 }
+
+// Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
+#[derive(Serialize, Deserialize)]
+struct SerializablePools(HashMap<Pubkey, PoolState>);
+
+#[derive(Serialize, Deserialize)]
+struct SerializablePairToPools(HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>);
+
+#[derive(Serialize, Deserialize)]
+struct SerializableDexPools(HashMap<DexType, HashSet<Pubkey>>);
+
+#[derive(Serialize, Deserialize)]
+struct SerializableTokenCache(HashMap<Pubkey, Token>);
 
 impl PoolStateManager {
     pub async fn new(grpc_service: Arc<GrpcService>) -> Self {
+        // Initialize RocksDB
+        let db_path = "./rocksdb_data"; // Customize path as needed
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        let db = Arc::new(DB::open(&opts, Path::new(db_path)).expect("Failed to open RocksDB"));
+
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
-        let instance = Self {
+        let mut instance = Self {
             grpc_service: grpc_service,
             pools: Arc::new(RwLock::new(HashMap::new())),
             pair_to_pools: Arc::new(RwLock::new(HashMap::new())),
@@ -47,10 +78,168 @@ impl PoolStateManager {
                 ConfigLoader::load().unwrap().rpc_url.clone(),
                 CommitmentConfig::processed(),
             )),
+            pending_updates: Arc::new(Mutex::new(HashMap::new())),
+            pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
+            db: db.clone(),
         };
+
+        // Load data from RocksDB on startup
+        instance.load_from_db().await;
+
         instance
             .start_pool_update_event_processing(pool_update_rx)
             .await;
+
+        // start periodic flusher that applies coalesced updates
+        {
+            let pending = Arc::clone(&instance.pending_updates);
+            let pending_account = Arc::clone(&instance.pending_updates_account_event);
+            let pools = Arc::clone(&instance.pools);
+            let pair_to_pools = Arc::clone(&instance.pair_to_pools);
+            let dex_pools = Arc::clone(&instance.dex_pools);
+            let token_cache = Arc::clone(&instance.token_cache);
+            let rpc_client = instance.rpc_client.clone();
+
+            tokio::spawn(async move {
+                let mut ticker = interval(Duration::from_millis(400));
+                loop {
+                    ticker.tick().await;
+
+                    // measure drain start
+                    let drain_start = std::time::Instant::now();
+                    // drain pending updates quickly
+                    let draineds_account_event: Vec<PoolUpdateEvent> = {
+                        let mut buf = pending_account.lock().await;
+                        if buf.is_empty() {
+                            Vec::new()
+                        } else {
+                            let mut v = Vec::with_capacity(buf.len());
+                            for (_k, v_event) in buf.drain() {
+                                v.push(v_event);
+                            }
+                            v
+                        }
+                    };
+
+                    let draineds: Vec<PoolUpdateEvent> = {
+                        let mut buf = pending.lock().await;
+                        if buf.is_empty() {
+                            continue;
+                        }
+                        let mut v = Vec::with_capacity(buf.len());
+                        for (_k, v_event) in buf.drain() {
+                            v.push(v_event);
+                        }
+                        v
+                    };
+                    let drain_ns = drain_start.elapsed();
+
+                    // instrumentation: how many updates we drained
+                    let count_account = draineds_account_event.len();
+                    let count_normal = draineds.len();
+                    let total_count = count_account + count_normal;
+
+                    // bounded concurrency (hybrid)
+                    let concurrency_limit = 64usize;
+
+                    // account events first
+                    let apply_account_start = std::time::Instant::now();
+                    stream::iter(draineds_account_event.into_iter().map(|update| {
+                        let pools_c = Arc::clone(&pools);
+                        let pair_to_pools_c = Arc::clone(&pair_to_pools);
+                        let dex_pools_c = Arc::clone(&dex_pools);
+                        let token_cache_c = Arc::clone(&token_cache);
+                        let rpc_client_c = Arc::clone(&rpc_client);
+                        async move {
+                            Self::apply_pool_update(
+                                &update,
+                                pools_c,
+                                pair_to_pools_c,
+                                dex_pools_c,
+                                token_cache_c,
+                                rpc_client_c,
+                            )
+                            .await;
+                        }
+                    }))
+                    .buffer_unordered(concurrency_limit)
+                    .collect::<Vec<()>>()
+                    .await;
+                    let apply_account_ns = apply_account_start.elapsed();
+
+                    // normal events
+                    let apply_normal_start = std::time::Instant::now();
+                    stream::iter(draineds.into_iter().map(|update| {
+                        let pools_c = Arc::clone(&pools);
+                        let pair_to_pools_c = Arc::clone(&pair_to_pools);
+                        let dex_pools_c = Arc::clone(&dex_pools);
+                        let token_cache_c = Arc::clone(&token_cache);
+                        let rpc_client_c = Arc::clone(&rpc_client);
+                        async move {
+                            Self::apply_pool_update(
+                                &update,
+                                pools_c,
+                                pair_to_pools_c,
+                                dex_pools_c,
+                                token_cache_c,
+                                rpc_client_c,
+                            )
+                            .await;
+                        }
+                    }))
+                    .buffer_unordered(concurrency_limit)
+                    .collect::<Vec<()>>()
+                    .await;
+                    let apply_normal_ns = apply_normal_start.elapsed();
+
+                    // log summary / throughput
+                    let total_apply_ns = apply_account_ns + apply_normal_ns;
+                    if total_count > 0 {
+                        let avg_per_update_ms = (total_apply_ns.as_millis() as f64) / (total_count as f64);
+                        log::info!(
+                            "Flusher apply: total_count {:?}, account event time {:?}, ix event time {:?}, total time {:?}, avg {:.3} ms/update, concurrency={}",
+                            total_count,
+                            apply_account_ns,
+                            apply_normal_ns,
+                            total_apply_ns,
+                            avg_per_update_ms,
+                            concurrency_limit
+                        );
+                    } else {
+                        log::info!("Flusher apply: nothing to apply");
+                    }
+                }
+            });
+        }
+
+        // Start periodic save to RocksDB (every 15 minutes)
+        {
+            let db_clone = Arc::clone(&db);
+            let pools_clone = Arc::clone(&instance.pools);
+            let token_cache_clone = Arc::clone(&instance.token_cache);
+
+            tokio::spawn(async move {
+                let mut save_ticker = interval(Duration::from_secs(15 * 60)); // 15 minutes
+                loop {
+                    save_ticker.tick().await;
+                    // measure time to save
+                    let save_start = std::time::Instant::now();
+                    if let Err(e) = Self::save_to_db(
+                        &db_clone,
+                        &pools_clone,
+                        &token_cache_clone,
+                    )
+                    .await
+                    {
+                        log::error!("Failed to save to RocksDB: {:?}", e);
+                    } else {
+                        let save_ns = save_start.elapsed();
+                        log::info!("Saved pool state to RocksDB in {:?}", save_ns);
+                    }
+                }
+            });
+        }
+
         instance
     }
 
@@ -102,33 +291,32 @@ impl PoolStateManager {
     ) {
         log::info!("Starting pool update event processing loop...");
 
-        let pools = Arc::clone(&self.pools);
-        let pair_to_pools = Arc::clone(&self.pair_to_pools);
-        let dex_pools = Arc::clone(&self.dex_pools);
-        let token_cache = Arc::clone(&self.token_cache);
-        let rpc_client = self.rpc_client.clone();
+        let pending = Arc::clone(&self.pending_updates);
+        let pending_account = Arc::clone(&self.pending_updates_account_event);
 
         tokio::spawn(async move {
             while let Some(updates) = pool_update_rx.recv().await {
-                // Process pool updates concurrently
-                let pools_clone = Arc::clone(&pools);
-                let pair_to_pools_clone = Arc::clone(&pair_to_pools);
-                let dex_pools_clone = Arc::clone(&dex_pools);
-                let token_cache_clone = Arc::clone(&token_cache);
-                let rpc_client_clone = rpc_client.clone();
-                tokio::spawn(async move {
+                // move updates into pending buffers, latest-wins per pool address
+                // hold the lock only while inserting (keeps lock time short)
+                {
+                    let mut buf = pending.lock().await;
                     for update in updates.iter() {
-                        Self::apply_pool_update(
-                            update,
-                            Arc::clone(&pools_clone),
-                            Arc::clone(&pair_to_pools_clone),
-                            Arc::clone(&dex_pools_clone),
-                            Arc::clone(&token_cache_clone),
-                            Arc::clone(&rpc_client_clone),
-                        )
-                        .await;
+                        // use the event address as key; clone the event for the buffer
+                        if !update.is_account_state_update() {
+                            buf.insert(update.address(), update.clone());
+                        }
                     }
-                });
+                }
+
+                {
+                    let mut buf = pending_account.lock().await;
+                    for update in updates.iter() {
+                        // use the event address as key; clone the event for the buffer
+                        if update.is_account_state_update() {
+                            buf.insert(update.address(), update.clone());
+                        }
+                    }
+                }
             }
 
             log::info!("Pool update processing loop ended");
@@ -190,7 +378,6 @@ impl PoolStateManager {
         rpc_client: Arc<RpcClient>,
     ) {
         let pool_address = pool_state.address();
-        log::info!("Inserting new pool: address {:?}", pool_address);
         let dex = pool_state.dex();
         let (token_a, token_b) = pool_state.get_tokens();
 
@@ -394,6 +581,126 @@ impl PoolStateManager {
         }
     }
 
+    /// Load data from RocksDB into in-memory structures
+    async fn load_from_db(&mut self) {
+        log::info!("Loading pool state from RocksDB...");
+        // Load pools
+        if let Ok(Some(data)) = self.db.get(b"pools") {
+            if let Ok(serialized) = bincode::serde::decode_from_slice::<SerializablePools, Configuration>(&data, bincode::config::standard()) {
+                let mut pools_write = self.pools.write().await;
+                for (key, state) in serialized.0.0 {
+                    pools_write.insert(key, Arc::new(Mutex::new(state)));
+                }
+                log::info!("Loaded {} pools from RocksDB", pools_write.len());
+            } else {
+                log::error!("Failed to deserialize pools from RocksDB");
+            }
+        }
+
+        // Load token_cache
+        if let Ok(Some(data)) = self.db.get(b"token_cache") {
+            if let Ok((serialized, _)) = bincode::serde::decode_from_slice::<SerializableTokenCache, Configuration>(&data, bincode::config::standard()) {
+                let mut token_write = self.token_cache.write().await;
+                *token_write = serialized.0;
+                log::info!("Loaded {} tokens from RocksDB", token_write.len());
+            }
+        }
+
+        // Rebuild pair_to_pools and dex_pools mappings from loaded pools
+        self.rebuild_mappings_from_pools().await;
+    }
+
+    /// Rebuild pair_to_pools and dex_pools mappings from existing pools
+    async fn rebuild_mappings_from_pools(&self) {
+        let pools_read = self.pools.read().await;
+        let mut pair_to_pools_map: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> = HashMap::new();
+        let mut dex_pools_map: HashMap<DexType, HashSet<Pubkey>> = HashMap::new();
+
+        log::info!("Rebuilding mappings from {} pools...", pools_read.len());
+
+        for (pool_address, pool_mutex) in pools_read.iter() {
+            // Get pool state (we know these exist since we just loaded them)
+            let pool_guard = pool_mutex.lock().await; // Safe since we're loading on startup
+            let pool_state = &*pool_guard;
+
+            let (token_a, token_b) = pool_state.get_tokens();
+            let dex_type = pool_state.dex();
+
+            // Skip pools with invalid tokens
+            if token_a == Pubkey::default() || token_b == Pubkey::default() {
+                continue;
+            }
+
+            // Add to pair_to_pools mapping (both directions)
+            pair_to_pools_map
+                .entry((token_a, token_b))
+                .or_insert_with(HashSet::new)
+                .insert(*pool_address);
+
+            if (token_a, token_b) != (token_b, token_a) {
+                pair_to_pools_map
+                    .entry((token_b, token_a))
+                    .or_insert_with(HashSet::new)
+                    .insert(*pool_address);
+            }
+
+            // Add to dex_pools mapping
+            dex_pools_map
+                .entry(dex_type)
+                .or_insert_with(HashSet::new)
+                .insert(*pool_address);
+        }
+
+        drop(pools_read); // Release the pools read lock
+
+        // Update the mappings
+        {
+            let mut pair_to_pools_write = self.pair_to_pools.write().await;
+            *pair_to_pools_write = pair_to_pools_map;
+            log::info!("Rebuilt {} pair mappings", pair_to_pools_write.len());
+        }
+
+        {
+            let mut dex_pools_write = self.dex_pools.write().await;
+            *dex_pools_write = dex_pools_map;
+            log::info!("Rebuilt {} DEX mappings", dex_pools_write.len());
+        }
+    }
+
+    /// Save in-memory data to RocksDB
+    async fn save_to_db(
+        db: &Arc<DB>,
+        pools: &Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
+        token_cache: &Arc<RwLock<HashMap<Pubkey, Token>>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Clone the pools Arc for the blocking task
+        let pools_clone = Arc::clone(pools);
+        // Serialize pools in a blocking task
+        let pools_data = tokio::task::spawn_blocking(move || {
+            let pools_read = pools_clone.blocking_read();
+            let mut pools_data: HashMap<Pubkey, PoolState> = HashMap::new();
+
+            for (k, v) in pools_read.iter() {
+                let guard = v.blocking_lock();
+                pools_data.insert(*k, (*guard).clone());
+            }
+            pools_data
+        }).await?;
+        let pool_count = pools_data.len();
+        let serialized_pools = bincode::serde::encode_to_vec(&SerializablePools(pools_data), bincode::config::standard())?;
+        db.put(b"pools", serialized_pools)?;
+        log::info!("Saved {} pools to RocksDB", pool_count);
+
+        // Serialize token_cache
+        let token_read = token_cache.read().await;
+        let token_count = token_read.len();
+        let serialized_token = bincode::serde::encode_to_vec(&SerializableTokenCache((*token_read).clone()), bincode::config::standard())?;  // Changed
+        db.put(b"token_cache", serialized_token)?;
+        log::info!("Saved {} tokens to RocksDB", token_count);
+
+        Ok(())
+    }
+
     // Clean up old or inactive pools
     // pub async fn cleanup_stale_pools(&self, max_age_seconds: u64) {
     //     let current_time = std::time::SystemTime::now()
@@ -405,13 +712,6 @@ impl PoolStateManager {
     //     pools.retain(|_, pool| current_time - pool.last_updated() < max_age_seconds);
     // }
 }
-
-// impl TokenProviderInterface for PoolStateManager {
-//     async fn get_token_info(&self, mint: &Pubkey) -> Result<Option<Token>> {
-//         let token = self.get_token(mint).await;
-//         Ok(token)
-//     }
-// }
 
 #[derive(Debug, Clone)]
 pub struct PoolManagerStats {

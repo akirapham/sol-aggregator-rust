@@ -1,4 +1,5 @@
 use solana_sdk::pubkey::Pubkey;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     constants::wsol,
@@ -8,7 +9,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PoolState {
     PumpfunPoolState(PumpfunPoolState),
     PumpSwapPoolState(PumpSwapPoolState),

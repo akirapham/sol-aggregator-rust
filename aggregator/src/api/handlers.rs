@@ -1,6 +1,5 @@
 use crate::aggregator::DexAggregator;
 use crate::api::dto::PoolInfoResponse;
-use crate::pool_data_types::PoolState;
 use crate::types::ExecutionPriority;
 use crate::types::{BestRoute, SwapParams};
 use axum::{

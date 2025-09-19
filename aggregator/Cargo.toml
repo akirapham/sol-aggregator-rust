@@ -76,6 +76,10 @@ bincode = { workspace = true }
 # Anchor program dependencies for specific DEXs
 # These will be added as we implement each DEX
 
+tokio-tungstenite = { workspace = true}
+url = { workspace = true}
+futures-util = { workspace = true}
+
 [features]
 default = ["bincode"]  # Enable bincode by default (or add it to default features)
 bincode = []  # Define the feature (empty since bincode doesn't have sub-features)

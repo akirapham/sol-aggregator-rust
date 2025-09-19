@@ -23,16 +23,22 @@ use crate::config::ConfigLoader;
 use crate::grpc::create_grpc_service;
 use crate::pool_manager::PoolStateManager;
 use crate::types::AggregatorConfig;
+use crate::utils::BinancePriceService;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
+    // 0. Start the price feed service
+    log::info!("Starting Binance price feed service...");
+    let price_service = Arc::new(BinancePriceService::new());
+    price_service.start().await;
+
     // 1. Start the pool manager and gRPC streaming
     log::info!("Starting pool manager and gRPC streaming...");
     let (grpc_service, batch_rx) = create_grpc_service(50, 500).await?;
-    let pool_manager = Arc::new(PoolStateManager::new(grpc_service).await);
+    let pool_manager = Arc::new(PoolStateManager::new(grpc_service, price_service.clone()).await);
 
     // Start background event processing
     let pool_update_sender = pool_manager.get_pool_update_sender().clone();

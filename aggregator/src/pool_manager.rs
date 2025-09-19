@@ -21,7 +21,7 @@ use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{DexType, PoolState};
 use crate::types::PoolUpdateEvent;
 use crate::types::Token;
-use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
+use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event, BinancePriceService};
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
     grpc_service: Arc<GrpcService>,
@@ -43,6 +43,7 @@ pub struct PoolStateManager {
     pending_updates_account_event: Arc<Mutex<HashMap<Pubkey, PoolUpdateEvent>>>,
     /// RocksDB instance for persistence
     db: Arc<DB>,
+    price_service: Arc<BinancePriceService>
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
@@ -59,7 +60,7 @@ struct SerializableDexPools(HashMap<DexType, HashSet<Pubkey>>);
 struct SerializableTokenCache(HashMap<Pubkey, Token>);
 
 impl PoolStateManager {
-    pub async fn new(grpc_service: Arc<GrpcService>) -> Self {
+    pub async fn new(grpc_service: Arc<GrpcService>, price_service: Arc<BinancePriceService>) -> Self {
         // Initialize RocksDB
         let db_path = "./rocksdb_data"; // Customize path as needed
         let mut opts = Options::default();
@@ -81,6 +82,7 @@ impl PoolStateManager {
             pending_updates: Arc::new(Mutex::new(HashMap::new())),
             pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
             db: db.clone(),
+            price_service
         };
 
         // Load data from RocksDB on startup
@@ -710,6 +712,10 @@ impl PoolStateManager {
         log::info!("Saved {} tokens to RocksDB", token_count);
 
         Ok(())
+    }
+
+    pub async fn get_sol_price(&self) -> f64 {
+        self.price_service.get_sol_price().await.unwrap_or_default()
     }
 
     // Clean up old or inactive pools

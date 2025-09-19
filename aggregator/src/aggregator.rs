@@ -183,14 +183,3 @@ impl DexAggregator {
         }
     }
 }
-
-pub async fn start_aggregator() {
-    log::info!("Subscribing to Yellowstone gRPC events...");
-    // env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-    let (grpc_service, batch_rx) = create_grpc_service(50, 500).await.unwrap();
-    let mut psm = PoolStateManager::new(grpc_service).await;
-
-    PoolStateManager::start_batch_event_processing(batch_rx, psm.get_pool_update_sender().clone());
-
-    psm.start().await;
-}

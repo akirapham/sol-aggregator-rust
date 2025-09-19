@@ -1,10 +1,10 @@
-use rust_decimal::Decimal;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::constants::BASE_TOKENS;
+use crate::pool_data_types::DexType;
 use crate::pool_manager::PoolStateManager;
 use crate::types::{AggregatorConfig, ExecutionPriority, SwapParams};
 use crate::utils::calculate_min_output_amount;
@@ -15,6 +15,7 @@ pub struct DexAggregator {
 }
 
 pub struct SwapPath {
+    pub dex: DexType,
     pub pool_addresses: Vec<Pubkey>,
     pub input_token: Pubkey,
     pub output_token: Pubkey,
@@ -109,6 +110,7 @@ impl DexAggregator {
                     output_token: swap_param.output_token.address,
                     input_amount: swap_param.input_amount,
                     output_amount: current_best_output,
+                    dex: all_pool_state.get(&best_pool).unwrap().dex(),
                 }],
                 input_amount: swap_param.input_amount,
                 output_amount: current_best_output,

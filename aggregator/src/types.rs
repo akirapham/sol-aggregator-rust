@@ -23,8 +23,8 @@ pub struct Token {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwapStep {
     pub dex: DexType,
-    pub input_token: Token,
-    pub output_token: Token,
+    pub input_token: String,
+    pub output_token: String,
     pub input_amount: u64,
     pub output_amount: u64,
     pub percent: u64

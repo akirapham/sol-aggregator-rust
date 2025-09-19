@@ -1,6 +1,6 @@
-use crate::aggregator::DexAggregator;
-use crate::api::dto::PoolInfoResponse;
-use crate::types::ExecutionPriority;
+use crate::{aggregator::DexAggregator, types::SwapStep};
+use crate::api::dto::{get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest};
+use crate::types::{ExecutionPriority, SwapParams};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -9,35 +9,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
-
-#[derive(Deserialize)]
-pub struct QuoteRequest {
-    pub input_mint: String,
-    pub output_mint: String,
-    pub amount: u64,
-    pub slippage_tolerance: f64,
-    pub max_accounts: Option<u32>,
-    pub priority: Option<String>,
-}
+use validator::Validate;
 
 #[derive(Serialize)]
 pub struct QuoteResponse {
-    pub routes: Vec<RouteInfo>,
+    pub routes: Vec<SwapStep>,
     pub input_amount: u64,
     pub output_amount: u64,
-    pub price_impact: f64,
-    pub estimated_gas: u64,
-    pub execution_time_ms: u64,
-    pub route_id: String,
-}
-
-#[derive(Serialize)]
-pub struct RouteInfo {
-    pub dex: String,
-    pub input_amount: u64,
-    pub output_amount: u64,
-    pub price_impact: f64,
-    pub pool_address: String,
+    pub other_output_amount: u64,
 }
 
 pub async fn health_check() -> &'static str {
@@ -47,46 +26,76 @@ pub async fn health_check() -> &'static str {
 pub async fn get_quote(
     State(aggregator): State<Arc<DexAggregator>>,
     Json(request): Json<QuoteRequest>,
-) -> Result<Json<QuoteResponse>, StatusCode> {
-    // Parse pubkeys
-    let input_mint =
-        Pubkey::try_from(request.input_mint.as_str()).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let output_mint =
-        Pubkey::try_from(request.output_mint.as_str()).map_err(|_| StatusCode::BAD_REQUEST)?;
+) -> Result<Json<QuoteResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Validate the request
+    if let Err(validation_errors) = request.validate() {
+        let details: Vec<String> = validation_errors
+            .field_errors()
+            .iter()
+            .flat_map(|(field, errors)| {
+                errors.iter().map(move |error| {
+                    format!("{}: {}", field, error.message.as_deref().unwrap_or("Validation failed"))
+                })
+            })
+            .collect();
+
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Validation failed".to_string(),
+                details,
+            }),
+        ));
+    }
+
+    // check if token0 and token1 are valid pubkeys
+    let input_token_key = parse_pubkey_with_error(&request.input_token.as_str(), "input_token")?;
+    let output_token_key = parse_pubkey_with_error(&request.output_token.as_str(), "output_token")?;
+    let user_wallet = parse_pubkey_with_error(&request.user_wallet.as_str(), "user_wallet")?;
+
+    // Get tokens from pool manager
+    let input_token = get_token_with_error(&aggregator, &input_token_key, &request.input_token, "Input").await?;
+    let output_token = get_token_with_error(&aggregator, &output_token_key, &request.output_token, "Output").await?;
 
     // Create swap params
-    // let swap_params = SwapParams {
-    //     input_mint,
-    //     output_mint,
-    //     amount: request.amount,
-    //     slippage_tolerance: request.slippage_tolerance,
-    //     max_accounts: request.max_accounts.unwrap_or(64),
-    //     priority: parse_priority(&request.priority),
-    // };
+    let swap_params = SwapParams {
+        input_token,
+        output_token,
+        input_amount: request.input_amount,
+        slippage_bps: request.slippage_bps,
+        user_wallet: user_wallet,
+        priority: ExecutionPriority::Medium,
+    };
 
     // Get best route using the aggregator
-    // match aggregator.find_best_route(&swap_params).await {
-    //     Ok(best_route) => {
-    //         let response = QuoteResponse {
-    //             routes: best_route.routes.iter().map(|r| RouteInfo {
-    //                 dex: r.dex.to_string(),
-    //                 input_amount: r.input_amount,
-    //                 output_amount: r.output_amount,
-    //                 price_impact: r.price_impact.to_f64().unwrap_or(0.0),
-    //                 pool_address: r.pool_address.to_string(),
-    //             }).collect(),
-    //             input_amount: best_route.total_input_amount,
-    //             output_amount: best_route.total_output_amount,
-    //             price_impact: best_route.total_price_impact.to_f64().unwrap_or(0.0),
-    //             estimated_gas: 150_000, // Estimate based on route complexity
-    //             execution_time_ms: 2000,
-    //             route_id: uuid::Uuid::new_v4().to_string(),
-    //         };
-    //         Ok(Json(response))
-    //     }
-    //     Err(_) => Err(StatusCode::NOT_FOUND),
-    // }
-    Err(StatusCode::NOT_FOUND)
+    match aggregator.get_swap_route(&swap_params).await {
+        Some(best_route) => {
+            let response = QuoteResponse {
+                routes: best_route.paths.iter().map(|path| SwapStep {
+                    dex: path.dex.clone(),
+                    input_token: input_token_key.to_string(),
+                    output_token: output_token_key.to_string(),
+                    input_amount: path.input_amount,
+                    output_amount: path.output_amount,
+                    percent: 100,
+                }).collect(),
+                input_amount: best_route.input_amount,
+                output_amount: best_route.output_amount,
+                other_output_amount: best_route.other_output_amount,
+            };
+            Ok(Json(response))
+        }
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "No swap route found".to_string(),
+                details: vec![format!(
+                    "No available route for swapping {} {} to {}",
+                    request.input_amount, request.input_token, request.output_token
+                )],
+            }),
+        )),
+    }
 }
 
 pub async fn get_pools(

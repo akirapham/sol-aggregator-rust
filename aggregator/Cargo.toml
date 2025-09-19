@@ -79,6 +79,7 @@ bincode = { workspace = true }
 tokio-tungstenite = { workspace = true}
 url = { workspace = true}
 futures-util = { workspace = true}
+validator = { workspace = true, features = ["derive"] }
 
 [features]
 default = ["bincode"]  # Enable bincode by default (or add it to default features)

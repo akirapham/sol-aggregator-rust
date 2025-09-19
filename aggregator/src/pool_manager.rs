@@ -142,62 +142,73 @@ impl PoolStateManager {
                     // bounded concurrency (hybrid)
                     let concurrency_limit = 64usize;
 
-                    // account events first
-                    let apply_account_start = std::time::Instant::now();
-                    stream::iter(draineds_account_event.into_iter().map(|update| {
-                        let pools_c = Arc::clone(&pools);
-                        let pair_to_pools_c = Arc::clone(&pair_to_pools);
-                        let dex_pools_c = Arc::clone(&dex_pools);
-                        let token_cache_c = Arc::clone(&token_cache);
-                        let rpc_client_c = Arc::clone(&rpc_client);
-                        async move {
-                            Self::apply_pool_update(
-                                &update,
-                                pools_c,
-                                pair_to_pools_c,
-                                dex_pools_c,
-                                token_cache_c,
-                                rpc_client_c,
-                            )
-                            .await;
-                        }
-                    }))
-                    .buffer_unordered(concurrency_limit)
-                    .collect::<Vec<()>>()
-                    .await;
-                    let apply_account_ns = apply_account_start.elapsed();
+                    // Process account events and normal events in parallel using join!
+                    let apply_start = std::time::Instant::now();
 
-                    // normal events
-                    let apply_normal_start = std::time::Instant::now();
-                    stream::iter(draineds.into_iter().map(|update| {
-                        let pools_c = Arc::clone(&pools);
-                        let pair_to_pools_c = Arc::clone(&pair_to_pools);
-                        let dex_pools_c = Arc::clone(&dex_pools);
-                        let token_cache_c = Arc::clone(&token_cache);
-                        let rpc_client_c = Arc::clone(&rpc_client);
-                        async move {
-                            Self::apply_pool_update(
-                                &update,
-                                pools_c,
-                                pair_to_pools_c,
-                                dex_pools_c,
-                                token_cache_c,
-                                rpc_client_c,
-                            )
+                    let (apply_account_result, apply_normal_result) = tokio::join!(
+                        // Account events processing
+                        async {
+                            let start = std::time::Instant::now();
+                            stream::iter(draineds_account_event.into_iter().map(|update| {
+                                let pools_c = Arc::clone(&pools);
+                                let pair_to_pools_c = Arc::clone(&pair_to_pools);
+                                let dex_pools_c = Arc::clone(&dex_pools);
+                                let token_cache_c = Arc::clone(&token_cache);
+                                let rpc_client_c = Arc::clone(&rpc_client);
+                                async move {
+                                    Self::apply_pool_update(
+                                        &update,
+                                        pools_c,
+                                        pair_to_pools_c,
+                                        dex_pools_c,
+                                        token_cache_c,
+                                        rpc_client_c,
+                                    )
+                                    .await;
+                                }
+                            }))
+                            .buffer_unordered(concurrency_limit)
+                            .collect::<Vec<()>>()
                             .await;
+                            start.elapsed()
+                        },
+                        // Normal events processing
+                        async {
+                            let start = std::time::Instant::now();
+                            stream::iter(draineds.into_iter().map(|update| {
+                                let pools_c = Arc::clone(&pools);
+                                let pair_to_pools_c = Arc::clone(&pair_to_pools);
+                                let dex_pools_c = Arc::clone(&dex_pools);
+                                let token_cache_c = Arc::clone(&token_cache);
+                                let rpc_client_c = Arc::clone(&rpc_client);
+                                async move {
+                                    Self::apply_pool_update(
+                                        &update,
+                                        pools_c,
+                                        pair_to_pools_c,
+                                        dex_pools_c,
+                                        token_cache_c,
+                                        rpc_client_c,
+                                    )
+                                    .await;
+                                }
+                            }))
+                            .buffer_unordered(concurrency_limit)
+                            .collect::<Vec<()>>()
+                            .await;
+                            start.elapsed()
                         }
-                    }))
-                    .buffer_unordered(concurrency_limit)
-                    .collect::<Vec<()>>()
-                    .await;
-                    let apply_normal_ns = apply_normal_start.elapsed();
+                    );
+
+                    let apply_account_ns = apply_account_result;
+                    let apply_normal_ns = apply_normal_result;
+                    let total_apply_ns = apply_start.elapsed();
 
                     // log summary / throughput
-                    let total_apply_ns = apply_account_ns + apply_normal_ns;
                     if total_count > 0 {
                         let avg_per_update_ms = (total_apply_ns.as_millis() as f64) / (total_count as f64);
                         log::info!(
-                            "Flusher apply: total_count {:?}, account event time {:?}, ix event time {:?}, total time {:?}, avg {:.3} ms/update, concurrency={}",
+                            "Flusher apply (parallel): total_count {:?}, account event time {:?}, ix event time {:?}, total time {:?}, avg {:.3} ms/update, concurrency={}",
                             total_count,
                             apply_account_ns,
                             apply_normal_ns,

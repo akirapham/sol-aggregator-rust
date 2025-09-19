@@ -62,7 +62,9 @@ impl BinancePriceService {
                 match Self::connect_and_subscribe(
                     Arc::clone(&current_prices),
                     Arc::clone(&reconnect_attempts),
-                ).await {
+                )
+                .await
+                {
                     Ok(_) => {
                         log::info!("Binance WebSocket connection ended normally");
                         // Reset reconnect attempts on successful connection
@@ -78,7 +80,10 @@ impl BinancePriceService {
                         log::error!("Binance WebSocket error (attempt {}): {:?}", attempts, e);
 
                         if attempts >= max_attempts {
-                            log::error!("Max reconnection attempts ({}) reached. Stopping price feed.", max_attempts);
+                            log::error!(
+                                "Max reconnection attempts ({}) reached. Stopping price feed.",
+                                max_attempts
+                            );
                             break;
                         }
 
@@ -98,7 +103,7 @@ impl BinancePriceService {
         let url = "wss://stream.binance.com:9443/ws/solusdt@ticker";
 
         log::info!("Connecting to Binance WebSocket: {}", url);
-        let (ws_stream, _) = connect_async(url).await?;  // Pass string directly
+        let (ws_stream, _) = connect_async(url).await?; // Pass string directly
         log::info!("Connected to Binance WebSocket successfully");
 
         let (write, mut read) = ws_stream.split();
@@ -113,7 +118,8 @@ impl BinancePriceService {
                 ping_interval.tick().await;
 
                 let mut writer = write_for_ping.lock().await;
-                if let Err(e) = writer.send(Message::Ping(Bytes::new())).await {  // Use vec![] instead of Bytes::new()
+                if let Err(e) = writer.send(Message::Ping(Bytes::new())).await {
+                    // Use vec![] instead of Bytes::new()
                     log::error!("Failed to send ping: {:?}", e);
                     break;
                 }

@@ -1,7 +1,16 @@
+use crate::config::ConfigLoader;
+use crate::fetchers::fetchers::fetch_token;
+use crate::grpc::{BatchProcessor, GrpcService};
+use crate::pool_data_types::{DexType, PoolState};
+use crate::types::PoolUpdateEvent;
+use crate::types::Token;
+use crate::utils::{
+    pool_update_event_to_pool_state, update_pool_state_by_event, BinancePriceService,
+};
 use bincode::config::Configuration;
-use rocksdb::{DB, Options};
+use futures::stream::{self, StreamExt};
+use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
@@ -9,19 +18,12 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
-use futures::stream::{self, StreamExt};
-use tokio::time::interval;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use crate::config::ConfigLoader;
-use crate::fetchers::fetchers::fetch_token;
-use crate::grpc::{BatchProcessor, GrpcService};
-use crate::pool_data_types::{DexType, PoolState};
-use crate::types::PoolUpdateEvent;
-use crate::types::Token;
-use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event, BinancePriceService};
+use tokio::time::interval;
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
     grpc_service: Arc<GrpcService>,
@@ -43,7 +45,7 @@ pub struct PoolStateManager {
     pending_updates_account_event: Arc<Mutex<HashMap<Pubkey, PoolUpdateEvent>>>,
     /// RocksDB instance for persistence
     db: Arc<DB>,
-    price_service: Arc<BinancePriceService>
+    price_service: Arc<BinancePriceService>,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
@@ -60,7 +62,10 @@ struct SerializableDexPools(HashMap<DexType, HashSet<Pubkey>>);
 struct SerializableTokenCache(HashMap<Pubkey, Token>);
 
 impl PoolStateManager {
-    pub async fn new(grpc_service: Arc<GrpcService>, price_service: Arc<BinancePriceService>) -> Self {
+    pub async fn new(
+        grpc_service: Arc<GrpcService>,
+        price_service: Arc<BinancePriceService>,
+    ) -> Self {
         // Initialize RocksDB
         let db_path = "./rocksdb_data"; // Customize path as needed
         let mut opts = Options::default();
@@ -82,7 +87,7 @@ impl PoolStateManager {
             pending_updates: Arc::new(Mutex::new(HashMap::new())),
             pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
             db: db.clone(),
-            price_service
+            price_service,
         };
 
         // Load data from RocksDB on startup
@@ -101,11 +106,15 @@ impl PoolStateManager {
             let dex_pools = Arc::clone(&instance.dex_pools);
             let token_cache = Arc::clone(&instance.token_cache);
             let rpc_client = instance.rpc_client.clone();
+            let price_service = Arc::clone(&instance.price_service);
 
             tokio::spawn(async move {
                 let mut ticker = interval(Duration::from_millis(400));
                 loop {
                     ticker.tick().await;
+
+                    // read sol price
+                    let sol_price = price_service.get_sol_price().await.unwrap_or_default();
 
                     // measure drain start
                     let drain_start = std::time::Instant::now();
@@ -165,6 +174,7 @@ impl PoolStateManager {
                                         dex_pools_c,
                                         token_cache_c,
                                         rpc_client_c,
+                                        sol_price,
                                     )
                                     .await;
                                 }
@@ -191,6 +201,7 @@ impl PoolStateManager {
                                         dex_pools_c,
                                         token_cache_c,
                                         rpc_client_c,
+                                        sol_price,
                                     )
                                     .await;
                                 }
@@ -208,12 +219,11 @@ impl PoolStateManager {
 
                     // log summary / throughput
                     if total_count > 0 {
-                        let avg_per_update_ms = (total_apply_ns.as_millis() as f64) / (total_count as f64);
+                        let avg_per_update_ms =
+                            (total_apply_ns.as_millis() as f64) / (total_count as f64);
                         log::info!(
-                            "Flusher apply (parallel): total_count {:?}, account event time {:?}, ix event time {:?}, total time {:?}, avg {:.3} ms/update, concurrency={}",
+                            "Flusher apply (parallel): total_event_count {:?}, handle time {:?}, avg {:.3} ms/update, concurrency={}",
                             total_count,
-                            apply_account_ns,
-                            apply_normal_ns,
                             total_apply_ns,
                             avg_per_update_ms,
                             concurrency_limit
@@ -237,12 +247,8 @@ impl PoolStateManager {
                     save_ticker.tick().await;
                     // measure time to save
                     let save_start = std::time::Instant::now();
-                    if let Err(e) = Self::save_to_db(
-                        &db_clone,
-                        &pools_clone,
-                        &token_cache_clone,
-                    )
-                    .await
+                    if let Err(e) =
+                        Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
                     {
                         log::error!("Failed to save to RocksDB: {:?}", e);
                     } else {
@@ -343,6 +349,7 @@ impl PoolStateManager {
         dex_pools: Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         rpc_client: Arc<RpcClient>,
+        sol_price: f64,
     ) {
         let pool_address = update.address();
         // check if pool exists
@@ -359,11 +366,11 @@ impl PoolStateManager {
 
             if let Some(pool_mutex) = pool_mutex {
                 let mut pool_guard = pool_mutex.lock().await;
-                update_pool_state_by_event(update, &mut pool_guard);
+                update_pool_state_by_event(update, &mut pool_guard, sol_price);
             }
         } else {
             // Insert new pool
-            let pool_state = pool_update_event_to_pool_state(update);
+            let pool_state = pool_update_event_to_pool_state(update, sol_price);
             if let Some(pool_state) = pool_state {
                 let (token0, token1) = pool_state.get_tokens();
                 if token0 == Pubkey::default() || token1 == Pubkey::default() {
@@ -404,7 +411,10 @@ impl PoolStateManager {
                 }
                 std::collections::hash_map::Entry::Occupied(_) => {
                     // Another task inserted concurrently — keep existing one
-                    log::warn!("Pool {:?} was inserted concurrently, skipping insert", pool_address);
+                    log::warn!(
+                        "Pool {:?} was inserted concurrently, skipping insert",
+                        pool_address
+                    );
                     return;
                 }
             }
@@ -599,9 +609,13 @@ impl PoolStateManager {
         log::info!("Loading pool state from RocksDB...");
         // Load pools
         if let Ok(Some(data)) = self.db.get(b"pools") {
-            if let Ok(serialized) = bincode::serde::decode_from_slice::<SerializablePools, Configuration>(&data, bincode::config::standard()) {
+            if let Ok(serialized) = bincode::serde::decode_from_slice::<
+                SerializablePools,
+                Configuration,
+            >(&data, bincode::config::standard())
+            {
                 let mut pools_write = self.pools.write().await;
-                for (key, state) in serialized.0.0 {
+                for (key, state) in serialized.0 .0 {
                     pools_write.insert(key, Arc::new(Mutex::new(state)));
                 }
                 log::info!("Loaded {} pools from RocksDB", pools_write.len());
@@ -612,7 +626,11 @@ impl PoolStateManager {
 
         // Load token_cache
         if let Ok(Some(data)) = self.db.get(b"token_cache") {
-            if let Ok((serialized, _)) = bincode::serde::decode_from_slice::<SerializableTokenCache, Configuration>(&data, bincode::config::standard()) {
+            if let Ok((serialized, _)) = bincode::serde::decode_from_slice::<
+                SerializableTokenCache,
+                Configuration,
+            >(&data, bincode::config::standard())
+            {
                 let mut token_write = self.token_cache.write().await;
                 *token_write = serialized.0;
                 log::info!("Loaded {} tokens from RocksDB", token_write.len());
@@ -698,16 +716,23 @@ impl PoolStateManager {
                 pools_data.insert(*k, (*guard).clone());
             }
             pools_data
-        }).await?;
+        })
+        .await?;
         let pool_count = pools_data.len();
-        let serialized_pools = bincode::serde::encode_to_vec(&SerializablePools(pools_data), bincode::config::standard())?;
+        let serialized_pools = bincode::serde::encode_to_vec(
+            &SerializablePools(pools_data),
+            bincode::config::standard(),
+        )?;
         db.put(b"pools", serialized_pools)?;
         log::info!("Saved {} pools to RocksDB", pool_count);
 
         // Serialize token_cache
         let token_read = token_cache.read().await;
         let token_count = token_read.len();
-        let serialized_token = bincode::serde::encode_to_vec(&SerializableTokenCache((*token_read).clone()), bincode::config::standard())?;  // Changed
+        let serialized_token = bincode::serde::encode_to_vec(
+            &SerializableTokenCache((*token_read).clone()),
+            bincode::config::standard(),
+        )?; // Changed
         db.put(b"token_cache", serialized_token)?;
         log::info!("Saved {} tokens to RocksDB", token_count);
 

@@ -10,4 +10,5 @@ pub struct PoolInfoResponse {
     pub base_reserve: u64,
     pub quote_reserve: u64,
     pub slot: u64,
+    pub liquidity: f64
 }

@@ -1,5 +1,5 @@
-use solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
+use solana_sdk::pubkey::Pubkey;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PumpSwapPoolState {
     pub slot: u64,
@@ -14,6 +14,7 @@ pub struct PumpSwapPoolState {
     pub last_updated: u64,
     pub base_reserve: u64,
     pub quote_reserve: u64,
+    pub liquidity_usd: f64,
     pub is_state_keys_initialized: bool,
 }
 

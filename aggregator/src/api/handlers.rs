@@ -118,6 +118,7 @@ pub async fn get_pools(
                 base_reserve,
                 quote_reserve,
                 slot: pool.get_metadata().slot,
+                liquidity: pool.get_liquidity_usd()
             }
         })
         .collect();

@@ -1,5 +1,5 @@
-use solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
+use solana_sdk::pubkey::Pubkey;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BonkPoolState {
     pub slot: u64,
@@ -9,6 +9,7 @@ pub struct BonkPoolState {
     pub total_base_sell: u64,
     pub base_reserve: u64,  // virtual_base
     pub quote_reserve: u64, // virtual_quote
+    pub liquidity_usd: f64, // base liquidity, one side
     pub real_base: u64,
     pub real_quote: u64,
     pub quote_protocol_fee: u64,

@@ -1,5 +1,5 @@
-use solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
+use solana_sdk::pubkey::Pubkey;
 #[derive(Clone, Debug, Copy, Default)]
 pub struct TickState {
     pub tick: i32,
@@ -60,6 +60,7 @@ pub struct RadyiumClmmPoolState {
     pub observation_key: Pubkey,
     pub tick_spacing: u16,
     pub liquidity: u128,
+    pub liquidity_usd: f64,
     pub sqrt_price_x64: u128,
     pub tick_current_index: i32,
     pub status: u8,

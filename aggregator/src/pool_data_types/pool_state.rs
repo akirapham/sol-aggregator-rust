@@ -1,5 +1,5 @@
-use solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
+use solana_sdk::pubkey::Pubkey;
 
 use crate::{
     constants::wsol,
@@ -106,6 +106,17 @@ impl PoolState {
             PoolState::RaydiumCpmmPoolState(state) => (state.token0_reserve, state.token1_reserve),
             PoolState::BonkPoolState(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RadyiumClmmPoolState(state) => (state.token0_reserve, state.token1_reserve),
+        }
+    }
+
+    pub fn get_liquidity_usd(&self) -> f64 {
+        match self {
+            PoolState::PumpfunPoolState(state) => state.liquidity_usd,
+            PoolState::PumpSwapPoolState(state) => state.liquidity_usd,
+            PoolState::RaydiumAmmV4PoolState(state) => state.liquidity_usd,
+            PoolState::RaydiumCpmmPoolState(state) => state.liquidity_usd,
+            PoolState::BonkPoolState(state) => state.liquidity_usd,
+            PoolState::RadyiumClmmPoolState(state) => state.liquidity_usd,
         }
     }
 }

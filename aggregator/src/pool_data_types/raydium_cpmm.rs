@@ -1,5 +1,5 @@
-use solana_sdk::pubkey::Pubkey;
 use serde::{Deserialize, Serialize};
+use solana_sdk::pubkey::Pubkey;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaydiumCpmmPoolState {
     pub slot: u64,

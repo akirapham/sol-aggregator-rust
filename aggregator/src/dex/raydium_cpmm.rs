@@ -22,7 +22,7 @@ impl RaydiumCpmmDex {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         let (base_token, quote_token) = (self.pool_state.token0, self.pool_state.token1);
         let input_is_base = tokens_equal(input_token, &base_token);
         let (input_reserve, output_reserve) = if input_is_base {

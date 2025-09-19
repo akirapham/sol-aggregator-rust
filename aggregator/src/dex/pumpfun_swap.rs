@@ -23,8 +23,8 @@ impl PumpSwapDex {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
-        let (base_token, quote_token) = (self.pool_state.base_mint, self.pool_state.quote_mint);
+    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+        let (base_token, _quote_token) = (self.pool_state.base_mint, self.pool_state.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);
         let (input_reserve, output_reserve) = if input_is_base {
             (self.pool_state.base_reserve, self.pool_state.quote_reserve)

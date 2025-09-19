@@ -97,7 +97,7 @@ impl BinancePriceService {
 
     async fn connect_and_subscribe(
         current_prices: Arc<RwLock<std::collections::HashMap<String, PriceData>>>,
-        reconnect_attempts: Arc<RwLock<u32>>,
+        _reconnect_attempts: Arc<RwLock<u32>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Use string directly instead of Url::parse
         let url = "wss://stream.binance.com:9443/ws/solusdt@ticker";

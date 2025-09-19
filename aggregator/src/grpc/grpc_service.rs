@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::dex::handle_dex_event;
+use crate::types::AggregatorConfig;
 use crate::{config::ConfigLoader, types::PoolUpdateEvent};
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
@@ -275,7 +276,7 @@ pub async fn create_grpc_service(
     ),
     Box<dyn std::error::Error>,
 > {
-    let agg_config = ConfigLoader::load().unwrap();
+    let agg_config = AggregatorConfig::from_env().unwrap();
     // Create low-latency configuration
     let mut config: ClientConfig = ClientConfig::high_throughput();
     // Enable performance monitoring, has performance overhead, disabled by default

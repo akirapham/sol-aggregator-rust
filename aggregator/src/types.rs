@@ -151,25 +151,12 @@ pub struct SwapParams {
     pub priority: ExecutionPriority,
 }
 
-/// Price information for a token pair
-#[derive(Debug, Clone)]
-pub struct PriceInfo {
-    pub dex: DexType,
-    pub input_token: Pubkey,
-    pub output_token: Pubkey,
-    pub price: Decimal,
-    pub liquidity: u64,
-    pub last_updated: u64, // Unix timestamp
-}
-
 /// Configuration for the aggregator
 #[derive(Debug, Clone)]
 pub struct AggregatorConfig {
     pub rpc_url: String,
     pub yellowstone_grpc_url: String,
     pub backup_grpc_url: Option<String>,
-    pub commitment: CommitmentLevel,
-    pub max_slippage: Decimal,
     pub max_routes: usize,
     pub smart_routing: SmartRoutingConfig,
     pub gas_config: GasConfig,
@@ -230,8 +217,6 @@ impl Default for AggregatorConfig {
             rpc_url: "https://api.mainnet-beta.solana.com".to_string(),
             yellowstone_grpc_url: "https://solana-yellowstone-grpc.publicnode.com:443".to_string(),
             backup_grpc_url: Some("https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
-            commitment: CommitmentLevel::Processed,
-            max_slippage: Decimal::new(5, 2), // 5%
             max_routes: 5,
             smart_routing: SmartRoutingConfig::default(),
             gas_config: GasConfig::default(),

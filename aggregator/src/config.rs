@@ -26,8 +26,6 @@ impl ConfigLoader {
                 Ok(url) if !url.trim().is_empty() => Some(url),
                 _ => Some("https://solana-yellowstone-grpc.publicnode.com:443".to_string()),
             },
-            commitment: Self::get_commitment_level()?,
-            max_slippage: Self::get_decimal("MAX_SLIPPAGE", Decimal::new(5, 2))?,
             max_routes: Self::get_usize("MAX_ROUTES", 5)?,
             smart_routing: Self::load_smart_routing_config()?,
             gas_config: Self::load_gas_config()?,

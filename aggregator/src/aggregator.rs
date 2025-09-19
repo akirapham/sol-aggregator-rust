@@ -2,7 +2,7 @@ use rust_decimal::Decimal;
 use std::sync::Arc;
 
 use crate::pool_manager::PoolStateManager;
-use crate::types::{AggregatorConfig, ExecutionPriority, SwapRoute};
+use crate::types::{AggregatorConfig, ExecutionPriority};
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
     config: AggregatorConfig,
@@ -152,33 +152,5 @@ impl DexAggregator {
     /// Get configuration
     pub fn get_config(&self) -> &AggregatorConfig {
         &self.config
-    }
-
-    /// Determine execution priority based on route characteristics
-    fn determine_execution_priority(
-        &self,
-        routes: &[SwapRoute],
-        user_priority: ExecutionPriority,
-    ) -> ExecutionPriority {
-        // If user specified priority, use it
-        match user_priority {
-            ExecutionPriority::High => ExecutionPriority::High,
-            ExecutionPriority::Low => ExecutionPriority::Low,
-            ExecutionPriority::Medium => {
-                // Determine based on route characteristics
-                if routes.is_empty() {
-                    return ExecutionPriority::Medium;
-                }
-
-                // Check if any route has high price impact (suggests low liquidity)
-                let has_high_impact = routes.iter().any(|r| r.price_impact > Decimal::new(5, 2)); // 5%
-
-                if has_high_impact {
-                    ExecutionPriority::High // Execute quickly to avoid slippage
-                } else {
-                    ExecutionPriority::Medium
-                }
-            }
-        }
     }
 }

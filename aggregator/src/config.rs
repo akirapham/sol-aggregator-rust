@@ -64,14 +64,8 @@ impl ConfigLoader {
     /// Load MEV protection configuration
     fn load_mev_protection_config() -> Result<MevProtectionConfig> {
         Ok(MevProtectionConfig {
-            use_private_mempool: Self::get_bool("USE_PRIVATE_MEMPOOL", false)?,
-            max_slippage_tolerance: Self::get_decimal(
-                "MAX_SLIPPAGE_TOLERANCE",
-                Decimal::new(1, 2),
-            )?,
-            min_liquidity_threshold: Self::get_u64("MIN_LIQUIDITY_THRESHOLD_MEV", 10000000)?,
+            min_liquidity_threshold: Self::get_u64("MIN_LIQUIDITY_THRESHOLD_MEV", 3000)?,
             max_mev_risk_tolerance: Self::get_mev_risk("MAX_MEV_RISK_TOLERANCE", MevRisk::Medium)?,
-            use_flashloan_protection: Self::get_bool("USE_FLASHLOAN_PROTECTION", false)?,
         })
     }
 
@@ -79,12 +73,7 @@ impl ConfigLoader {
     fn load_split_config() -> Result<SplitConfig> {
         Ok(SplitConfig {
             max_splits: Self::get_usize("MAX_SPLITS", 3)?,
-            min_split_amount: Self::get_u64("MIN_SPLIT_AMOUNT", 1000000)?,
-            max_price_impact_per_split: Self::get_decimal(
-                "MAX_PRICE_IMPACT_PER_SPLIT",
-                Decimal::new(2, 2),
-            )?,
-            prefer_low_mev: Self::get_bool("PREFER_LOW_MEV", true)?,
+            min_split_value: Self::get_u64("MIN_SPLIT_VALUE", 1000)? as f64, // 1000$
         })
     }
 

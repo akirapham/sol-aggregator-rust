@@ -21,16 +21,13 @@ pub struct Token {
 
 /// Represents a swap route through a specific DEX
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwapRoute {
+pub struct SwapStep {
     pub dex: DexType,
     pub input_token: Token,
     pub output_token: Token,
     pub input_amount: u64,
     pub output_amount: u64,
-    pub price_impact: Decimal,
-    pub route_path: Vec<Pubkey>, // For multi-hop swaps
-    pub mev_risk: MevRisk,       // MEV risk assessment
-    pub liquidity_depth: u64,    // Available liquidity at this price level
+    pub percent: u64
 }
 
 /// MEV risk assessment levels
@@ -45,58 +42,19 @@ pub enum MevRisk {
 /// Represents the best route found by the aggregator
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BestRoute {
-    pub routes: Vec<SwapRoute>,
-    pub total_input_amount: u64,
-    pub total_output_amount: u64,
-    pub total_price_impact: Decimal,
-    pub execution_priority: ExecutionPriority,
-    pub max_mev_risk: MevRisk,
-    pub route_type: RouteType,
-    pub split_ratio: Option<Vec<Decimal>>, // For split trading
-}
-
-/// Types of routing strategies
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RouteType {
-    SingleHop, // Direct swap A→B
-    MultiHop,  // Multi-hop swap A→B→C
-    Split,     // Split across multiple DEXs
-    Arbitrage, // Cross-DEX arbitrage opportunity
-    Optimal,   // AI-optimized route
-}
-
-/// Multi-hop path for complex routing
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MultiHopPath {
-    pub hops: Vec<Hop>,
-    pub total_input_amount: u64,
-    pub total_output_amount: u64,
-    pub total_fee: u64,
-    pub total_gas_cost: u64,
-    pub price_impact: Decimal,
-    pub mev_risk: MevRisk,
-}
-
-/// Individual hop in a multi-hop path
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Hop {
-    pub dex: DexType,
-    pub input_token: Token,
-    pub output_token: Token,
+    pub routes: Vec<SwapStep>,
     pub input_amount: u64,
     pub output_amount: u64,
-    pub fee: u64,
-    pub gas_cost: u64,
-    pub pool_address: Pubkey,
+    pub price_impact: f64,
+    pub execution_priority: ExecutionPriority,
+    pub max_mev_risk: MevRisk,
 }
 
 /// Split trading configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SplitConfig {
     pub max_splits: usize,
-    pub min_split_amount: u64,
-    pub max_price_impact_per_split: Decimal,
-    pub prefer_low_mev: bool,
+    pub min_split_value: f64,
 }
 
 /// Gas optimization settings
@@ -111,11 +69,8 @@ pub struct GasConfig {
 /// MEV protection settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MevProtectionConfig {
-    pub use_private_mempool: bool,
-    pub max_slippage_tolerance: Decimal,
     pub min_liquidity_threshold: u64,
     pub max_mev_risk_tolerance: MevRisk,
-    pub use_flashloan_protection: bool,
 }
 
 impl std::fmt::Display for DexType {
@@ -146,7 +101,7 @@ pub struct SwapParams {
     pub input_token: Token,
     pub output_token: Token,
     pub input_amount: u64,
-    pub slippage_tolerance: Decimal, // e.g., 0.01 for 1%
+    pub slippage_bps: Decimal, // e.g., 0.01 for 1%
     pub user_wallet: Pubkey,
     pub priority: ExecutionPriority,
 }
@@ -255,11 +210,8 @@ impl Default for GasConfig {
 impl Default for MevProtectionConfig {
     fn default() -> Self {
         Self {
-            use_private_mempool: false,
-            max_slippage_tolerance: Decimal::new(1, 2), // 1%
-            min_liquidity_threshold: 10000000,          // 10M lamports
+            min_liquidity_threshold: 4000,          // 4k$
             max_mev_risk_tolerance: MevRisk::Medium,
-            use_flashloan_protection: false,
         }
     }
 }
@@ -268,9 +220,7 @@ impl Default for SplitConfig {
     fn default() -> Self {
         Self {
             max_splits: 3,
-            min_split_amount: 1000000,                      // 1M lamports
-            max_price_impact_per_split: Decimal::new(2, 2), // 2%
-            prefer_low_mev: true,
+            min_split_value: 1000.0,  // 1000$
         }
     }
 }

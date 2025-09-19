@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpSwapPoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,

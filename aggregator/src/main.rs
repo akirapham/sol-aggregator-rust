@@ -54,9 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = std::env::var("API_PORT").unwrap_or_else(|_| "3000".into());
     log::info!("Starting REST API server on port {}...", port);
     let app = api::create_router(aggregator);
-    let listener = TcpListener::bind(format!("0.0.0.0:{:?}", port)).await?;
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
-    log::info!("Server running on http://0.0.0.0:${:?}", port);
+    log::info!("Server running on http://0.0.0.0:{}", port);
     log::info!("API endpoints:");
     log::info!("  POST /quote - Get swap quotes");
     log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");

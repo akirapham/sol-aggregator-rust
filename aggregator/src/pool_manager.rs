@@ -539,6 +539,12 @@ impl PoolStateManager {
         pair_to_pools.get(&key).cloned().unwrap_or_default()
     }
 
+    pub async fn get_pool_count_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> usize {
+        let pair_to_pools = self.pair_to_pools.read().await;
+        let key = (*token_a, *token_b);
+        pair_to_pools.get(&key).map(|s| s.len()).unwrap_or(0)
+    }
+
     /// Get token metadata from cache
     pub async fn get_token(&self, token_address: &Pubkey) -> Option<Token> {
         let cache = self.token_cache.read().await;

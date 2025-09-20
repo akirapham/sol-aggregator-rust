@@ -1,3 +1,4 @@
+use crate::constants::is_base_token;
 use crate::error::DexAggregatorError;
 use crate::types::Token;
 use crate::utils::get_sol_mint;
@@ -19,6 +20,14 @@ pub async fn fetch_token(
             is_token_2022: false,
         });
     }
+
+    if is_base_token(&mint.to_string()) {
+        return Ok(Token {
+            address: *mint,
+            decimals: 6,
+            is_token_2022: false,
+        });
+    }
     // Implement your token fetching logic here
     // fetch token decimals from on chain using MPL Token program
 
@@ -32,12 +41,16 @@ pub async fn fetch_token(
         Ok(data) => {
             let len = data.len();
             let is_token_2022 = len > Mint::LEN;
-            let mint_extentions = StateWithExtensions::<Mint>::unpack(&data).unwrap();
-            Ok(Token {
-                address: *mint,
-                decimals: mint_extentions.base.decimals,
-                is_token_2022,
-            })
+            match StateWithExtensions::<Mint>::unpack(&data) {
+                Ok(mint_extentions) => Ok(Token {
+                    address: *mint,
+                    decimals: mint_extentions.base.decimals,
+                    is_token_2022,
+                }),
+                Err(_) => Err(DexAggregatorError::RpcError(
+                    "Failed to unpack mint account data".to_string(),
+                )),
+            }
         }
     }
 }

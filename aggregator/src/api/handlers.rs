@@ -8,7 +8,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -56,9 +56,9 @@ pub async fn get_quote(
     }
 
     // check if token0 and token1 are valid pubkeys
-    let input_token_key = parse_pubkey_with_error(&request.input_token.as_str(), "input_token")?;
-    let output_token_key = parse_pubkey_with_error(&request.output_token.as_str(), "output_token")?;
-    let user_wallet = parse_pubkey_with_error(&request.user_wallet.as_str(), "user_wallet")?;
+    let input_token_key = parse_pubkey_with_error(request.input_token.as_str(), "input_token")?;
+    let output_token_key = parse_pubkey_with_error(request.output_token.as_str(), "output_token")?;
+    let user_wallet = parse_pubkey_with_error(request.user_wallet.as_str(), "user_wallet")?;
 
     // Get tokens from pool manager
     let input_token =
@@ -77,7 +77,7 @@ pub async fn get_quote(
         output_token,
         input_amount: request.input_amount,
         slippage_bps: request.slippage_bps,
-        user_wallet: user_wallet,
+        user_wallet,
         priority: ExecutionPriority::Medium,
     };
 

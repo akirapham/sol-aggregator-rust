@@ -2,6 +2,7 @@ use crate::api::dto::{
     get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest,
     QuoteResponse,
 };
+use crate::pool_manager::PoolManagerStats;
 use crate::types::{ExecutionPriority, SwapParams};
 use crate::utils::tokens_equal;
 use crate::{aggregator::DexAggregator, types::SwapStep};
@@ -10,7 +11,6 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::Serialize;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -19,6 +19,14 @@ use validator::Validate;
 
 pub async fn health_check() -> &'static str {
     "OK"
+}
+
+pub async fn get_pool_stats(
+    State(aggregator): State<Arc<DexAggregator>>,
+) -> Result<Json<PoolManagerStats>, StatusCode> {
+    // Placeholder implementation
+    let stats = aggregator.get_pool_manager().get_stats().await;
+    Ok(Json(stats))
 }
 
 pub async fn get_quote(
@@ -177,24 +185,4 @@ pub async fn get_pools(
         .collect();
 
     Ok(Json(pools_response))
-}
-
-#[derive(Serialize)]
-pub struct PoolInfo {
-    pub address: String,
-    pub dex: String,
-    pub token_a: String,
-    pub token_b: String,
-    pub reserve_a: u64,
-    pub reserve_b: u64,
-    pub fee: f64,
-    pub last_updated: u64,
-}
-
-fn parse_priority(priority: &Option<String>) -> ExecutionPriority {
-    match priority.as_deref() {
-        Some("high") => ExecutionPriority::High,
-        Some("low") => ExecutionPriority::Low,
-        _ => ExecutionPriority::Medium,
-    }
 }

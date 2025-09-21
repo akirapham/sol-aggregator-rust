@@ -6,6 +6,7 @@ use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parse
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
 #[derive(Clone, Debug, Copy, Default)]
+#[allow(dead_code)]
 pub struct TickState {
     pub tick: i32,
     pub liquidity_net: i128,
@@ -90,7 +91,7 @@ pub struct RaydiumClmmPoolUpdate {
     pub last_updated: u64,
     pub is_account_state_update: bool,
 }
-
+#[allow(dead_code)]
 impl RadyiumClmmPoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*RAYDIUM_CLMM_PROGRAM_ID.as_array())

@@ -38,6 +38,7 @@ pub struct PumpSwapPoolUpdate {
     pub is_account_state_update: bool,
 }
 
+#[allow(dead_code)]
 impl PumpSwapPoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*PUMPSWAP_PROGRAM_ID.as_array())

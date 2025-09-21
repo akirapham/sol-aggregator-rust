@@ -26,6 +26,7 @@ pub struct BinanceTickerEvent {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PriceData {
     pub symbol: String,
     pub price: f64,
@@ -188,16 +189,6 @@ impl BinancePriceService {
     pub async fn get_sol_price(&self) -> Option<f64> {
         let prices = self.current_prices.read().await;
         prices.get("SOLUSDT").map(|data| data.price)
-    }
-
-    pub async fn get_price(&self, symbol: &str) -> Option<PriceData> {
-        let prices = self.current_prices.read().await;
-        prices.get(symbol).cloned()
-    }
-
-    pub async fn get_all_prices(&self) -> std::collections::HashMap<String, PriceData> {
-        let prices = self.current_prices.read().await;
-        prices.clone()
     }
 }
 

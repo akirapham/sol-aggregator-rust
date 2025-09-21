@@ -40,6 +40,7 @@ pub struct RaydiumCpmmPoolUpdate {
     pub is_account_state_update: bool,
 }
 
+#[allow(dead_code)]
 impl RaydiumCpmmPoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*RAYDIUM_CPMM_PROGRAM_ID.as_array())

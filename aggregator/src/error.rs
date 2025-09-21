@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum DexAggregatorError {
     #[error("DEX operation failed: {0}")]
     DexError(String),

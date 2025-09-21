@@ -97,6 +97,7 @@ pub enum ExecutionPriority {
 
 /// Swap parameters for executing a trade
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SwapParams {
     pub input_token: Token,
     pub output_token: Token,
@@ -108,6 +109,7 @@ pub struct SwapParams {
 
 /// Configuration for the aggregator
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AggregatorConfig {
     pub rpc_url: String,
     pub yellowstone_grpc_url: String,

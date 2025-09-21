@@ -9,7 +9,7 @@ use crate::types::{
 
 /// Configuration loader that reads from environment variables
 pub struct ConfigLoader;
-
+#[allow(dead_code)]
 impl ConfigLoader {
     /// Load configuration from environment variables
     pub fn load() -> Result<AggregatorConfig> {

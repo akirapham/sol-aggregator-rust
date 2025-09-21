@@ -15,6 +15,6 @@ pub fn create_router(aggregator: Arc<DexAggregator>) -> Router {
         .route("/quote", post(handlers::get_quote))
         // .route("/routes", post(handlers::get_routes))
         .route("/pools/:token0/:token1", get(handlers::get_pools))
-        // .route("/stats", get(handlers::get_stats))
+        .route("/stats", get(handlers::get_pool_stats))
         .with_state(aggregator)
 }

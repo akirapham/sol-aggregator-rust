@@ -1,7 +1,7 @@
 use solana_sdk::pubkey::Pubkey;
 
 use crate::pool_data_types::DexType;
-
+#[allow(dead_code)]
 pub trait DexInterface {
     /// Get the program ID of the DEX
     fn get_program_id() -> Pubkey;

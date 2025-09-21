@@ -8,7 +8,6 @@ mod fetchers;
 mod grpc;
 mod pool_data_types;
 mod pool_manager;
-mod smart_routing;
 mod types;
 mod utils;
 

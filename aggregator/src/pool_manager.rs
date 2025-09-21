@@ -61,6 +61,7 @@ struct SerializableDexPools(HashMap<DexType, HashSet<Pubkey>>);
 #[derive(Serialize, Deserialize)]
 struct SerializableTokenCache(HashMap<Pubkey, Token>);
 
+#[allow(dead_code)]
 impl PoolStateManager {
     pub async fn new(
         grpc_service: Arc<GrpcService>,
@@ -770,7 +771,7 @@ impl PoolStateManager {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolManagerStats {
     pub total_pools: usize,
     pub total_pairs: usize,

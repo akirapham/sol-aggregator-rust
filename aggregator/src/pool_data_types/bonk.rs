@@ -50,6 +50,7 @@ pub struct BonkPoolUpdate {
     pub is_account_state_update: bool,
 }
 
+#[allow(dead_code)]
 impl BonkPoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*BONK_PROGRAM_ID.as_array())

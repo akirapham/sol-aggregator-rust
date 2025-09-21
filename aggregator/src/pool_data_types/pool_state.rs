@@ -20,6 +20,7 @@ pub enum PoolState {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PoolStateMetadata {
     pub slot: u64,
     pub transaction_index: Option<u64>,

@@ -54,7 +54,6 @@ use solana_streamer_sdk::{
 };
 use tokio::sync::mpsc;
 
-use crate::pool_data_types::BonkPoolUpdate;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
@@ -65,6 +64,7 @@ use crate::{
     types::PoolUpdateEvent,
     utils::get_sol_mint,
 };
+use crate::{pool_data_types::BonkPoolUpdate, types::ChainStateUpdate};
 
 pub fn handle_dex_event(
     events: Vec<Box<dyn UnifiedEvent>>,
@@ -72,6 +72,7 @@ pub fn handle_dex_event(
     post_balances: Vec<u64>,
     post_token_balances: HashMap<String, SimplifiedTokenBalance>,
     pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
+    chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
 ) {
     let mut pool_update_events = vec![];
     // loop over events and match their types
@@ -79,7 +80,11 @@ pub fn handle_dex_event(
         match_event!(event, {
             // -------------------------- block meta -----------------------
             BlockMetaEvent => |e: BlockMetaEvent| {
-                // println!("BlockMetaEvent: {:?}", e.metadata.recv_us/1000000);
+                chain_state_update_tx.send(ChainStateUpdate {
+                    slot: e.slot,
+                    block_time: e.metadata.block_time,
+                    block_hash: e.block_hash.clone(),
+                });
             },
             // -------------------------- bonk -----------------------
             BonkPoolCreateEvent => |e: BonkPoolCreateEvent| {

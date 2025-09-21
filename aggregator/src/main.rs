@@ -39,7 +39,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start background event processing
     let pool_update_sender = pool_manager.get_pool_update_sender().clone();
-    PoolStateManager::start_batch_event_processing(batch_rx, pool_update_sender);
+    let chain_state_update_sender = pool_manager.get_chain_state_update_sender().clone();
+
+    PoolStateManager::start_batch_event_processing(
+        batch_rx,
+        pool_update_sender,
+        chain_state_update_sender,
+    );
 
     // Start pool manager
     let pool_manager_clone = pool_manager.clone();

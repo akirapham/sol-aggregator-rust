@@ -233,3 +233,11 @@ impl AggregatorConfig {
         crate::config::ConfigLoader::load()
     }
 }
+
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct ChainStateUpdate {
+    pub slot: u64,
+    pub block_time: i64,
+    pub block_hash: String,
+}

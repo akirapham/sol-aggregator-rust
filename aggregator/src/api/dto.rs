@@ -64,6 +64,7 @@ pub struct QuoteResponse {
     pub output_amount: u64,
     pub other_output_amount: u64,
     pub time_taken_ms: u64,
+    pub context_slot: u64,
 }
 
 // Custom validation function for Solana pubkeys

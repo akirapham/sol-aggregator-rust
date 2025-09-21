@@ -2,8 +2,8 @@ use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::fetch_token;
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{DexType, PoolState};
-use crate::types::PoolUpdateEvent;
 use crate::types::Token;
+use crate::types::{ChainStateUpdate, PoolUpdateEvent};
 use crate::utils::{
     pool_update_event_to_pool_state, update_pool_state_by_event, BinancePriceService,
 };
@@ -46,6 +46,8 @@ pub struct PoolStateManager {
     /// RocksDB instance for persistence
     db: Arc<DB>,
     price_service: Arc<BinancePriceService>,
+    chain_state: Arc<Mutex<ChainStateUpdate>>,
+    chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
@@ -74,6 +76,8 @@ impl PoolStateManager {
         let db = Arc::new(DB::open(&opts, Path::new(db_path)).expect("Failed to open RocksDB"));
 
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
+        let (chain_state_update_tx, chain_state_update_rx) =
+            mpsc::unbounded_channel::<ChainStateUpdate>();
         let mut instance = Self {
             grpc_service,
             pools: Arc::new(RwLock::new(HashMap::new())),
@@ -89,6 +93,8 @@ impl PoolStateManager {
             pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
             db: db.clone(),
             price_service,
+            chain_state: Arc::new(Mutex::new(ChainStateUpdate::default())),
+            chain_state_update_tx,
         };
 
         // Load data from RocksDB on startup
@@ -96,6 +102,10 @@ impl PoolStateManager {
 
         instance
             .start_pool_update_event_processing(pool_update_rx)
+            .await;
+
+        instance
+            .start_chain_state_update_event_processing(chain_state_update_rx)
             .await;
 
         // start periodic flusher that applies coalesced updates
@@ -265,6 +275,10 @@ impl PoolStateManager {
         self.pool_update_tx.clone()
     }
 
+    pub fn get_chain_state_update_sender(&self) -> mpsc::UnboundedSender<ChainStateUpdate> {
+        self.chain_state_update_tx.clone()
+    }
+
     pub async fn start(&self) {
         let grpc_service = self.grpc_service.clone();
 
@@ -287,6 +301,7 @@ impl PoolStateManager {
             )>,
         >,
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
+        chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
         // run in its own task
         tokio::spawn(async move {
@@ -296,7 +311,12 @@ impl PoolStateManager {
                 log::debug!("Received batch of {} events for processing", batch.len());
 
                 // Process the batch using the existing method
-                BatchProcessor::process_batch(batch, pool_update_tx.clone()).await;
+                BatchProcessor::process_batch(
+                    batch,
+                    pool_update_tx.clone(),
+                    chain_state_update_tx.clone(),
+                )
+                .await;
             }
 
             log::info!("Batch event processing loop ended - no more batches to process");
@@ -338,6 +358,24 @@ impl PoolStateManager {
             }
 
             log::info!("Pool update processing loop ended");
+        });
+    }
+
+    async fn start_chain_state_update_event_processing(
+        &self,
+        mut chain_state_update_rx: mpsc::UnboundedReceiver<ChainStateUpdate>,
+    ) {
+        log::info!("Starting chain state update event processing loop...");
+
+        let chain_state = Arc::clone(&self.chain_state);
+
+        tokio::spawn(async move {
+            while let Some(update) = chain_state_update_rx.recv().await {
+                let mut state = chain_state.lock().await;
+                *state = update;
+            }
+
+            log::info!("Chain state update processing loop ended");
         });
     }
 
@@ -768,6 +806,11 @@ impl PoolStateManager {
 
     pub async fn get_sol_price(&self) -> f64 {
         self.price_service.get_sol_price().await.unwrap_or_default()
+    }
+
+    pub async fn get_chain_state(&self) -> ChainStateUpdate {
+        let state = self.chain_state.lock().await;
+        state.clone()
     }
 }
 

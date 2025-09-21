@@ -135,6 +135,7 @@ pub async fn get_quote(
                 output_amount: best_route.output_amount,
                 other_output_amount: best_route.other_output_amount,
                 time_taken_ms,
+                context_slot: best_route.context_slot,
             };
             Ok(Json(response))
         }

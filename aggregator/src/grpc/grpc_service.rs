@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::dex::handle_dex_event;
 use crate::types::AggregatorConfig;
+use crate::types::ChainStateUpdate;
 use crate::types::PoolUpdateEvent;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
@@ -162,6 +163,7 @@ impl BatchProcessor {
             HashMap<String, SimplifiedTokenBalance>,
         )>,
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
+        chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
         log::trace!("Processing batch of {} events", batch.len());
 
@@ -170,6 +172,7 @@ impl BatchProcessor {
             .into_iter()
             .map(|(events, accounts, post_balances, post_token_balances)| {
                 let pool_update_tx_clone = pool_update_tx.clone();
+                let chain_state_update_tx_clone = chain_state_update_tx.clone();
                 tokio::spawn(async move {
                     Self::process_single_event(
                         events,
@@ -177,6 +180,7 @@ impl BatchProcessor {
                         post_balances,
                         post_token_balances,
                         pool_update_tx_clone,
+                        chain_state_update_tx_clone,
                     )
                     .await;
                 })
@@ -195,6 +199,7 @@ impl BatchProcessor {
         post_balances: Vec<u64>,
         post_token_balances: HashMap<String, SimplifiedTokenBalance>,
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
+        chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
         handle_dex_event(
             events,
@@ -202,6 +207,7 @@ impl BatchProcessor {
             post_balances,
             post_token_balances,
             pool_update_tx,
+            chain_state_update_tx,
         );
     }
 }

@@ -42,6 +42,7 @@ pub struct SwapRoute {
     pub output_amount: u64,
     pub other_output_amount: u64,
     pub slippage_bps: u16,
+    pub context_slot: u64,
 }
 
 impl DexAggregator {
@@ -310,6 +311,7 @@ impl DexAggregator {
                     swap_param.slippage_bps as u64,
                 ),
                 slippage_bps: swap_param.slippage_bps,
+                context_slot: self.pool_manager.get_chain_state().await.slot,
             });
         }
 
@@ -394,6 +396,7 @@ impl DexAggregator {
             output_amount: 0,
             other_output_amount: 0,
             slippage_bps: swap_param.slippage_bps,
+            context_slot: self.pool_manager.get_chain_state().await.slot,
         };
 
         let len = percent_distribution.len();

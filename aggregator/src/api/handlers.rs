@@ -82,7 +82,6 @@ pub async fn get_quote(
             // first, get all swap step started from the input token
             let mut swap_routes: Vec<SwapStep> = vec![];
             let mut intermediate_tokens: HashSet<String> = HashSet::new();
-            log::info!("Best route found with {:?} paths", best_route.paths.len());
             best_route.paths.iter().for_each(|path| {
                 path.steps.iter().for_each(|step| {
                     if step.input_token == request.input_token {

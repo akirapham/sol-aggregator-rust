@@ -136,11 +136,6 @@ impl DexAggregator {
         // Compute output amount for each direct path
         let mut best_direct_route: Option<SwapRoute> = None;
         let mut best_direct_output = 0u64;
-        log::info!(
-            "Evaluating {} direct paths, pools {:?}",
-            top_direct_paths.len(),
-            top_direct_paths.clone()
-        );
 
         for (pool_address, _liquidity) in top_direct_paths.iter() {
             if let Some(pool_state) = all_pool_state.get(pool_address) {

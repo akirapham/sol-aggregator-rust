@@ -140,5 +140,3 @@ pub async fn get_token_with_error(
         )),
     }
 }
-
-

@@ -1,7 +1,9 @@
 use crate::api::dto::{
-    get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest, QuoteResponse,
+    get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest,
+    QuoteResponse,
 };
 use crate::types::{ExecutionPriority, SwapParams};
+use crate::utils::tokens_equal;
 use crate::{aggregator::DexAggregator, types::SwapStep};
 use axum::{
     extract::{Path, State},
@@ -81,13 +83,21 @@ pub async fn get_quote(
         Some(best_route) => {
             // first, get all swap step started from the input token
             let mut swap_routes: Vec<SwapStep> = vec![];
-            let mut intermediate_tokens: HashSet<String> = HashSet::new();
+            let mut intermediate_tokens: HashSet<Pubkey> = HashSet::new();
             best_route.paths.iter().for_each(|path| {
                 path.steps.iter().for_each(|step| {
-                    if step.input_token == request.input_token {
-                        swap_routes.push(step.clone());
-                        if step.output_token != request.output_token {
-                            intermediate_tokens.insert(step.output_token.clone());
+                    if tokens_equal(&step.input_token, &swap_params.input_token.address) {
+                        swap_routes.push(SwapStep {
+                            dex: step.dex,
+                            input_token: step.input_token.to_string(),
+                            output_token: step.output_token.to_string(),
+                            pool_address: step.pool_address.to_string(),
+                            input_amount: step.input_amount,
+                            output_amount: step.output_amount,
+                            percent: step.percent,
+                        });
+                        if !tokens_equal(&step.output_token, &swap_params.output_token.address) {
+                            intermediate_tokens.insert(step.output_token);
                         }
                     }
                 });
@@ -96,8 +106,16 @@ pub async fn get_quote(
             // run a second to add swap step for intermediate tokens
             best_route.paths.iter().for_each(|path| {
                 path.steps.iter().for_each(|step| {
-                    if intermediate_tokens.contains(step.input_token.as_str()) {
-                        swap_routes.push(step.clone());
+                    if intermediate_tokens.contains(&step.input_token) {
+                        swap_routes.push(SwapStep {
+                            dex: step.dex,
+                            input_token: step.input_token.to_string(),
+                            output_token: step.output_token.to_string(),
+                            pool_address: step.pool_address.to_string(),
+                            input_amount: step.input_amount,
+                            output_amount: step.output_amount,
+                            percent: step.percent,
+                        });
                     }
                 });
             });

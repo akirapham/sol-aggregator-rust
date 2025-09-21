@@ -1,5 +1,5 @@
 use crate::api::dto::{
-    get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest,
+    get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest, QuoteResponse,
 };
 use crate::types::{ExecutionPriority, SwapParams};
 use crate::{aggregator::DexAggregator, types::SwapStep};
@@ -12,15 +12,8 @@ use serde::Serialize;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 use validator::Validate;
-
-#[derive(Serialize)]
-pub struct QuoteResponse {
-    pub routes: Vec<SwapStep>,
-    pub input_amount: u64,
-    pub output_amount: u64,
-    pub other_output_amount: u64,
-}
 
 pub async fn health_check() -> &'static str {
     "OK"
@@ -30,6 +23,8 @@ pub async fn get_quote(
     State(aggregator): State<Arc<DexAggregator>>,
     Json(request): Json<QuoteRequest>,
 ) -> Result<Json<QuoteResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let start_time = Instant::now();
+
     // Validate the request
     if let Err(validation_errors) = request.validate() {
         let details: Vec<String> = validation_errors
@@ -108,11 +103,13 @@ pub async fn get_quote(
                 });
             });
 
+            let time_taken_ms = start_time.elapsed().as_millis() as u64;
             let response = QuoteResponse {
                 routes: swap_routes,
                 input_amount: best_route.input_amount,
                 output_amount: best_route.output_amount,
                 other_output_amount: best_route.other_output_amount,
+                time_taken_ms,
             };
             Ok(Json(response))
         }

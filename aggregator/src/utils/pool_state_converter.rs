@@ -321,16 +321,13 @@ pub fn update_pool_state_by_event(
                         state.serum_event_queue = serum_event_queue;
                     }
                 }
-                if let Some(serum_coin_vault_account) =
-                    raydium_pool_update.serum_coin_vault_account
+                if let Some(serum_coin_vault_account) = raydium_pool_update.serum_coin_vault_account
                 {
-                    if !tokens_equal(&serum_coin_vault_account, &state.serum_coin_vault_account)
-                    {
+                    if !tokens_equal(&serum_coin_vault_account, &state.serum_coin_vault_account) {
                         state.serum_coin_vault_account = serum_coin_vault_account;
                     }
                 }
-                if let Some(serum_pc_vault_account) = raydium_pool_update.serum_pc_vault_account
-                {
+                if let Some(serum_pc_vault_account) = raydium_pool_update.serum_pc_vault_account {
                     if !tokens_equal(&serum_pc_vault_account, &state.serum_pc_vault_account) {
                         state.serum_pc_vault_account = serum_pc_vault_account;
                     }
@@ -478,10 +475,7 @@ pub fn update_pool_state_by_event(
                         state.token_vault1 = pool_state_part.token_vault1;
                     }
                     if !tokens_equal(&pool_state_part.observation_key, &default_pubkey)
-                        && !tokens_equal(
-                            &pool_state_part.observation_key,
-                            &state.observation_key,
-                        )
+                        && !tokens_equal(&pool_state_part.observation_key, &state.observation_key)
                     {
                         state.observation_key = pool_state_part.observation_key;
                     }

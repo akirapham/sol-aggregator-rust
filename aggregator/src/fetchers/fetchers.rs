@@ -33,11 +33,9 @@ pub async fn fetch_token(
 
     let mint_data = rpc_client.get_account_data(mint).await;
     match mint_data {
-        Err(_) => {
-            Err(DexAggregatorError::RpcError(
-                "Failed to fetch mint account data".to_string(),
-            ))
-        }
+        Err(_) => Err(DexAggregatorError::RpcError(
+            "Failed to fetch mint account data".to_string(),
+        )),
         Ok(data) => {
             let len = data.len();
             let is_token_2022 = len > Mint::LEN;

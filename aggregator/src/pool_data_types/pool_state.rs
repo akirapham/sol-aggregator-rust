@@ -122,12 +122,24 @@ impl PoolState {
 
     pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         match self {
-            PoolState::PumpfunPoolState(state) => state.calculate_output_amount(input_token, input_amount),
-            PoolState::PumpSwapPoolState(state) => state.calculate_output_amount(input_token, input_amount),
-            PoolState::RaydiumAmmV4PoolState(state) => state.calculate_output_amount(input_token, input_amount),
-            PoolState::RaydiumCpmmPoolState(state) => state.calculate_output_amount(input_token, input_amount),
-            PoolState::BonkPoolState(state) => state.calculate_output_amount(input_token, input_amount),
-            PoolState::RadyiumClmmPoolState(state) => state.calculate_output_amount(input_token, input_amount),
+            PoolState::PumpfunPoolState(state) => {
+                state.calculate_output_amount(input_token, input_amount)
+            }
+            PoolState::PumpSwapPoolState(state) => {
+                state.calculate_output_amount(input_token, input_amount)
+            }
+            PoolState::RaydiumAmmV4PoolState(state) => {
+                state.calculate_output_amount(input_token, input_amount)
+            }
+            PoolState::RaydiumCpmmPoolState(state) => {
+                state.calculate_output_amount(input_token, input_amount)
+            }
+            PoolState::BonkPoolState(state) => {
+                state.calculate_output_amount(input_token, input_amount)
+            }
+            PoolState::RadyiumClmmPoolState(state) => {
+                state.calculate_output_amount(input_token, input_amount)
+            }
         }
     }
 }

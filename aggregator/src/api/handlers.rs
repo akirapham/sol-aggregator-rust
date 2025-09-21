@@ -1,6 +1,8 @@
-use crate::{aggregator::DexAggregator, types::SwapStep};
-use crate::api::dto::{get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest};
+use crate::api::dto::{
+    get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest,
+};
 use crate::types::{ExecutionPriority, SwapParams};
+use crate::{aggregator::DexAggregator, types::SwapStep};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -8,6 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
+use std::collections::HashSet;
 use std::sync::Arc;
 use validator::Validate;
 
@@ -34,7 +37,11 @@ pub async fn get_quote(
             .iter()
             .flat_map(|(field, errors)| {
                 errors.iter().map(move |error| {
-                    format!("{}: {}", field, error.message.as_deref().unwrap_or("Validation failed"))
+                    format!(
+                        "{}: {}",
+                        field,
+                        error.message.as_deref().unwrap_or("Validation failed")
+                    )
                 })
             })
             .collect();
@@ -54,8 +61,15 @@ pub async fn get_quote(
     let user_wallet = parse_pubkey_with_error(&request.user_wallet.as_str(), "user_wallet")?;
 
     // Get tokens from pool manager
-    let input_token = get_token_with_error(&aggregator, &input_token_key, &request.input_token, "Input").await?;
-    let output_token = get_token_with_error(&aggregator, &output_token_key, &request.output_token, "Output").await?;
+    let input_token =
+        get_token_with_error(&aggregator, &input_token_key, &request.input_token, "Input").await?;
+    let output_token = get_token_with_error(
+        &aggregator,
+        &output_token_key,
+        &request.output_token,
+        "Output",
+    )
+    .await?;
 
     // Create swap params
     let swap_params = SwapParams {
@@ -70,15 +84,32 @@ pub async fn get_quote(
     // Get best route using the aggregator
     match aggregator.get_swap_route(&swap_params).await {
         Some(best_route) => {
+            // first, get all swap step started from the input token
+            let mut swap_routes: Vec<SwapStep> = vec![];
+            let mut intermediate_tokens: HashSet<String> = HashSet::new();
+            log::info!("Best route found with {:?} paths", best_route.paths.len());
+            best_route.paths.iter().for_each(|path| {
+                path.steps.iter().for_each(|step| {
+                    if step.input_token == request.input_token {
+                        swap_routes.push(step.clone());
+                        if step.output_token != request.output_token {
+                            intermediate_tokens.insert(step.output_token.clone());
+                        }
+                    }
+                });
+            });
+
+            // run a second to add swap step for intermediate tokens
+            best_route.paths.iter().for_each(|path| {
+                path.steps.iter().for_each(|step| {
+                    if intermediate_tokens.contains(step.input_token.as_str()) {
+                        swap_routes.push(step.clone());
+                    }
+                });
+            });
+
             let response = QuoteResponse {
-                routes: best_route.paths.iter().map(|path| SwapStep {
-                    dex: path.dex.clone(),
-                    input_token: input_token_key.to_string(),
-                    output_token: output_token_key.to_string(),
-                    input_amount: path.input_amount,
-                    output_amount: path.output_amount,
-                    percent: 100,
-                }).collect(),
+                routes: swap_routes,
                 input_amount: best_route.input_amount,
                 output_amount: best_route.output_amount,
                 other_output_amount: best_route.other_output_amount,

@@ -1,4 +1,3 @@
-use anchor_client::solana_sdk::commitment_config::CommitmentLevel;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
@@ -25,9 +24,10 @@ pub struct SwapStep {
     pub dex: DexType,
     pub input_token: String,
     pub output_token: String,
+    pub pool_address: String,
     pub input_amount: u64,
     pub output_amount: u64,
-    pub percent: u64
+    pub percent: u64,
 }
 
 /// MEV risk assessment levels
@@ -210,7 +210,7 @@ impl Default for GasConfig {
 impl Default for MevProtectionConfig {
     fn default() -> Self {
         Self {
-            min_liquidity_threshold: 4000,          // 4k$
+            min_liquidity_threshold: 4000, // 4k$
             max_mev_risk_tolerance: MevRisk::Medium,
         }
     }
@@ -220,7 +220,7 @@ impl Default for SplitConfig {
     fn default() -> Self {
         Self {
             max_splits: 3,
-            min_split_value: 1000.0,  // 1000$
+            min_split_value: 1000.0, // 1000$
         }
     }
 }

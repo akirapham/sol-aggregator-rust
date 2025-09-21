@@ -4,27 +4,29 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::constants::BASE_TOKENS;
-use crate::pool_data_types::DexType;
+use crate::pool_data_types::{DexType, PoolState};
 use crate::pool_manager::PoolStateManager;
-use crate::types::{AggregatorConfig, ExecutionPriority, SwapParams};
-use crate::utils::calculate_min_output_amount;
+use crate::types::{AggregatorConfig, SwapParams, SwapStep};
+use crate::utils::{calculate_min_output_amount, tokens_equal};
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
     config: AggregatorConfig,
     pool_manager: Arc<PoolStateManager>,
 }
 
+#[derive(Debug, Clone)]
 pub struct SwapPath {
     pub dex: DexType,
-    pub pool_addresses: Vec<Pubkey>,
-    pub input_token: Pubkey,
-    pub output_token: Pubkey,
+    pub steps: Vec<SwapStep>,
     pub input_amount: u64,
     pub output_amount: u64,
 }
 
+#[derive(Debug, Clone)]
 pub struct SwapRoute {
     pub paths: Vec<SwapPath>,
+    pub input_token: Pubkey,
+    pub output_token: Pubkey,
     pub input_amount: u64,
     pub output_amount: u64,
     pub other_output_amount: u64,
@@ -54,74 +56,267 @@ impl DexAggregator {
     }
 
     pub async fn get_swap_route(&self, swap_param: &SwapParams) -> Option<SwapRoute> {
-        // first, direct path
+        // First, direct path
         let direct_pool_addresses = self
             .pool_manager
-            .get_pool_addresses_for_pair(&swap_param.input_token.address, &swap_param.output_token.address).await;
+            .get_pool_addresses_for_pair(
+                &swap_param.input_token.address,
+                &swap_param.output_token.address,
+            )
+            .await;
 
-        // then, 2-hop route through an intermediary base token
+        // Then, 2-hop route through an intermediary base token
         // input -> base -> output
         let mut input_to_base_pools = HashSet::new();
-        // loop over BASE_TOKENS
+        let mut base_to_output_pools = HashSet::new();
+        let mut input_to_base_pool_addresses_by_pair: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> =
+            HashMap::new();
+        let mut base_to_output_pool_addresses_by_pair: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> =
+            HashMap::new();
+
+        // Loop over BASE_TOKENS to find hop routes
         for base_token in BASE_TOKENS.iter() {
             let base_token_key = Pubkey::from_str(base_token).unwrap();
+
+            // Skip if base token is same as input or output
+            if tokens_equal(&base_token_key, &swap_param.input_token.address)
+                || tokens_equal(&base_token_key, &swap_param.output_token.address)
+            {
+                continue;
+            }
+
+            // Find pools: input -> base
             let pools = self
                 .pool_manager
                 .get_pool_addresses_for_pair(&swap_param.input_token.address, &base_token_key)
                 .await;
-            input_to_base_pools.extend(pools);
+            input_to_base_pools.extend(pools.clone());
+            input_to_base_pool_addresses_by_pair
+                .insert((swap_param.input_token.address, base_token_key), pools);
+
+            // Find pools: base -> output
+            let pools = self
+                .pool_manager
+                .get_pool_addresses_for_pair(&base_token_key, &swap_param.output_token.address)
+                .await;
+            base_to_output_pools.extend(pools.clone());
+            base_to_output_pool_addresses_by_pair
+                .insert((base_token_key, swap_param.output_token.address), pools);
         }
 
-        let mut all_pool_state = HashMap::new();
-        for pool_address in direct_pool_addresses.iter().chain(input_to_base_pools.iter()) {
-            if let Some(pool_state) = self.pool_manager.get_pool_state_by_address(pool_address).await {
-                all_pool_state.insert(*pool_address, pool_state);
+        // Collect all pool states we need
+        let mut all_pool_state: HashMap<Pubkey, Arc<PoolState>> = HashMap::new();
+        for pool_address in direct_pool_addresses
+            .iter()
+            .chain(input_to_base_pools.iter())
+            .chain(base_to_output_pools.iter())
+        {
+            if let Some(pool_state) = self
+                .pool_manager
+                .get_pool_state_by_address(pool_address)
+                .await
+            {
+                all_pool_state.insert(*pool_address, Arc::new(pool_state));
             }
         }
 
-        // find top direct oaths with highest liquidity, then sort by liquidity
-        let mut top_direct_paths = direct_pool_addresses.iter().filter_map(|pool_address| {
-            all_pool_state.get(pool_address).map(|pool_state| {
-                (pool_address, pool_state.get_liquidity_usd())
+        // 1. Find best direct paths
+        let mut top_direct_paths = direct_pool_addresses
+            .iter()
+            .filter_map(|pool_address| {
+                all_pool_state
+                    .get(pool_address)
+                    .map(|pool_state| (pool_address, pool_state.get_liquidity_usd()))
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         top_direct_paths.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        // only keep top 3
-        top_direct_paths.truncate(3);
+        // truncate pool liquidity less than 1000 USD
+        top_direct_paths.retain(|(_, liquidity)| *liquidity > 1000.0);
 
-        // compute output amount for each direct path
-        let mut current_best_output = 0 as u64;
-        let mut best_direct_pool = None;
+        // Compute output amount for each direct path
+        let mut best_direct_route: Option<SwapRoute> = None;
+        let mut best_direct_output = 0u64;
+        log::info!(
+            "Evaluating {} direct paths, pools {:?}",
+            top_direct_paths.len(),
+            top_direct_paths.clone()
+        );
+
         for (pool_address, _liquidity) in top_direct_paths.iter() {
             if let Some(pool_state) = all_pool_state.get(pool_address) {
-                let output_amount = pool_state.calculate_output_amount(&swap_param.input_token.address, swap_param.input_amount);
-                if output_amount > current_best_output {
-                    current_best_output = output_amount;
-                    best_direct_pool = Some(*pool_address);
+                let output_amount = pool_state.calculate_output_amount(
+                    &swap_param.input_token.address,
+                    swap_param.input_amount,
+                );
+                if output_amount > best_direct_output {
+                    best_direct_output = output_amount;
+                    best_direct_route = Some(SwapRoute {
+                        paths: vec![SwapPath {
+                            steps: vec![SwapStep {
+                                dex: pool_state.dex(),
+                                input_token: swap_param.input_token.address.to_string(),
+                                output_token: swap_param.output_token.address.to_string(),
+                                input_amount: swap_param.input_amount,
+                                output_amount: best_direct_output,
+                                percent: 100,
+                                pool_address: pool_address.to_string(),
+                            }],
+                            input_amount: swap_param.input_amount,
+                            output_amount,
+                            dex: pool_state.dex(),
+                        }],
+                        input_token: swap_param.input_token.address,
+                        output_token: swap_param.output_token.address,
+                        input_amount: swap_param.input_amount,
+                        output_amount,
+                        other_output_amount: calculate_min_output_amount(
+                            output_amount,
+                            swap_param.slippage_bps as u64,
+                        ),
+                        slippage_bps: swap_param.slippage_bps,
+                    });
                 }
             }
         }
 
-        if let Some(best_pool) = best_direct_pool {
-            return Some(SwapRoute {
-                paths: vec![SwapPath {
-                    pool_addresses: vec![best_pool.clone()],
-                    input_token: swap_param.input_token.address,
-                    output_token: swap_param.output_token.address,
-                    input_amount: swap_param.input_amount,
-                    output_amount: current_best_output,
-                    dex: all_pool_state.get(&best_pool).unwrap().dex(),
-                }],
-                input_amount: swap_param.input_amount,
-                output_amount: current_best_output,
-                other_output_amount: calculate_min_output_amount(current_best_output, swap_param.slippage_bps as u64),
-                slippage_bps: swap_param.slippage_bps,
-            });
+        log::info!("best_direct_route: {:?}", best_direct_route.clone());
+
+        // 2. Find best one-hop routes through base tokens
+        let mut best_hop_route: Option<SwapRoute> = None;
+        let mut best_hop_output = 0u64;
+
+        for base_token in BASE_TOKENS.iter() {
+            let base_token_key = Pubkey::from_str(base_token).unwrap();
+
+            // Skip if base token is same as input or output
+            if tokens_equal(&base_token_key, &swap_param.input_token.address)
+                || tokens_equal(&base_token_key, &swap_param.output_token.address)
+            {
+                continue;
+            }
+
+            // Find best pool for input -> base
+            let input_to_base_pools: Vec<(&Pubkey, &Arc<PoolState>)> =
+                input_to_base_pool_addresses_by_pair
+                    .get(&(swap_param.input_token.address, base_token_key))
+                    .map(|addrs| {
+                        addrs
+                            .iter()
+                            .filter_map(|pool_addr| {
+                                all_pool_state
+                                    .get(pool_addr)
+                                    .map(|pool_state| (pool_addr, pool_state))
+                            })
+                            .filter(|(_, pool_state)| {
+                                // Filter out pools with very low liquidity
+                                pool_state.get_liquidity_usd() > 1000.0
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+            // Find best pool for base -> output
+            let base_to_output_pools: Vec<(&Pubkey, &Arc<PoolState>)> =
+                base_to_output_pool_addresses_by_pair
+                    .get(&(base_token_key, swap_param.output_token.address))
+                    .map(|addrs| {
+                        addrs
+                            .iter()
+                            .filter_map(|pool_addr| {
+                                all_pool_state
+                                    .get(pool_addr)
+                                    .map(|pool_state| (pool_addr, pool_state))
+                            })
+                            .filter(|(_, pool_state)| {
+                                // Filter out pools with very low liquidity
+                                pool_state.get_liquidity_usd() > 1000.0
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+            if input_to_base_pools.is_empty() || base_to_output_pools.is_empty() {
+                continue;
+            }
+
+            // Try all combinations of input->base and base->output pools
+            for (input_to_base_pool_addr, input_to_base_pool) in &input_to_base_pools {
+                for (base_to_output_pool_addr, base_to_output_pool) in &base_to_output_pools {
+                    // Calculate intermediate amount (input -> base)
+                    let intermediate_amount = input_to_base_pool.calculate_output_amount(
+                        &swap_param.input_token.address,
+                        swap_param.input_amount,
+                    );
+
+                    if intermediate_amount == 0 {
+                        continue;
+                    }
+
+                    // Calculate final output amount (base -> output)
+                    let final_output_amount = base_to_output_pool
+                        .calculate_output_amount(&base_token_key, intermediate_amount);
+
+                    if final_output_amount > best_hop_output {
+                        best_hop_output = final_output_amount;
+                        best_hop_route = Some(SwapRoute {
+                            paths: vec![SwapPath {
+                                steps: vec![
+                                    SwapStep {
+                                        dex: input_to_base_pool.dex(),
+                                        input_token: swap_param.input_token.address.to_string(),
+                                        output_token: base_token_key.to_string(),
+                                        input_amount: swap_param.input_amount,
+                                        output_amount: intermediate_amount,
+                                        percent: 100,
+                                        pool_address: input_to_base_pool_addr.to_string(),
+                                    },
+                                    SwapStep {
+                                        dex: base_to_output_pool.dex(),
+                                        input_token: base_token_key.to_string(),
+                                        output_token: swap_param.output_token.address.to_string(),
+                                        input_amount: intermediate_amount,
+                                        output_amount: final_output_amount,
+                                        percent: 100,
+                                        pool_address: base_to_output_pool_addr.to_string(),
+                                    },
+                                ],
+                                input_amount: swap_param.input_amount,
+                                output_amount: intermediate_amount,
+                                dex: input_to_base_pool.dex(),
+                            }],
+                            input_token: swap_param.input_token.address,
+                            output_token: base_token_key,
+                            input_amount: swap_param.input_amount,
+                            output_amount: final_output_amount,
+                            other_output_amount: calculate_min_output_amount(
+                                final_output_amount,
+                                swap_param.slippage_bps as u64,
+                            ),
+                            slippage_bps: swap_param.slippage_bps,
+                        });
+                    }
+                }
+            }
         }
 
-        None
-
-        // find best path for direct route
+        // 3. Compare direct and hop routes, return the best one
+        log::info!(
+            "Best direct output: {}, Best hop output: {}",
+            best_direct_output,
+            best_hop_output
+        );
+        match (best_direct_route, best_hop_route) {
+            (Some(direct), Some(hop)) => {
+                if direct.output_amount >= hop.output_amount {
+                    Some(direct)
+                } else {
+                    Some(hop)
+                }
+            }
+            (Some(direct), None) => Some(direct),
+            (None, Some(hop)) => Some(hop),
+            (None, None) => None,
+        }
     }
 
     /// Find the best route for a swap using smart routing

@@ -32,7 +32,6 @@ pub struct PumpfunPoolUpdate {
     pub is_account_state_update: bool,
 }
 
-
 impl PumpfunPoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*PUMPFUN_PROGRAM_ID.as_array())
@@ -41,8 +40,7 @@ impl PumpfunPoolState {
     /// Calculate output amount for PumpFun bonding curve
     pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
-        let (token_reserve, sol_reserve) =
-            (self.token_reserve, self.sol_reserve);
+        let (token_reserve, sol_reserve) = (self.token_reserve, self.sol_reserve);
         let output_amount = if is_buy {
             let new_sol_reserve = sol_reserve + input_amount;
             let new_token_reserve =

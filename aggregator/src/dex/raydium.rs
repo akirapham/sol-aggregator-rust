@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID;
+use std::sync::Arc;
 
 use crate::{dex::DexInterface, pool_data_types::RaydiumAmmV4PoolState, utils::tokens_equal};
 
@@ -34,7 +34,7 @@ impl DexInterface for RaydiumAmmV4Dex {
         };
         let new_input_reserve = input_reserve as u128 + input_amount as u128;
         let new_output_reserve =
-                (input_reserve as u128 * output_reserve as u128 / new_input_reserve) as u64;
+            (input_reserve as u128 * output_reserve as u128 / new_input_reserve) as u64;
         let output_amount = output_reserve - new_output_reserve;
 
         output_amount * 9975 / 10000 // Apply 0.25% fee

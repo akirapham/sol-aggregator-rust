@@ -35,7 +35,7 @@ impl DexInterface for PumpSwapDex {
         };
         let new_input_reserve = input_reserve as u128 + input_amount as u128;
         let new_output_reserve =
-                (input_reserve as u128 * output_reserve as u128 / new_input_reserve) as u64;
+            (input_reserve as u128 * output_reserve as u128 / new_input_reserve) as u64;
         let output_amount = output_reserve - new_output_reserve;
 
         output_amount * 997 / 1000 // Apply 0.3% fee
@@ -55,7 +55,12 @@ mod tests {
     use super::*;
     use crate::pool_data_types::PumpSwapPoolState;
 
-    fn create_test_pool_state(base_mint: Pubkey, quote_mint: Pubkey, base_reserve: u64, quote_reserve: u64) -> PumpSwapPoolState {
+    fn create_test_pool_state(
+        base_mint: Pubkey,
+        quote_mint: Pubkey,
+        base_reserve: u64,
+        quote_reserve: u64,
+    ) -> PumpSwapPoolState {
         PumpSwapPoolState {
             base_mint,
             quote_mint,

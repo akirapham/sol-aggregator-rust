@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
+use std::sync::Arc;
 
 use crate::{dex::DexInterface, pool_data_types::RadyiumClmmPoolState, utils::tokens_equal};
 
@@ -20,7 +20,12 @@ impl RaydiumClmmDex {
         }
     }
 
-    fn get_output_amount(&self, _input_amount: u64, _zero_for_one: bool, _sqrt_price_limit_x64: u128) -> u64 {
+    fn get_output_amount(
+        &self,
+        _input_amount: u64,
+        _zero_for_one: bool,
+        _sqrt_price_limit_x64: u128,
+    ) -> u64 {
         // TODO: implement the actual CLMM swap logic here
         0
     }

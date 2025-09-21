@@ -13,11 +13,9 @@ pub fn parse_pubkey(address: &str) -> Result<Pubkey> {
 }
 
 /// Calculate minimum output amount with slippage tolerance
-pub fn calculate_min_output_amount(
-    expected_output: u64,
-    slippage_bps: u64,
-) -> u64 {
-    let min_output = Decimal::from(expected_output) * Decimal::from(10000 - slippage_bps) / Decimal::from(10000);
+pub fn calculate_min_output_amount(expected_output: u64, slippage_bps: u64) -> u64 {
+    let min_output =
+        Decimal::from(expected_output) * Decimal::from(10000 - slippage_bps) / Decimal::from(10000);
     min_output.to_u64().unwrap()
 }
 

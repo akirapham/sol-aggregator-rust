@@ -11,4 +11,3 @@ pub trait DexInterface {
     fn get_pool_address(&self) -> Pubkey;
     fn get_dex(&self) -> DexType;
 }
-

@@ -501,7 +501,10 @@ impl PoolStateManager {
         results
     }
 
-    pub async fn get_pool_states_by_addresses(&self, pool_addresses: &HashSet<Pubkey>) -> HashMap<Pubkey, PoolState> {
+    pub async fn get_pool_states_by_addresses(
+        &self,
+        pool_addresses: &HashSet<Pubkey>,
+    ) -> HashMap<Pubkey, PoolState> {
         let pool_mutexes = {
             let pools = self.pools.read().await;
             pool_addresses
@@ -519,7 +522,7 @@ impl PoolStateManager {
         results
     }
 
-    pub  async fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState> {
+    pub async fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState> {
         let pools = self.pools.read().await;
         if let Some(pool_mutex) = pools.get(pool_address) {
             let pool_guard = pool_mutex.lock().await;

@@ -801,6 +801,10 @@ impl PoolStateManager {
         db.put(b"token_cache", serialized_token)?;
         log::info!("Saved {} tokens to RocksDB", token_count);
 
+        // log saved data size in bytes
+        let total_size = db.property_int_value("rocksdb.estimate-live-data-size")?;
+        log::info!("RocksDB live data size: {} bytes", total_size.unwrap_or(0));
+
         Ok(())
     }
 

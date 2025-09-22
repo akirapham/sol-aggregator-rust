@@ -1,4 +1,8 @@
 use serde::{Deserialize, Serialize};
+use sol_trade_sdk::utils::{
+    self,
+    calc::pumpfun::{get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount},
+};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::parser::PUMPFUN_PROGRAM_ID;
 
@@ -41,19 +45,21 @@ impl PumpfunPoolState {
     /// Calculate output amount for PumpFun bonding curve
     pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
-        let (token_reserve, sol_reserve) = (self.token_reserve, self.sol_reserve);
-        let output_amount = if is_buy {
-            let new_sol_reserve = sol_reserve + input_amount;
-            let new_token_reserve =
-                (token_reserve as u128 * sol_reserve as u128 / new_sol_reserve as u128) as u64;
-            token_reserve - new_token_reserve
+        if is_buy {
+            get_buy_token_amount_from_sol_amount(
+                self.token_reserve as u128,
+                self.sol_reserve as u128,
+                self.real_token_reserve as u128,
+                Default::default(),
+                input_amount,
+            )
         } else {
-            let new_token_reserve = token_reserve + input_amount;
-            let new_sol_reserve =
-                (sol_reserve as u128 * token_reserve as u128 / new_token_reserve as u128) as u64;
-            sol_reserve - new_sol_reserve
-        };
-
-        output_amount * 99 / 100 // Apply 1% fee
+            get_sell_sol_amount_from_token_amount(
+                self.token_reserve as u128,
+                self.sol_reserve as u128,
+                Default::default(),
+                input_amount,
+            )
+        }
     }
 }

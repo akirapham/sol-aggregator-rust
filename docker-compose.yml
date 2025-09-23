@@ -1,0 +1,49 @@
+# Docker Compose for Solana DEX Aggregator
+version: '3.8'
+
+services:
+  aggregator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solana-aggregator
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    env_file:
+      - .env
+    volumes:
+      # Mount the .env file for configuration
+      - ./.env:/app/.env:ro
+      # Optional: Mount logs directory
+      - ./logs:/app/logs
+    networks:
+      - aggregator-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${API_PORT:-3000}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Redis for caching (uncomment if using redis)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: aggregator-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   networks:
+  #     - aggregator-network
+  #   command: redis-server --appendonly yes
+
+networks:
+  aggregator-network:
+    driver: bridge
+
+# volumes:
+#   redis-data:

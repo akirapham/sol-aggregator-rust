@@ -1,0 +1,50 @@
+# Docker ignore file for Solana DEX Aggregator
+# Build artifacts
+target/
+# Note: Cargo.lock is needed for reproducible builds in Docker
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Environment files (will be mounted instead)
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Documentation
+README.md
+docs/
+
+# Test files
+tests/
+**/tests/
+
+# Development files
+*.md
+LICENSE
+.github/
+
+# Docker files (except the ones we need)
+docker-compose.override.yml
+.dockerignore
+
+# Program build artifacts
+program/aggregator/target/
+program/aggregator/node_modules/
+program/aggregator/.anchor/

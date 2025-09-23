@@ -30,6 +30,26 @@ impl Default for TickArrayState {
     }
 }
 
+const EXTENSION_TICKARRAY_BITMAP_SIZE: usize = 14;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TickArrayBitmapExtension {
+    /// Packed initialized tick array state for start_tick_index is positive
+    pub positive_tick_array_bitmap: [[u64; 8]; EXTENSION_TICKARRAY_BITMAP_SIZE],
+    /// Packed initialized tick array state for start_tick_index is negitive
+    pub negative_tick_array_bitmap: [[u64; 8]; EXTENSION_TICKARRAY_BITMAP_SIZE],
+}
+
+impl Default for TickArrayBitmapExtension {
+    fn default() -> Self {
+        Self {
+            positive_tick_array_bitmap: core::array::from_fn(|_| [0u64; 8]),
+            negative_tick_array_bitmap: core::array::from_fn(|_| [0u64; 8]),
+        }
+    }
+}
+
+
 #[derive(Clone, Debug)]
 pub struct RadyiumClmmPoolStatePart {
     pub amm_config: Pubkey,
@@ -74,6 +94,7 @@ pub struct RadyiumClmmPoolState {
     pub open_time: u64,
     #[serde(skip)]
     pub tick_array_state: TickArrayState,
+    pub tick_array_bitmap_extension: TickArrayBitmapExtension,
     pub last_updated: u64, // Unix timestamp
     pub token0_reserve: u64,
     pub token1_reserve: u64,
@@ -88,6 +109,7 @@ pub struct RaydiumClmmPoolUpdate {
     pub pool_state_part: Option<RadyiumClmmPoolStatePart>,
     pub reserve_part: Option<RadyiumClmmPoolReservePart>,
     pub tick_array_state: Option<TickArrayState>,
+    pub tick_array_bitmap_extension: Option<TickArrayBitmapExtension>,
     pub last_updated: u64,
     pub is_account_state_update: bool,
 }

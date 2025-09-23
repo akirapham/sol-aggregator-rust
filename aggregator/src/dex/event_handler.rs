@@ -38,7 +38,7 @@ use solana_streamer_sdk::{
                     RaydiumClmmIncreaseLiquidityV2Event, RaydiumClmmOpenPositionV2Event,
                     RaydiumClmmOpenPositionWithToken22NftEvent, RaydiumClmmPoolStateAccountEvent,
                     RaydiumClmmSwapEvent, RaydiumClmmSwapV2Event,
-                    RaydiumClmmTickArrayStateAccountEvent,
+                    RaydiumClmmTickArrayStateAccountEvent, RaydiumClmmTickArrayBitmapExtensionAccountEvent
                 },
                 raydium_cpmm::{
                     RaydiumCpmmAmmConfigAccountEvent, RaydiumCpmmDepositEvent,
@@ -57,9 +57,7 @@ use tokio::sync::mpsc;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PumpSwapPoolUpdate, PumpfunPoolUpdate, RadyiumClmmPoolReservePart,
-        RadyiumClmmPoolStatePart, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate,
-        RaydiumCpmmPoolUpdate, TickArrayState, TickState,
+        PumpSwapPoolUpdate, PumpfunPoolUpdate, RadyiumClmmPoolReservePart, RadyiumClmmPoolStatePart, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState, TickState
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
@@ -371,6 +369,7 @@ pub fn handle_dex_event(
                                     token1_reserve: if token0_is_input { outputb.amount } else { inputb.amount }
                                 }),
                                 tick_array_state: None,
+                                tick_array_bitmap_extension: None,
                                 is_account_state_update: false,
                             }));
                     }
@@ -394,6 +393,7 @@ pub fn handle_dex_event(
                                     token1_reserve: if token0_is_input { outputb.amount } else { inputb.amount }
                                 }),
                                 tick_array_state: None,
+                                tick_array_bitmap_extension: None,
                                 is_account_state_update: false
                             }));
                     }
@@ -419,6 +419,7 @@ pub fn handle_dex_event(
                                     token1_reserve: t1b.amount
                                 }),
                                 tick_array_state: None,
+                                tick_array_bitmap_extension: None,
                                 is_account_state_update: false,
                             }));
                     }
@@ -444,6 +445,7 @@ pub fn handle_dex_event(
                                     token1_reserve: t1b.amount
                                 }),
                                 tick_array_state: None,
+                                tick_array_bitmap_extension: None,
                                 is_account_state_update: false
                             }));
                     }
@@ -466,6 +468,7 @@ pub fn handle_dex_event(
                                     token1_reserve: t1b.amount
                                 }),
                                 tick_array_state: None,
+                                tick_array_bitmap_extension: None,
                                 is_account_state_update: false
                             }));
                     }
@@ -488,6 +491,7 @@ pub fn handle_dex_event(
                                     token1_reserve: t1b.amount
                                 }),
                                 tick_array_state: None,
+                                tick_array_bitmap_extension: None,
                                 is_account_state_update: false
                             }));
                     }
@@ -751,6 +755,7 @@ pub fn handle_dex_event(
                         }),
                         reserve_part: None,
                         tick_array_state: None,
+                        tick_array_bitmap_extension: None,
                         is_account_state_update: true,
                     }));
                 }
@@ -775,6 +780,24 @@ pub fn handle_dex_event(
                                 }
                             }),
                             initialized_tick_count: e.tick_array_state.initialized_tick_count,
+                        }),
+                        tick_array_bitmap_extension: None,
+                        is_account_state_update: true,
+                    }));
+            },
+            RaydiumClmmTickArrayBitmapExtensionAccountEvent => |e: RaydiumClmmTickArrayBitmapExtensionAccountEvent| {
+                pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
+                    RaydiumClmmPoolUpdate {
+                        address:Pubkey::new_from_array(e.pubkey.as_array().clone()),
+                        slot:e.metadata.slot,
+                        transaction_index:e.metadata.transaction_index,
+                        last_updated: e.metadata.recv_us as u64,
+                        pool_state_part: None,
+                        reserve_part: None,
+                        tick_array_state: None,
+                        tick_array_bitmap_extension: Some(TickArrayBitmapExtension {
+                            positive_tick_array_bitmap: e.tick_array_bitmap_extension.positive_tick_array_bitmap,
+                            negative_tick_array_bitmap: e.tick_array_bitmap_extension.negative_tick_array_bitmap,
                         }),
                         is_account_state_update: true,
                     }));

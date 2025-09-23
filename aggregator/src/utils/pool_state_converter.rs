@@ -4,7 +4,7 @@ use tokio::sync::MutexGuard;
 use crate::constants::is_base_token;
 use crate::pool_data_types::{
     BonkPoolState, PumpSwapPoolState, PumpfunPoolState, RadyiumClmmPoolState,
-    RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
+    RaydiumAmmV4PoolState, RaydiumCpmmPoolState, TickArrayBitmapExtension,
 };
 use crate::pool_data_types::{PoolState, TickArrayState, TickState};
 use crate::types::PoolUpdateEvent;
@@ -212,6 +212,7 @@ pub fn pool_update_event_to_pool_state(
                     }),
                     initialized_tick_count: 0,
                 },
+                tick_array_bitmap_extension: TickArrayBitmapExtension::default(),
                 last_updated: raydium_clmm_pool_update.last_updated,
                 token0_reserve: 0,
                 token1_reserve: 0,
@@ -258,6 +259,11 @@ pub fn pool_update_event_to_pool_state(
                 pool_state.tick_array_state.start_tick_index = start_tick_index;
                 pool_state.tick_array_state.initialized_tick_count =
                     tick_array_update.initialized_tick_count;
+            }
+
+            if let Some(ref bitmap_extension) = raydium_clmm_pool_update.tick_array_bitmap_extension
+            {
+                pool_state.tick_array_bitmap_extension = bitmap_extension.clone();
             }
 
             Some(PoolState::RadyiumClmmPoolState(pool_state))
@@ -538,6 +544,11 @@ pub fn update_pool_state_by_event(
                     state.tick_array_state.start_tick_index = start_tick_index;
                     state.tick_array_state.initialized_tick_count =
                         tick_array_update.initialized_tick_count;
+                }
+
+                if let Some(ref bitmap_extension) = raydium_clmm_pool_update.tick_array_bitmap_extension
+                {
+                    state.tick_array_bitmap_extension = bitmap_extension.clone();
                 }
             }
         }

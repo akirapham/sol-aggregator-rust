@@ -82,10 +82,9 @@ impl BinancePriceService {
 
                         if attempts >= max_attempts {
                             log::error!(
-                                "Max reconnection attempts ({}) reached. Stopping price feed.",
+                                "Max reconnection attempts ({}) reached. Stopping price feed. but still reconnect",
                                 max_attempts
                             );
-                            break;
                         }
 
                         log::info!("Reconnecting in {:?}...", delay);

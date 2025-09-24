@@ -307,8 +307,8 @@ pub async fn create_grpc_service(
         // PUMPSWAP_PROGRAM_ID.to_string(),       // Listen to pumpswap program ID
         // BONK_PROGRAM_ID.to_string(),           // Listen to bonk program ID
         // RAYDIUM_CPMM_PROGRAM_ID.to_string(),   // Listen to raydium_cpmm program ID
-        RAYDIUM_CLMM_PROGRAM_ID.to_string(),   // Listen to raydium_clmm program ID
-        // RAYDIUM_AMM_V4_PROGRAM_ID.to_string(), // Listen to raydium_amm_v4 program ID
+        RAYDIUM_CLMM_PROGRAM_ID.to_string(), // Listen to raydium_clmm program ID
+                                             // RAYDIUM_AMM_V4_PROGRAM_ID.to_string(), // Listen to raydium_amm_v4 program ID
     ];
 
     let protocols = vec![

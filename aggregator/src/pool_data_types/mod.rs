@@ -1,4 +1,5 @@
 pub mod bonk;
+pub mod clmm;
 pub mod pool_state;
 pub mod pumpfun;
 pub mod pumpswap;

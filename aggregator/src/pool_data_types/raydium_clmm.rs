@@ -1,4 +1,5 @@
 use crate::utils::tokens_equal;
+use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
@@ -49,7 +50,6 @@ impl Default for TickArrayBitmapExtension {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub struct RadyiumClmmPoolStatePart {
     pub amm_config: Pubkey,
@@ -65,6 +65,21 @@ pub struct RadyiumClmmPoolStatePart {
     pub status: u8,
     pub tick_array_bitmap: [u64; 16],
     pub open_time: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
+pub struct RaydiumClmmAmmConfig {
+    pub pubkey: Pubkey,
+    pub bump: u8,
+    pub index: u16,
+    pub owner: Pubkey,
+    pub protocol_fee_rate: u32,
+    pub trade_fee_rate: u32,
+    pub tick_spacing: u16,
+    pub fund_fee_rate: u32,
+    pub padding_u32: u32,
+    pub fund_owner: Pubkey,
+    pub padding: [u64; 3],
 }
 
 #[derive(Clone, Debug)]
@@ -113,7 +128,19 @@ pub struct RaydiumClmmPoolUpdate {
     pub last_updated: u64,
     pub is_account_state_update: bool,
 }
-#[allow(dead_code)]
+
+#[derive(Debug)]
+pub struct SwapComputeResult {
+    pub all_trade: bool,
+    pub amount_specified_remaining: i64,
+    pub amount_calculated: i64,
+    pub fee_amount: u64,
+    pub sqrt_price_x64: u128,
+    pub liquidity: i128,
+    pub tick_current: i32,
+    pub accounts: Vec<Pubkey>,
+}
+
 impl RadyiumClmmPoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*RAYDIUM_CLMM_PROGRAM_ID.as_array())

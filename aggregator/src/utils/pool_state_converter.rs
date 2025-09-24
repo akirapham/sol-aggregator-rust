@@ -546,7 +546,8 @@ pub fn update_pool_state_by_event(
                         tick_array_update.initialized_tick_count;
                 }
 
-                if let Some(ref bitmap_extension) = raydium_clmm_pool_update.tick_array_bitmap_extension
+                if let Some(ref bitmap_extension) =
+                    raydium_clmm_pool_update.tick_array_bitmap_extension
                 {
                     state.tick_array_bitmap_extension = bitmap_extension.clone();
                 }

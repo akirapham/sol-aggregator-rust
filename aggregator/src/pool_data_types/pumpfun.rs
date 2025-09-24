@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use sol_trade_sdk::utils::{
-    self,
-    calc::pumpfun::{get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount},
+use sol_trade_sdk::utils::calc::pumpfun::{
+    get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount,
 };
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::parser::PUMPFUN_PROGRAM_ID;

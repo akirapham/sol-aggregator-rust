@@ -52,3 +52,16 @@ pub async fn fetch_token(
         }
     }
 }
+
+pub async fn fetch_account_data(
+    rpc_client: &Arc<RpcClient>,
+    account: &Pubkey,
+) -> Result<Vec<u8>, DexAggregatorError> {
+    let account_data = rpc_client.get_account_data(account).await;
+    match account_data {
+        Err(_) => Err(DexAggregatorError::RpcError(
+            "Failed to fetch account data".to_string(),
+        )),
+        Ok(data) => Ok(data),
+    }
+}

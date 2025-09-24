@@ -1,3 +1,4 @@
+use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID;
@@ -20,6 +21,20 @@ pub struct RaydiumCpmmPoolState {
     pub last_updated: u64,
     pub liquidity_usd: f64,
     pub is_state_keys_initialized: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
+pub struct RaydiumCpmmAmmConfig {
+    pub bump: u8,
+    pub disable_create_pool: bool,
+    pub index: u16,
+    pub trade_fee_rate: u64,
+    pub protocol_fee_rate: u64,
+    pub fund_fee_rate: u64,
+    pub create_pool_fee: u64,
+    pub protocol_owner: Pubkey,
+    pub fund_owner: Pubkey,
+    pub padding: [u64; 16],
 }
 
 #[derive(Debug, Clone)]

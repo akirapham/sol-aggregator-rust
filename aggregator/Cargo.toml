@@ -81,6 +81,7 @@ url = { workspace = true}
 futures-util = { workspace = true}
 validator = { workspace = true, features = ["derive"] }
 sol-trade-sdk = { workspace = true }
+rug = { workspace = true }
 
 [features]
 default = ["bincode"]  # Enable bincode by default (or add it to default features)

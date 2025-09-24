@@ -1,13 +1,14 @@
 use crate::config::ConfigLoader;
-use crate::fetchers::fetchers::fetch_token;
+use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
 use crate::grpc::{BatchProcessor, GrpcService};
-use crate::pool_data_types::{DexType, PoolState};
+use crate::pool_data_types::{DexType, PoolState, RaydiumClmmAmmConfig, RaydiumCpmmAmmConfig};
 use crate::types::Token;
 use crate::types::{ChainStateUpdate, PoolUpdateEvent};
 use crate::utils::{
     pool_update_event_to_pool_state, update_pool_state_by_event, BinancePriceService,
 };
 use bincode::config::Configuration;
+use borsh::BorshDeserialize;
 use futures::stream::{self, StreamExt};
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
@@ -48,17 +49,13 @@ pub struct PoolStateManager {
     price_service: Arc<BinancePriceService>,
     chain_state: Arc<Mutex<ChainStateUpdate>>,
     chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
+    raydium_clmm_amm_config_cache: Arc<RwLock<HashMap<Pubkey, RaydiumClmmAmmConfig>>>,
+    raydium_cpmm_amm_config_cache: Arc<RwLock<HashMap<Pubkey, RaydiumCpmmAmmConfig>>>,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
 #[derive(Serialize, Deserialize)]
 struct SerializablePools(HashMap<Pubkey, PoolState>);
-
-#[derive(Serialize, Deserialize)]
-struct SerializablePairToPools(HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>);
-
-#[derive(Serialize, Deserialize)]
-struct SerializableDexPools(HashMap<DexType, HashSet<Pubkey>>);
 
 #[derive(Serialize, Deserialize)]
 struct SerializableTokenCache(HashMap<Pubkey, Token>);
@@ -95,6 +92,8 @@ impl PoolStateManager {
             price_service,
             chain_state: Arc::new(Mutex::new(ChainStateUpdate::default())),
             chain_state_update_tx,
+            raydium_clmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
+            raydium_cpmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Load data from RocksDB on startup
@@ -711,6 +710,8 @@ impl PoolStateManager {
         let pools_read = self.pools.read().await;
         let mut pair_to_pools_map: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> = HashMap::new();
         let mut dex_pools_map: HashMap<DexType, HashSet<Pubkey>> = HashMap::new();
+        let mut raydium_clmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
+        let mut raydium_cpmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
 
         log::info!("Rebuilding mappings from {} pools...", pools_read.len());
 
@@ -718,6 +719,16 @@ impl PoolStateManager {
             // Get pool state (we know these exist since we just loaded them)
             let pool_guard = pool_mutex.lock().await; // Safe since we're loading on startup
             let pool_state = &*pool_guard;
+
+            match &pool_state {
+                PoolState::RadyiumClmmPoolState(clmm_pool_state) => {
+                    raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config.clone());
+                }
+                PoolState::RaydiumCpmmPoolState(cpmm_pool_state) => {
+                    raydium_cpmm_amm_configs_set.insert(cpmm_pool_state.amm_config.clone());
+                }
+                _ => {}
+            }
 
             let (token_a, token_b) = pool_state.get_tokens();
             let dex_type = pool_state.dex();
@@ -760,6 +771,28 @@ impl PoolStateManager {
             let mut dex_pools_write = self.dex_pools.write().await;
             *dex_pools_write = dex_pools_map;
             log::info!("Rebuilt {} DEX mappings", dex_pools_write.len());
+        }
+
+        // fetching amm configs from on-chain
+        {
+            // fetch clmm configs
+            for amm_config in raydium_clmm_amm_configs_set.iter() {
+                self.get_raydium_clmm_amm_config(amm_config).await;
+            }
+
+            // fetch cpmm configs
+            for amm_config in raydium_cpmm_amm_configs_set.iter() {
+                self.get_raydium_cpmm_amm_config(amm_config).await;
+            }
+
+            log::info!(
+                "Loaded {} Raydium CLMM AMM configs from on-chain",
+                raydium_clmm_amm_configs_set.len()
+            );
+            log::info!(
+                "Loaded {} Raydium CPMM AMM configs from on-chain",
+                raydium_cpmm_amm_configs_set.len()
+            );
         }
     }
 
@@ -815,6 +848,58 @@ impl PoolStateManager {
     pub async fn get_chain_state(&self) -> ChainStateUpdate {
         let state = self.chain_state.lock().await;
         state.clone()
+    }
+
+    pub async fn get_raydium_clmm_amm_config(
+        &self,
+        amm_config_address: &Pubkey,
+    ) -> Option<RaydiumClmmAmmConfig> {
+        let cache = self.raydium_clmm_amm_config_cache.read().await;
+        if let Some(amm_config) = cache.get(amm_config_address) {
+            Some(amm_config.clone())
+        } else {
+            // fetch from on-chain
+            drop(cache); // release read lock early
+            match fetch_account_data(&self.rpc_client, amm_config_address).await {
+                Ok(data) => {
+                    if let Ok(amm_config) = RaydiumClmmAmmConfig::try_from_slice(&data) {
+                        // cache it
+                        let mut cache_write = self.raydium_clmm_amm_config_cache.write().await;
+                        cache_write.insert(*amm_config_address, amm_config.clone());
+                        Some(amm_config)
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => None,
+            }
+        }
+    }
+
+    pub async fn get_raydium_cpmm_amm_config(
+        &self,
+        amm_config_address: &Pubkey,
+    ) -> Option<RaydiumCpmmAmmConfig> {
+        let cache = self.raydium_cpmm_amm_config_cache.read().await;
+        if let Some(amm_config) = cache.get(amm_config_address) {
+            Some(amm_config.clone())
+        } else {
+            // fetch from on-chain
+            drop(cache); // release read lock early
+            match fetch_account_data(&self.rpc_client, amm_config_address).await {
+                Ok(data) => {
+                    if let Ok(amm_config) = RaydiumCpmmAmmConfig::try_from_slice(&data) {
+                        // cache it
+                        let mut cache_write = self.raydium_cpmm_amm_config_cache.write().await;
+                        cache_write.insert(*amm_config_address, amm_config.clone());
+                        Some(amm_config)
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => None,
+            }
+        }
     }
 }
 

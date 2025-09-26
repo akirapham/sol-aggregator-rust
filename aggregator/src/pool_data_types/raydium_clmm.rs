@@ -77,7 +77,6 @@ pub struct RadyiumClmmPoolStatePart {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
 pub struct RaydiumClmmAmmConfig {
-    pub pubkey: Pubkey,
     pub bump: u8,
     pub index: u16,
     pub owner: Pubkey,

@@ -2,7 +2,8 @@ use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{
-    DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig, RaydiumCpmmAmmConfig
+    DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig,
+    RaydiumCpmmAmmConfig,
 };
 use crate::types::Token;
 use crate::types::{ChainStateUpdate, PoolUpdateEvent};
@@ -47,7 +48,8 @@ pub struct PoolStateManager {
     /// Coalescing buffer: latest update per pool address
     pending_updates: Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType), PoolUpdateEvent>>>,
     /// Coalescing buffer: latest update per pool address
-    pending_updates_account_event: Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType), PoolUpdateEvent>>>,
+    pending_updates_account_event:
+        Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType), PoolUpdateEvent>>>,
     /// RocksDB instance for persistence
     db: Arc<DB>,
     price_service: Arc<BinancePriceService>,
@@ -151,8 +153,7 @@ impl PoolStateManager {
                 save_ticker.tick().await;
                 // measure time to save
                 let save_start = std::time::Instant::now();
-                if let Err(e) =
-                    Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
+                if let Err(e) = Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
                 {
                     log::error!("Failed to save to RocksDB: {:?}", e);
                 } else {
@@ -889,7 +890,7 @@ impl GetAmmConfig for PoolStateManager {
             drop(cache); // release read lock early
             match fetch_account_data(&self.rpc_client, amm_config_address).await {
                 Ok(data) => {
-                    if let Ok(amm_config) = RaydiumClmmAmmConfig::try_from_slice(&data) {
+                    if let Ok(amm_config) = RaydiumClmmAmmConfig::try_from_slice(&data[8..]) {
                         // cache it
                         let mut cache_write = self.raydium_clmm_amm_config_cache.write().await;
                         cache_write.insert(*amm_config_address, amm_config.clone());
@@ -915,7 +916,7 @@ impl GetAmmConfig for PoolStateManager {
             drop(cache); // release read lock early
             match fetch_account_data(&self.rpc_client, amm_config_address).await {
                 Ok(data) => {
-                    if let Ok(amm_config) = RaydiumCpmmAmmConfig::try_from_slice(&data) {
+                    if let Ok(amm_config) = RaydiumCpmmAmmConfig::try_from_slice(&data[8..]) {
                         // cache it
                         let mut cache_write = self.raydium_cpmm_amm_config_cache.write().await;
                         cache_write.insert(*amm_config_address, amm_config.clone());

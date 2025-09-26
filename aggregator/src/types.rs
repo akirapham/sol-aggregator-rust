@@ -188,6 +188,17 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.last_updated,
         }
     }
+
+    pub fn get_additional_event_type(&self) -> i32 {
+        match self {
+            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.additional_event_type,
+            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.additional_event_type,
+            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.additional_event_type,
+            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.additional_event_type,
+            PoolUpdateEvent::BonkPoolUpdate(update) => update.additional_event_type,
+            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.additional_event_type,
+        }
+    }
 }
 
 impl Default for AggregatorConfig {

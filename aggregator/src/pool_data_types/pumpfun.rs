@@ -39,6 +39,7 @@ pub struct PumpfunPoolUpdate {
     pub complete: bool,
     pub is_account_state_update: bool,
     pub pool_update_event_type: PoolUpdateEventType,
+    pub additional_event_type: i32, // for tick array index tracking, 0 for others
 }
 
 #[allow(dead_code)]

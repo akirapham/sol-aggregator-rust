@@ -46,10 +46,10 @@ pub struct PoolStateManager {
     rpc_client: Arc<RpcClient>,
 
     /// Coalescing buffer: latest update per pool address
-    pending_updates: Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType), PoolUpdateEvent>>>,
+    pending_updates: Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType, i32), PoolUpdateEvent>>>,
     /// Coalescing buffer: latest update per pool address
     pending_updates_account_event:
-        Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType), PoolUpdateEvent>>>,
+        Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType, i32), PoolUpdateEvent>>>,
     /// RocksDB instance for persistence
     db: Arc<DB>,
     price_service: Arc<BinancePriceService>,
@@ -349,7 +349,11 @@ impl PoolStateManager {
                     for update in updates.iter() {
                         // use the event address as key; clone the event for the buffer
                         if !update.is_account_state_update() {
-                            let key = (update.address(), update.get_pool_update_event_type());
+                            let key = (
+                                update.address(),
+                                update.get_pool_update_event_type(),
+                                update.get_additional_event_type(),
+                            );
                             if let Some(existing) = buf.get(&key) {
                                 // keep the one with the latest last_updated
                                 if update.recv_us() > existing.recv_us() {
@@ -367,7 +371,11 @@ impl PoolStateManager {
                     for update in updates.iter() {
                         // use the event address as key; clone the event for the buffer
                         if update.is_account_state_update() {
-                            let key = (update.address(), update.get_pool_update_event_type());
+                            let key = (
+                                update.address(),
+                                update.get_pool_update_event_type(),
+                                update.get_additional_event_type(),
+                            );
                             if let Some(existing) = buf.get(&key) {
                                 // keep the one with the latest last_updated
                                 if update.recv_us() > existing.recv_us() {

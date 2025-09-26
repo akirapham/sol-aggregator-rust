@@ -1,12 +1,14 @@
+use std::collections::HashMap;
+
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::MutexGuard;
 
 use crate::constants::is_base_token;
+use crate::pool_data_types::PoolState;
 use crate::pool_data_types::{
     BonkPoolState, PumpSwapPoolState, PumpfunPoolState, RadyiumClmmPoolState,
     RaydiumAmmV4PoolState, RaydiumCpmmPoolState, TickArrayBitmapExtension,
 };
-use crate::pool_data_types::{PoolState, TickArrayState, TickState};
 use crate::types::PoolUpdateEvent;
 use crate::utils::{get_sol_mint, tokens_equal};
 
@@ -203,15 +205,7 @@ pub fn pool_update_event_to_pool_state(
                 status: 0,
                 tick_array_bitmap: [0; 16],
                 open_time: 0,
-                tick_array_state: TickArrayState {
-                    start_tick_index: 0,
-                    ticks: std::array::from_fn(|i| TickState {
-                        tick: i as i32,
-                        liquidity_net: 0,
-                        liquidity_gross: 0,
-                    }),
-                    initialized_tick_count: 0,
-                },
+                tick_array_state: HashMap::new(),
                 tick_array_bitmap_extension: TickArrayBitmapExtension::default(),
                 last_updated: raydium_clmm_pool_update.last_updated,
                 token0_reserve: 0,
@@ -253,12 +247,10 @@ pub fn pool_update_event_to_pool_state(
             }
 
             if let Some(ref tick_array_update) = raydium_clmm_pool_update.tick_array_state {
-                let start_tick_index = tick_array_update.start_tick_index;
-                pool_state.tick_array_state.ticks[..60]
-                    .copy_from_slice(&tick_array_update.ticks[..60]);
-                pool_state.tick_array_state.start_tick_index = start_tick_index;
-                pool_state.tick_array_state.initialized_tick_count =
-                    tick_array_update.initialized_tick_count;
+                pool_state.tick_array_state.insert(
+                    tick_array_update.start_tick_index,
+                    tick_array_update.clone(),
+                );
             }
 
             if let Some(ref bitmap_extension) = raydium_clmm_pool_update.tick_array_bitmap_extension
@@ -538,12 +530,10 @@ pub fn update_pool_state_by_event(
                     );
                 }
                 if let Some(ref tick_array_update) = raydium_clmm_pool_update.tick_array_state {
-                    let start_tick_index = tick_array_update.start_tick_index;
-                    state.tick_array_state.ticks[..60]
-                        .copy_from_slice(&tick_array_update.ticks[..60]);
-                    state.tick_array_state.start_tick_index = start_tick_index;
-                    state.tick_array_state.initialized_tick_count =
-                        tick_array_update.initialized_tick_count;
+                    state.tick_array_state.insert(
+                        tick_array_update.start_tick_index,
+                        tick_array_update.clone(),
+                    );
                 }
 
                 if let Some(ref bitmap_extension) =

@@ -22,6 +22,14 @@ pub struct GetInputAmountAndRemainAccountsResult {
 }
 
 #[derive(Debug)]
+pub struct GetOutputAmountAndRemainAccountsResult {
+    pub expected_amount_out: rug::Integer,
+    pub remaining_accounts: Vec<Pubkey>,
+    pub execution_price: u128,
+    pub fee_amount: rug::Integer,
+}
+
+#[derive(Debug)]
 pub struct GetFirstInitializedTickArrayResult {
     start_index: i32,
     next_account_meta: Pubkey,
@@ -174,7 +182,7 @@ impl PoolUtils {
         input_token_mint: &Pubkey,
         input_amount: rug::Integer,
         // @TODO price_limit: Decimal
-    ) -> Result<GetInputAmountAndRemainAccountsResult, String> {
+    ) -> Result<GetOutputAmountAndRemainAccountsResult, String> {
         let zero_for_one = input_token_mint == &pool_info.pool_state.token_mint0;
         let first_tick_array_start_index =
             Self::get_first_initialized_tick_array(pool_info, zero_for_one)?;
@@ -204,8 +212,8 @@ impl PoolUtils {
         all_needed_accounts.extend(swap_compute.accounts.into_iter());
         // println!("swap_compute {swap_compute:?}");
         //
-        Ok(GetInputAmountAndRemainAccountsResult {
-            expected_amount_in: swap_compute.amount_calculated.neg(),
+        Ok(GetOutputAmountAndRemainAccountsResult {
+            expected_amount_out: swap_compute.amount_calculated.neg(),
             remaining_accounts: all_needed_accounts,
             execution_price: swap_compute.sqrt_price_x64,
             fee_amount: swap_compute.fee_amount,

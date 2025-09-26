@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::parser::PUMPSWAP_PROGRAM_ID;
 
-use crate::utils::tokens_equal;
+use crate::{
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType},
+    utils::tokens_equal,
+};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpSwapPoolState {
     pub slot: u64,
@@ -36,6 +41,7 @@ pub struct PumpSwapPoolUpdate {
     pub base_reserve: u64,
     pub quote_reserve: u64,
     pub is_account_state_update: bool,
+    pub pool_update_event_type: PoolUpdateEventType,
 }
 
 #[allow(dead_code)]
@@ -45,7 +51,12 @@ impl PumpSwapPoolState {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    pub fn calculate_output_amount(
+        &self,
+        input_token: &Pubkey,
+        input_amount: u64,
+        _: Arc<dyn GetAmmConfig>,
+    ) -> u64 {
         let (base_token, _quote_token) = (self.base_mint, self.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);
         let (input_reserve, output_reserve) = if input_is_base {

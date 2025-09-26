@@ -58,7 +58,7 @@ use tokio::sync::mpsc;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PumpSwapPoolUpdate, PumpfunPoolUpdate, RadyiumClmmPoolReservePart,
+        PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RadyiumClmmPoolReservePart,
         RadyiumClmmPoolStatePart, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate,
         RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState, TickState,
     },
@@ -116,6 +116,7 @@ pub fn handle_dex_event(
                         transaction_index: e.metadata.transaction_index,
                         complete: false,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpFunTradeEvent,
                     }));
             },
             PumpFunMigrateEvent => |e: PumpFunMigrateEvent| {
@@ -131,6 +132,7 @@ pub fn handle_dex_event(
                         transaction_index: e.metadata.transaction_index,
                         complete: true,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpFunMigrateEvent,
                     }));
             },
             PumpFunCreateTokenEvent => |e: PumpFunCreateTokenEvent| {
@@ -146,6 +148,7 @@ pub fn handle_dex_event(
                         transaction_index: e.metadata.transaction_index,
                         complete: false,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpFunCreateTokenEvent,
                     }));
             },
             // -------------------------- pumpswap -----------------------
@@ -165,6 +168,7 @@ pub fn handle_dex_event(
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpSwapBuyEvent,
                     }));
             },
             PumpSwapSellEvent => |e: PumpSwapSellEvent| {
@@ -183,6 +187,7 @@ pub fn handle_dex_event(
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpSwapSellEvent,
                     }));
             },
             PumpSwapCreatePoolEvent => |e: PumpSwapCreatePoolEvent| {
@@ -201,6 +206,7 @@ pub fn handle_dex_event(
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpSwapCreatePoolEvent,
                     }));
             },
             PumpSwapDepositEvent => |e: PumpSwapDepositEvent| {
@@ -219,6 +225,7 @@ pub fn handle_dex_event(
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpSwapDepositEvent,
                     }));
             },
             PumpSwapWithdrawEvent => |e: PumpSwapWithdrawEvent| {
@@ -237,6 +244,7 @@ pub fn handle_dex_event(
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         is_account_state_update: false,
+                        pool_update_event_type: PoolUpdateEventType::PumpSwapWithdrawEvent,
                     }));
             },
             // -------------------------- raydium_cpmm -----------------------
@@ -270,6 +278,7 @@ pub fn handle_dex_event(
                             last_updated: e.metadata.recv_us as u64,
                             status: None,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumCpmmSwapEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
                     }
@@ -296,6 +305,7 @@ pub fn handle_dex_event(
                             last_updated: e.metadata.recv_us as u64,
                             status: None,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumCpmmDepositEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
                     }
@@ -322,6 +332,7 @@ pub fn handle_dex_event(
                             last_updated: e.metadata.recv_us as u64,
                             status: None,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumCpmmInitializeEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
                     }
@@ -348,6 +359,7 @@ pub fn handle_dex_event(
                             last_updated: e.metadata.recv_us as u64,
                             status: None,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumCpmmWithdrawEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
                     }
@@ -374,6 +386,7 @@ pub fn handle_dex_event(
                                 tick_array_state: None,
                                 tick_array_bitmap_extension: None,
                                 is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::RaydiumClmmSwapEvent,
                             }));
                     }
                 }
@@ -397,7 +410,8 @@ pub fn handle_dex_event(
                                 }),
                                 tick_array_state: None,
                                 tick_array_bitmap_extension: None,
-                                is_account_state_update: false
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::RaydiumClmmSwapV2Event,
                             }));
                     }
                 }
@@ -424,6 +438,7 @@ pub fn handle_dex_event(
                                 tick_array_state: None,
                                 tick_array_bitmap_extension: None,
                                 is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::RaydiumClmmDecreaseLiquidityV2Event,
                             }));
                     }
                 }
@@ -449,7 +464,8 @@ pub fn handle_dex_event(
                                 }),
                                 tick_array_state: None,
                                 tick_array_bitmap_extension: None,
-                                is_account_state_update: false
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::RaydiumClmmIncreaseLiquidityV2Event,
                             }));
                     }
                 }
@@ -472,7 +488,8 @@ pub fn handle_dex_event(
                                 }),
                                 tick_array_state: None,
                                 tick_array_bitmap_extension: None,
-                                is_account_state_update: false
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::RaydiumClmmOpenPositionWithToken22NftEvent
                             }));
                     }
                 }
@@ -495,7 +512,8 @@ pub fn handle_dex_event(
                                 }),
                                 tick_array_state: None,
                                 tick_array_bitmap_extension: None,
-                                is_account_state_update: false
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::RaydiumClmmOpenPositionV2Event,
                             }));
                     }
                 }
@@ -530,6 +548,7 @@ pub fn handle_dex_event(
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4SwapEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update));
                     }
@@ -564,6 +583,7 @@ pub fn handle_dex_event(
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4DepositEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update));
                     }
@@ -597,6 +617,7 @@ pub fn handle_dex_event(
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4Initialize2Event,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update));
                     }
@@ -630,6 +651,7 @@ pub fn handle_dex_event(
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4WithdrawEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update));
                     }
@@ -663,6 +685,7 @@ pub fn handle_dex_event(
                             base_reserve: btb.amount,
                             quote_reserve: qtb.amount,
                             is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4WithdrawPnlEvent,
                         };
                         pool_update_events.push(PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update));
                     }
@@ -692,6 +715,7 @@ pub fn handle_dex_event(
                         creator: Pubkey::new_from_array(e.pool_state.creator.as_array().clone()),
                         last_updated: e.metadata.recv_us as u64,
                         is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::BonkPoolStateAccountEvent,
                     }));
             },
             BonkGlobalConfigAccountEvent => |e: BonkGlobalConfigAccountEvent| {
@@ -719,6 +743,7 @@ pub fn handle_dex_event(
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::PumpSwapPoolAccountEvent,
                     }));
             },
             PumpFunBondingCurveAccountEvent => |e: PumpFunBondingCurveAccountEvent| {
@@ -760,13 +785,14 @@ pub fn handle_dex_event(
                         tick_array_state: None,
                         tick_array_bitmap_extension: None,
                         is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::RaydiumClmmPoolStateAccountEvent,
                     }));
                 }
             },
             RaydiumClmmTickArrayStateAccountEvent => |e: RaydiumClmmTickArrayStateAccountEvent| {
                 pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
                     RaydiumClmmPoolUpdate {
-                        address:Pubkey::new_from_array(e.pubkey.as_array().clone()),
+                        address:Pubkey::new_from_array(e.tick_array_state.pool_id.as_array().clone()),
                         slot:e.metadata.slot,
                         transaction_index:e.metadata.transaction_index,
                         last_updated: e.metadata.recv_us as u64,
@@ -786,12 +812,13 @@ pub fn handle_dex_event(
                         }),
                         tick_array_bitmap_extension: None,
                         is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayStateAccountEvent,
                     }));
             },
             RaydiumClmmTickArrayBitmapExtensionAccountEvent => |e: RaydiumClmmTickArrayBitmapExtensionAccountEvent| {
                 pool_update_events.push(PoolUpdateEvent::RaydiumClmmPoolUpdate(
                     RaydiumClmmPoolUpdate {
-                        address:Pubkey::new_from_array(e.pubkey.as_array().clone()),
+                        address:Pubkey::new_from_array(e.tick_array_bitmap_extension.pool_id.as_array().clone()),
                         slot:e.metadata.slot,
                         transaction_index:e.metadata.transaction_index,
                         last_updated: e.metadata.recv_us as u64,
@@ -803,6 +830,7 @@ pub fn handle_dex_event(
                             negative_tick_array_bitmap: e.tick_array_bitmap_extension.negative_tick_array_bitmap,
                         }),
                         is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayBitmapExtensionAccountEvent,
                     }));
             },
             RaydiumCpmmAmmConfigAccountEvent => |e: RaydiumCpmmAmmConfigAccountEvent| {
@@ -824,6 +852,7 @@ pub fn handle_dex_event(
                     last_updated: e.metadata.recv_us as u64,
                     status: Some(e.pool_state.status),
                     is_account_state_update: true,
+                    pool_update_event_type: PoolUpdateEventType::RaydiumCpmmPoolStateAccountEvent
                 };
                 pool_update_events.push(PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_pool_update));
             },

@@ -1,11 +1,13 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
 use crate::{
     constants::wsol,
     pool_data_types::{
-        BonkPoolState, DexType, PumpSwapPoolState, PumpfunPoolState, RadyiumClmmPoolState,
-        RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
+        BonkPoolState, DexType, GetAmmConfig, PumpSwapPoolState, PumpfunPoolState,
+        RadyiumClmmPoolState, RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
     },
 };
 
@@ -17,6 +19,40 @@ pub enum PoolState {
     RaydiumCpmmPoolState(RaydiumCpmmPoolState),
     BonkPoolState(BonkPoolState),
     RadyiumClmmPoolState(RadyiumClmmPoolState),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PoolUpdateEventType {
+    PumpFunTradeEvent,
+    PumpFunMigrateEvent,
+    PumpFunCreateTokenEvent,
+    PumpSwapBuyEvent,
+    PumpSwapSellEvent,
+    PumpSwapCreatePoolEvent,
+    PumpSwapDepositEvent,
+    PumpSwapWithdrawEvent,
+    RaydiumCpmmSwapEvent,
+    RaydiumCpmmDepositEvent,
+    RaydiumCpmmInitializeEvent,
+    RaydiumCpmmWithdrawEvent,
+    RaydiumClmmSwapEvent,
+    RaydiumClmmSwapV2Event,
+    RaydiumClmmClosePositionEvent,
+    RaydiumClmmDecreaseLiquidityV2Event,
+    RaydiumClmmIncreaseLiquidityV2Event,
+    RaydiumClmmOpenPositionWithToken22NftEvent,
+    RaydiumClmmOpenPositionV2Event,
+    RaydiumAmmV4SwapEvent,
+    RaydiumAmmV4DepositEvent,
+    RaydiumAmmV4Initialize2Event,
+    RaydiumAmmV4WithdrawEvent,
+    RaydiumAmmV4WithdrawPnlEvent,
+    BonkPoolStateAccountEvent,
+    PumpSwapPoolAccountEvent,
+    RaydiumClmmPoolStateAccountEvent,
+    RaydiumClmmTickArrayStateAccountEvent,
+    RaydiumClmmTickArrayBitmapExtensionAccountEvent,
+    RaydiumCpmmPoolStateAccountEvent,
 }
 
 #[derive(Debug, Clone)]
@@ -121,25 +157,32 @@ impl PoolState {
         }
     }
 
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    pub async fn calculate_output_amount(
+        &self,
+        input_token: &Pubkey,
+        input_amount: u64,
+        amm_confi_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> u64 {
         match self {
             PoolState::PumpfunPoolState(state) => {
-                state.calculate_output_amount(input_token, input_amount)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::PumpSwapPoolState(state) => {
-                state.calculate_output_amount(input_token, input_amount)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RaydiumAmmV4PoolState(state) => {
-                state.calculate_output_amount(input_token, input_amount)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RaydiumCpmmPoolState(state) => {
-                state.calculate_output_amount(input_token, input_amount)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::BonkPoolState(state) => {
-                state.calculate_output_amount(input_token, input_amount)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RadyiumClmmPoolState(state) => {
-                state.calculate_output_amount(input_token, input_amount)
+                state
+                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .await
             }
         }
     }

@@ -5,8 +5,8 @@ use solana_sdk::pubkey::Pubkey;
 use crate::{
     error::Result,
     pool_data_types::{
-        BonkPoolUpdate, DexType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
-        RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
+        BonkPoolUpdate, DexType, PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
+        RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
     },
 };
 
@@ -164,6 +164,17 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.is_account_state_update,
             PoolUpdateEvent::BonkPoolUpdate(update) => update.is_account_state_update,
             PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.is_account_state_update,
+        }
+    }
+
+    pub fn get_pool_update_event_type(&self) -> PoolUpdateEventType {
+        match self {
+            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.pool_update_event_type,
+            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.pool_update_event_type,
+            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.pool_update_event_type,
+            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.pool_update_event_type,
+            PoolUpdateEvent::BonkPoolUpdate(update) => update.pool_update_event_type,
+            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.pool_update_event_type,
         }
     }
 }

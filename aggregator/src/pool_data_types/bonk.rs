@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use sol_trade_sdk::utils::calc::bonk::{
     get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount,
@@ -5,7 +7,10 @@ use sol_trade_sdk::utils::calc::bonk::{
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::bonk::parser::BONK_PROGRAM_ID;
 
-use crate::utils::{get_sol_mint, tokens_equal};
+use crate::{
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType},
+    utils::{get_sol_mint, tokens_equal},
+};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BonkPoolState {
     pub slot: u64,
@@ -53,6 +58,7 @@ pub struct BonkPoolUpdate {
     pub creator: Pubkey,
     pub last_updated: u64,
     pub is_account_state_update: bool,
+    pub pool_update_event_type: PoolUpdateEventType,
 }
 
 #[allow(dead_code)]
@@ -62,7 +68,12 @@ impl BonkPoolState {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    pub fn calculate_output_amount(
+        &self,
+        input_token: &Pubkey,
+        input_amount: u64,
+        _: Arc<dyn GetAmmConfig>,
+    ) -> u64 {
         let is_buy = tokens_equal(&input_token, &get_sol_mint());
 
         if is_buy {

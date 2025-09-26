@@ -1,12 +1,15 @@
 use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
 use crate::grpc::{BatchProcessor, GrpcService};
-use crate::pool_data_types::{DexType, PoolState, RaydiumClmmAmmConfig, RaydiumCpmmAmmConfig};
+use crate::pool_data_types::{
+    DexType, GetAmmConfig, PoolState, RaydiumClmmAmmConfig, RaydiumCpmmAmmConfig,
+};
 use crate::types::Token;
 use crate::types::{ChainStateUpdate, PoolUpdateEvent};
 use crate::utils::{
     pool_update_event_to_pool_state, update_pool_state_by_event, BinancePriceService,
 };
+use async_trait::async_trait;
 use bincode::config::Configuration;
 use borsh::BorshDeserialize;
 use futures::stream::{self, StreamExt};
@@ -25,6 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::interval;
+
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
     grpc_service: Arc<GrpcService>,
@@ -849,8 +853,11 @@ impl PoolStateManager {
         let state = self.chain_state.lock().await;
         state.clone()
     }
+}
 
-    pub async fn get_raydium_clmm_amm_config(
+#[async_trait]
+impl GetAmmConfig for PoolStateManager {
+    async fn get_raydium_clmm_amm_config(
         &self,
         amm_config_address: &Pubkey,
     ) -> Option<RaydiumClmmAmmConfig> {
@@ -876,7 +883,7 @@ impl PoolStateManager {
         }
     }
 
-    pub async fn get_raydium_cpmm_amm_config(
+    async fn get_raydium_cpmm_amm_config(
         &self,
         amm_config_address: &Pubkey,
     ) -> Option<RaydiumCpmmAmmConfig> {

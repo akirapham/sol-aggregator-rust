@@ -6,6 +6,7 @@ pub mod pumpswap;
 pub mod raydium;
 pub mod raydium_clmm;
 pub mod raydium_cpmm;
+pub mod traits;
 
 pub use bonk::*;
 pub use pool_state::*;
@@ -14,6 +15,7 @@ pub use pumpswap::*;
 pub use raydium::*;
 pub use raydium_clmm::*;
 pub use raydium_cpmm::*;
+pub use traits::*;
 
 use serde::{Deserialize, Serialize};
 

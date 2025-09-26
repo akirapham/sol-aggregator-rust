@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::constants::BASE_TOKENS;
-use crate::pool_data_types::{DexType, PoolState};
+use crate::pool_data_types::{DexType, GetAmmConfig, PoolState};
 use crate::pool_manager::PoolStateManager;
 use crate::types::{AggregatorConfig, SwapParams};
 use crate::utils::{calculate_min_output_amount, tokens_equal};
@@ -68,6 +68,7 @@ impl DexAggregator {
     }
 
     pub async fn get_swap_route(&self, swap_param: &SwapParams) -> Option<SwapRoute> {
+        let self_arc: Arc<dyn GetAmmConfig> = self.pool_manager.clone();
         let min_liquidity_usd = 1000.0_f64;
         // First, direct path
         let direct_pool_addresses = self
@@ -161,10 +162,13 @@ impl DexAggregator {
 
         for (pool_address, _liquidity) in top_direct_paths.iter() {
             if let Some(pool_state) = all_pool_state.get(pool_address) {
-                let output_amount = pool_state.calculate_output_amount(
-                    &swap_param.input_token.address,
-                    swap_param.input_amount,
-                );
+                let output_amount = pool_state
+                    .calculate_output_amount(
+                        &swap_param.input_token.address,
+                        swap_param.input_amount,
+                        self_arc.clone(),
+                    )
+                    .await;
                 if output_amount > 0 {
                     all_routes_with_out_amounts.push((
                         vec![SwapStepInternal {
@@ -242,10 +246,13 @@ impl DexAggregator {
             for (input_to_base_pool_addr, input_to_base_pool) in &input_to_base_pools {
                 for (base_to_output_pool_addr, base_to_output_pool) in &base_to_output_pools {
                     // Calculate intermediate amount (input -> base)
-                    let intermediate_amount = input_to_base_pool.calculate_output_amount(
-                        &swap_param.input_token.address,
-                        swap_param.input_amount,
-                    );
+                    let intermediate_amount = input_to_base_pool
+                        .calculate_output_amount(
+                            &swap_param.input_token.address,
+                            swap_param.input_amount,
+                            self_arc.clone(),
+                        )
+                        .await;
 
                     if intermediate_amount == 0 {
                         continue;
@@ -253,7 +260,12 @@ impl DexAggregator {
 
                     // Calculate final output amount (base -> output)
                     let final_output_amount = base_to_output_pool
-                        .calculate_output_amount(&base_token_key, intermediate_amount);
+                        .calculate_output_amount(
+                            &base_token_key,
+                            intermediate_amount,
+                            self_arc.clone(),
+                        )
+                        .await;
 
                     if final_output_amount > 0 {
                         all_routes_with_out_amounts.push((
@@ -329,7 +341,12 @@ impl DexAggregator {
                     let input_amount = swap_param.input_amount * percent / 100;
                     let output_amount = swap_step
                         .pool_state
-                        .calculate_output_amount(&swap_param.input_token.address, input_amount);
+                        .calculate_output_amount(
+                            &swap_param.input_token.address,
+                            input_amount,
+                            self_arc.clone(),
+                        )
+                        .await;
                     splits_with_distributions[split_index][i] = Some(SwapPath {
                         steps: vec![SwapStepInternal {
                             dex: swap_step.dex,
@@ -353,10 +370,20 @@ impl DexAggregator {
                     let input_amount = swap_param.input_amount * percent / 100;
                     let intermediate_amount = swap_step_1
                         .pool_state
-                        .calculate_output_amount(&swap_param.input_token.address, input_amount);
+                        .calculate_output_amount(
+                            &swap_param.input_token.address,
+                            input_amount,
+                            self_arc.clone(),
+                        )
+                        .await;
                     let output_amount = swap_step_2
                         .pool_state
-                        .calculate_output_amount(&swap_step_1.output_token, intermediate_amount);
+                        .calculate_output_amount(
+                            &swap_step_1.output_token,
+                            intermediate_amount,
+                            self_arc.clone(),
+                        )
+                        .await;
                     splits_with_distributions[split_index][i] = Some(SwapPath {
                         steps: vec![
                             SwapStepInternal {

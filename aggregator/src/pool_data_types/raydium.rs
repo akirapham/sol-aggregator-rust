@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID;
 
-use crate::utils::tokens_equal;
+use crate::{
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType},
+    utils::tokens_equal,
+};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaydiumAmmV4PoolState {
     pub slot: u64,
@@ -54,6 +59,7 @@ pub struct RaydiumAmmV4PoolUpdate {
     pub base_reserve: u64,
     pub quote_reserve: u64,
     pub is_account_state_update: bool,
+    pub pool_update_event_type: PoolUpdateEventType,
 }
 
 #[allow(dead_code)]
@@ -63,7 +69,12 @@ impl RaydiumAmmV4PoolState {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    pub fn calculate_output_amount(
+        &self,
+        input_token: &Pubkey,
+        input_amount: u64,
+        _: Arc<dyn GetAmmConfig>,
+    ) -> u64 {
         let (base_token, _) = (self.base_mint, self.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);
         let (input_reserve, output_reserve) = if input_is_base {

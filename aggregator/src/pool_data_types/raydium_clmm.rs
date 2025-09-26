@@ -1,4 +1,12 @@
-use crate::utils::tokens_equal;
+use std::{collections::HashMap, sync::Arc};
+
+use crate::{
+    pool_data_types::{
+        clmm::{pool::PoolUtils, tpe::ComputeClmmPoolInfo},
+        GetAmmConfig, PoolUpdateEventType,
+    },
+    utils::tokens_equal,
+};
 use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
@@ -108,7 +116,7 @@ pub struct RadyiumClmmPoolState {
     pub tick_array_bitmap: [u64; 16],
     pub open_time: u64,
     #[serde(skip)]
-    pub tick_array_state: TickArrayState,
+    pub tick_array_state: HashMap<i32, TickArrayState>,
     pub tick_array_bitmap_extension: TickArrayBitmapExtension,
     pub last_updated: u64, // Unix timestamp
     pub token0_reserve: u64,
@@ -127,6 +135,7 @@ pub struct RaydiumClmmPoolUpdate {
     pub tick_array_bitmap_extension: Option<TickArrayBitmapExtension>,
     pub last_updated: u64,
     pub is_account_state_update: bool,
+    pub pool_update_event_type: PoolUpdateEventType,
 }
 
 #[derive(Debug)]
@@ -147,7 +156,12 @@ impl RadyiumClmmPoolState {
     }
 
     /// Calculate output amount for PumpFun bonding curve
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
+    pub async fn calculate_output_amount(
+        &self,
+        input_token: &Pubkey,
+        input_amount: u64,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> u64 {
         let (token0, _) = (self.token_mint0, self.token_mint1);
         let input_is_token0 = tokens_equal(input_token, &token0);
         let sqrt_price_limit_x64 = if input_is_token0 {
@@ -158,16 +172,41 @@ impl RadyiumClmmPoolState {
 
         // dont take transfer tax into account for now, users should account for it un their slippage
         let real_input_amount = input_amount;
-        self.get_output_amount(real_input_amount, input_is_token0, sqrt_price_limit_x64)
+        self.get_output_amount(
+            real_input_amount,
+            input_token,
+            sqrt_price_limit_x64,
+            amm_config_fetcher,
+        )
+        .await
     }
 
-    fn get_output_amount(
+    async fn get_output_amount(
         &self,
-        _input_amount: u64,
-        _zero_for_one: bool,
+        input_amount: u64,
+        input_token: &Pubkey,
         _sqrt_price_limit_x64: u128,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> u64 {
-        // TODO: implement the actual CLMM swap logic here
-        0
+        // create pool info
+        let pool_info = ComputeClmmPoolInfo::new(
+            self.address,
+            Self::get_program_id(),
+            self,
+            Some(&self.tick_array_bitmap_extension),
+            amm_config_fetcher
+                .get_raydium_clmm_amm_config(&self.amm_config)
+                .await,
+        );
+        let result = PoolUtils::get_output_amount_and_remain_accounts(
+            &pool_info,
+            &self.tick_array_state,
+            input_token,
+            rug::Integer::from(input_amount),
+        );
+        match result {
+            Ok(output) => output.expected_amount_out.abs().to_u64().unwrap_or(0),
+            Err(_) => 0,
+        }
     }
 }

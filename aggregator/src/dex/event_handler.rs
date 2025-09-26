@@ -107,7 +107,7 @@ pub fn handle_dex_event(
                 pool_update_events.push(PoolUpdateEvent::PumpfunPoolUpdate(
                     PumpfunPoolUpdate {
                         address: Pubkey::new_from_array(e.bonding_curve.as_array().clone()),
-                        last_updated: e.timestamp as u64,
+                        last_updated: e.metadata.recv_us as u64,
                         mint:Pubkey::new_from_array(e.mint.as_array().clone()),
                         token_reserve: e.virtual_token_reserves,
                         sol_reserve: e.virtual_sol_reserves,
@@ -429,7 +429,7 @@ pub fn handle_dex_event(
                                 address:Pubkey::new_from_array(e.pool_state.as_array().clone()),
                                 slot: e.metadata.slot,
                                 transaction_index: e.metadata.transaction_index,
-                                last_updated: (e.metadata.recv_us / 1000000) as u64,
+                                last_updated: e.metadata.recv_us as u64,
                                 pool_state_part: None,
                                 reserve_part: Some(RadyiumClmmPoolReservePart {
                                     token0_reserve: t0b.amount,

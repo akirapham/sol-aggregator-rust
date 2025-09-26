@@ -21,7 +21,7 @@ pub enum PoolState {
     RadyiumClmmPoolState(RadyiumClmmPoolState),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum PoolUpdateEventType {
     PumpFunTradeEvent,
     PumpFunMigrateEvent,

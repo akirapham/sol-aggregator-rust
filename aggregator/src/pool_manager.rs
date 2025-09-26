@@ -2,7 +2,7 @@ use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{
-    DexType, GetAmmConfig, PoolState, RaydiumClmmAmmConfig, RaydiumCpmmAmmConfig,
+    DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig, RaydiumCpmmAmmConfig
 };
 use crate::types::Token;
 use crate::types::{ChainStateUpdate, PoolUpdateEvent};
@@ -45,9 +45,9 @@ pub struct PoolStateManager {
     rpc_client: Arc<RpcClient>,
 
     /// Coalescing buffer: latest update per pool address
-    pending_updates: Arc<Mutex<HashMap<Pubkey, PoolUpdateEvent>>>,
+    pending_updates: Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType), PoolUpdateEvent>>>,
     /// Coalescing buffer: latest update per pool address
-    pending_updates_account_event: Arc<Mutex<HashMap<Pubkey, PoolUpdateEvent>>>,
+    pending_updates_account_event: Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType), PoolUpdateEvent>>>,
     /// RocksDB instance for persistence
     db: Arc<DB>,
     price_service: Arc<BinancePriceService>,
@@ -112,164 +112,10 @@ impl PoolStateManager {
             .await;
 
         // start periodic flusher that applies coalesced updates
-        {
-            let pending = Arc::clone(&instance.pending_updates);
-            let pending_account = Arc::clone(&instance.pending_updates_account_event);
-            let pools = Arc::clone(&instance.pools);
-            let pair_to_pools = Arc::clone(&instance.pair_to_pools);
-            let dex_pools = Arc::clone(&instance.dex_pools);
-            let token_cache = Arc::clone(&instance.token_cache);
-            let rpc_client = instance.rpc_client.clone();
-            let price_service = Arc::clone(&instance.price_service);
-
-            tokio::spawn(async move {
-                let mut ticker = interval(Duration::from_millis(400));
-                loop {
-                    ticker.tick().await;
-
-                    // read sol price
-                    let sol_price = price_service.get_sol_price().await.unwrap_or_default();
-
-                    // measure drain start
-                    let drain_start = std::time::Instant::now();
-                    // drain pending updates quickly
-                    let draineds_account_event: Vec<PoolUpdateEvent> = {
-                        let mut buf = pending_account.lock().await;
-                        if buf.is_empty() {
-                            Vec::new()
-                        } else {
-                            let mut v = Vec::with_capacity(buf.len());
-                            for (_k, v_event) in buf.drain() {
-                                v.push(v_event);
-                            }
-                            v
-                        }
-                    };
-
-                    let draineds: Vec<PoolUpdateEvent> = {
-                        let mut buf = pending.lock().await;
-                        if buf.is_empty() {
-                            continue;
-                        }
-                        let mut v = Vec::with_capacity(buf.len());
-                        for (_k, v_event) in buf.drain() {
-                            v.push(v_event);
-                        }
-                        v
-                    };
-                    let _ = drain_start.elapsed();
-
-                    // instrumentation: how many updates we drained
-                    let count_account = draineds_account_event.len();
-                    let count_normal = draineds.len();
-                    let total_count = count_account + count_normal;
-
-                    // bounded concurrency (hybrid)
-                    let concurrency_limit = 64usize;
-
-                    // Process account events and normal events in parallel using join!
-                    let apply_start = std::time::Instant::now();
-
-                    let (_, _) = tokio::join!(
-                        // Account events processing
-                        async {
-                            let start = std::time::Instant::now();
-                            stream::iter(draineds_account_event.into_iter().map(|update| {
-                                let pools_c = Arc::clone(&pools);
-                                let pair_to_pools_c = Arc::clone(&pair_to_pools);
-                                let dex_pools_c = Arc::clone(&dex_pools);
-                                let token_cache_c = Arc::clone(&token_cache);
-                                let rpc_client_c = Arc::clone(&rpc_client);
-                                async move {
-                                    Self::apply_pool_update(
-                                        &update,
-                                        pools_c,
-                                        pair_to_pools_c,
-                                        dex_pools_c,
-                                        token_cache_c,
-                                        rpc_client_c,
-                                        sol_price,
-                                    )
-                                    .await;
-                                }
-                            }))
-                            .buffer_unordered(concurrency_limit)
-                            .collect::<Vec<()>>()
-                            .await;
-                            start.elapsed()
-                        },
-                        // Normal events processing
-                        async {
-                            let start = std::time::Instant::now();
-                            stream::iter(draineds.into_iter().map(|update| {
-                                let pools_c = Arc::clone(&pools);
-                                let pair_to_pools_c = Arc::clone(&pair_to_pools);
-                                let dex_pools_c = Arc::clone(&dex_pools);
-                                let token_cache_c = Arc::clone(&token_cache);
-                                let rpc_client_c = Arc::clone(&rpc_client);
-                                async move {
-                                    Self::apply_pool_update(
-                                        &update,
-                                        pools_c,
-                                        pair_to_pools_c,
-                                        dex_pools_c,
-                                        token_cache_c,
-                                        rpc_client_c,
-                                        sol_price,
-                                    )
-                                    .await;
-                                }
-                            }))
-                            .buffer_unordered(concurrency_limit)
-                            .collect::<Vec<()>>()
-                            .await;
-                            start.elapsed()
-                        }
-                    );
-
-                    let total_apply_ns = apply_start.elapsed();
-
-                    // log summary / throughput
-                    if total_count > 0 {
-                        let avg_per_update_ms =
-                            (total_apply_ns.as_millis() as f64) / (total_count as f64);
-                        log::info!(
-                            "Flusher apply (parallel): total_event_count {:?}, handle time {:?}, avg {:.3} ms/update, concurrency={}",
-                            total_count,
-                            total_apply_ns,
-                            avg_per_update_ms,
-                            concurrency_limit
-                        );
-                    } else {
-                        log::info!("Flusher apply: nothing to apply");
-                    }
-                }
-            });
-        }
+        instance.start_event_update_flusher();
 
         // Start periodic save to RocksDB (every 15 minutes)
-        {
-            let db_clone = Arc::clone(&db);
-            let pools_clone = Arc::clone(&instance.pools);
-            let token_cache_clone = Arc::clone(&instance.token_cache);
-
-            tokio::spawn(async move {
-                let mut save_ticker = interval(Duration::from_secs(15 * 60)); // 15 minutes
-                loop {
-                    save_ticker.tick().await;
-                    // measure time to save
-                    let save_start = std::time::Instant::now();
-                    if let Err(e) =
-                        Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
-                    {
-                        log::error!("Failed to save to RocksDB: {:?}", e);
-                    } else {
-                        let save_ns = save_start.elapsed();
-                        log::info!("Saved pool state to RocksDB in {:?}", save_ns);
-                    }
-                }
-            });
-        }
+        instance.start_periodic_save_to_db();
 
         instance
     }
@@ -292,6 +138,164 @@ impl PoolStateManager {
 
     pub async fn stop(&self) {
         self.grpc_service.stop().await;
+    }
+
+    pub fn start_periodic_save_to_db(&self) {
+        let db_clone = Arc::clone(&self.db);
+        let pools_clone = Arc::clone(&self.pools);
+        let token_cache_clone = Arc::clone(&self.token_cache);
+
+        tokio::spawn(async move {
+            let mut save_ticker = interval(Duration::from_secs(15 * 60)); // 15 minutes
+            loop {
+                save_ticker.tick().await;
+                // measure time to save
+                let save_start = std::time::Instant::now();
+                if let Err(e) =
+                    Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
+                {
+                    log::error!("Failed to save to RocksDB: {:?}", e);
+                } else {
+                    let save_ns = save_start.elapsed();
+                    log::info!("Saved pool state to RocksDB in {:?}", save_ns);
+                }
+            }
+        });
+    }
+
+    pub fn start_event_update_flusher(&self) {
+        let pending = Arc::clone(&self.pending_updates);
+        let pending_account = Arc::clone(&self.pending_updates_account_event);
+        let pools = Arc::clone(&self.pools);
+        let pair_to_pools = Arc::clone(&self.pair_to_pools);
+        let dex_pools = Arc::clone(&self.dex_pools);
+        let token_cache = Arc::clone(&self.token_cache);
+        let rpc_client = self.rpc_client.clone();
+        let price_service = Arc::clone(&self.price_service);
+
+        tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_millis(400));
+            loop {
+                ticker.tick().await;
+
+                // read sol price
+                let sol_price = price_service.get_sol_price().await.unwrap_or_default();
+
+                // measure drain start
+                let drain_start = std::time::Instant::now();
+                // drain pending updates quickly
+                let draineds_account_event: Vec<PoolUpdateEvent> = {
+                    let mut buf = pending_account.lock().await;
+                    if buf.is_empty() {
+                        Vec::new()
+                    } else {
+                        let mut v = Vec::with_capacity(buf.len());
+                        for (_k, v_event) in buf.drain() {
+                            v.push(v_event);
+                        }
+                        v
+                    }
+                };
+
+                let draineds: Vec<PoolUpdateEvent> = {
+                    let mut buf = pending.lock().await;
+                    if buf.is_empty() {
+                        continue;
+                    }
+                    let mut v = Vec::with_capacity(buf.len());
+                    for (_k, v_event) in buf.drain() {
+                        v.push(v_event);
+                    }
+                    v
+                };
+                let _ = drain_start.elapsed();
+
+                // instrumentation: how many updates we drained
+                let count_account = draineds_account_event.len();
+                let count_normal = draineds.len();
+                let total_count = count_account + count_normal;
+
+                // bounded concurrency (hybrid)
+                let concurrency_limit = 64usize;
+
+                // Process account events and normal events in parallel using join!
+                let apply_start = std::time::Instant::now();
+
+                let (_, _) = tokio::join!(
+                    // Account events processing
+                    async {
+                        let start = std::time::Instant::now();
+                        stream::iter(draineds_account_event.into_iter().map(|update| {
+                            let pools_c = Arc::clone(&pools);
+                            let pair_to_pools_c = Arc::clone(&pair_to_pools);
+                            let dex_pools_c = Arc::clone(&dex_pools);
+                            let token_cache_c = Arc::clone(&token_cache);
+                            let rpc_client_c = Arc::clone(&rpc_client);
+                            async move {
+                                Self::apply_pool_update(
+                                    &update,
+                                    pools_c,
+                                    pair_to_pools_c,
+                                    dex_pools_c,
+                                    token_cache_c,
+                                    rpc_client_c,
+                                    sol_price,
+                                )
+                                .await;
+                            }
+                        }))
+                        .buffer_unordered(concurrency_limit)
+                        .collect::<Vec<()>>()
+                        .await;
+                        start.elapsed()
+                    },
+                    // Normal events processing
+                    async {
+                        let start = std::time::Instant::now();
+                        stream::iter(draineds.into_iter().map(|update| {
+                            let pools_c = Arc::clone(&pools);
+                            let pair_to_pools_c = Arc::clone(&pair_to_pools);
+                            let dex_pools_c = Arc::clone(&dex_pools);
+                            let token_cache_c = Arc::clone(&token_cache);
+                            let rpc_client_c = Arc::clone(&rpc_client);
+                            async move {
+                                Self::apply_pool_update(
+                                    &update,
+                                    pools_c,
+                                    pair_to_pools_c,
+                                    dex_pools_c,
+                                    token_cache_c,
+                                    rpc_client_c,
+                                    sol_price,
+                                )
+                                .await;
+                            }
+                        }))
+                        .buffer_unordered(concurrency_limit)
+                        .collect::<Vec<()>>()
+                        .await;
+                        start.elapsed()
+                    }
+                );
+
+                let total_apply_ns = apply_start.elapsed();
+
+                // log summary / throughput
+                if total_count > 0 {
+                    let avg_per_update_ms =
+                        (total_apply_ns.as_millis() as f64) / (total_count as f64);
+                    log::info!(
+                        "Flusher apply (parallel): total_event_count {:?}, handle time {:?}, avg {:.3} ms/update, concurrency={}",
+                        total_count,
+                        total_apply_ns,
+                        avg_per_update_ms,
+                        concurrency_limit
+                    );
+                } else {
+                    log::info!("Flusher apply: nothing to apply");
+                }
+            }
+        });
     }
 
     pub fn start_batch_event_processing(
@@ -344,7 +348,15 @@ impl PoolStateManager {
                     for update in updates.iter() {
                         // use the event address as key; clone the event for the buffer
                         if !update.is_account_state_update() {
-                            buf.insert(update.address(), update.clone());
+                            let key = (update.address(), update.get_pool_update_event_type());
+                            if let Some(existing) = buf.get(&key) {
+                                // keep the one with the latest last_updated
+                                if update.recv_us() > existing.recv_us() {
+                                    buf.insert(key, update.clone());
+                                }
+                            } else {
+                                buf.insert(key, update.clone());
+                            }
                         }
                     }
                 }
@@ -354,7 +366,15 @@ impl PoolStateManager {
                     for update in updates.iter() {
                         // use the event address as key; clone the event for the buffer
                         if update.is_account_state_update() {
-                            buf.insert(update.address(), update.clone());
+                            let key = (update.address(), update.get_pool_update_event_type());
+                            if let Some(existing) = buf.get(&key) {
+                                // keep the one with the latest last_updated
+                                if update.recv_us() > existing.recv_us() {
+                                    buf.insert(key, update.clone());
+                                }
+                            } else {
+                                buf.insert(key, update.clone());
+                            }
                         }
                     }
                 }

@@ -10,7 +10,13 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
 };
 use solana_streamer_sdk::streaming::{
     event_parser::{
-        protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
+        protocols::{
+            bonk::parser::BONK_PROGRAM_ID, pumpfun::parser::PUMPFUN_PROGRAM_ID,
+            pumpswap::parser::PUMPSWAP_PROGRAM_ID,
+            raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID,
+            raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
+            raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID,
+        },
         Protocol, UnifiedEvent,
     },
     grpc::ClientConfig,
@@ -21,15 +27,18 @@ use yellowstone_grpc_proto::geyser::CommitmentLevel;
 
 use tokio::{sync::mpsc, time::interval};
 
+/// Type alias for the complex event data tuple used in batch processing
+type EventBatch = (
+    Vec<Box<dyn UnifiedEvent>>,
+    Vec<PubkeyData>,
+    Vec<u64>,
+    HashMap<String, SimplifiedTokenBalance>,
+);
+
 pub struct BatchProcessor {
     batch_size: usize,
     timeout_duration: Duration,
-    event_tx: mpsc::UnboundedSender<(
-        Vec<Box<dyn UnifiedEvent>>,
-        Vec<PubkeyData>,
-        Vec<u64>,
-        HashMap<String, SimplifiedTokenBalance>,
-    )>,
+    event_tx: mpsc::UnboundedSender<EventBatch>,
 }
 
 impl BatchProcessor {
@@ -38,29 +47,10 @@ impl BatchProcessor {
         timeout_duration: Duration,
     ) -> (
         Self,
-        mpsc::UnboundedReceiver<
-            Vec<(
-                Vec<Box<dyn UnifiedEvent>>,
-                Vec<PubkeyData>,
-                Vec<u64>,
-                HashMap<String, SimplifiedTokenBalance>,
-            )>,
-        >,
+        mpsc::UnboundedReceiver<Vec<EventBatch>>,
     ) {
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<(
-            Vec<Box<dyn UnifiedEvent>>,
-            Vec<PubkeyData>,
-            Vec<u64>,
-            HashMap<String, SimplifiedTokenBalance>,
-        )>();
-        let (batch_tx, batch_rx) = mpsc::unbounded_channel::<
-            Vec<(
-                Vec<Box<dyn UnifiedEvent>>,
-                Vec<PubkeyData>,
-                Vec<u64>,
-                HashMap<String, SimplifiedTokenBalance>,
-            )>,
-        >();
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<EventBatch>();
+        let (batch_tx, batch_rx) = mpsc::unbounded_channel::<Vec<EventBatch>>();
 
         let processor = Self {
             batch_size,
@@ -92,20 +82,8 @@ impl BatchProcessor {
     }
 
     async fn process_batches(
-        mut event_rx: mpsc::UnboundedReceiver<(
-            Vec<Box<dyn UnifiedEvent>>,
-            Vec<PubkeyData>,
-            Vec<u64>,
-            HashMap<String, SimplifiedTokenBalance>,
-        )>, // Receive individual events
-        batch_tx: mpsc::UnboundedSender<
-            Vec<(
-                Vec<Box<dyn UnifiedEvent>>,
-                Vec<PubkeyData>,
-                Vec<u64>,
-                HashMap<String, SimplifiedTokenBalance>,
-            )>,
-        >, // Send batches
+        mut event_rx: mpsc::UnboundedReceiver<EventBatch>, // Receive individual events
+        batch_tx: mpsc::UnboundedSender<Vec<EventBatch>>, // Send batches
         batch_size: usize,
         timeout_duration: Duration,
     ) {
@@ -150,12 +128,7 @@ impl BatchProcessor {
     }
 
     pub async fn process_batch(
-        batch: Vec<(
-            Vec<Box<dyn UnifiedEvent>>,
-            Vec<PubkeyData>,
-            Vec<u64>,
-            HashMap<String, SimplifiedTokenBalance>,
-        )>,
+        batch: Vec<EventBatch>,
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
@@ -265,18 +238,12 @@ pub async fn create_grpc_service(
 ) -> Result<
     (
         Arc<GrpcService>,
-        mpsc::UnboundedReceiver<
-            Vec<(
-                Vec<Box<dyn UnifiedEvent>>,
-                Vec<PubkeyData>,
-                Vec<u64>,
-                HashMap<String, SimplifiedTokenBalance>,
-            )>,
-        >,
+        mpsc::UnboundedReceiver<Vec<EventBatch>>,
     ),
     Box<dyn std::error::Error>,
 > {
     let agg_config = AggregatorConfig::from_env().unwrap();
+
     // Create low-latency configuration
     let mut config: ClientConfig = ClientConfig::high_throughput();
     // Enable performance monitoring, has performance overhead, disabled by default
@@ -295,24 +262,34 @@ pub async fn create_grpc_service(
 
     let batch_processor = Arc::new(batch_processor);
 
-    // Filter accounts
-    let account_include = vec![
-        // PUMPFUN_PROGRAM_ID.to_string(),        // Listen to pumpfun program ID
-        // PUMPSWAP_PROGRAM_ID.to_string(),       // Listen to pumpswap program ID
-        // BONK_PROGRAM_ID.to_string(),           // Listen to bonk program ID
-        // RAYDIUM_CPMM_PROGRAM_ID.to_string(),   // Listen to raydium_cpmm program ID
-        RAYDIUM_CLMM_PROGRAM_ID.to_string(), // Listen to raydium_clmm program ID
-                                             // RAYDIUM_AMM_V4_PROGRAM_ID.to_string(), // Listen to raydium_amm_v4 program ID
-    ];
+    // Dynamically build account_include and protocols based on .env flags
+    let mut account_include = Vec::new();
+    let mut protocols = Vec::new();
 
-    let protocols = vec![
-        // Protocol::PumpFun,
-        // Protocol::PumpSwap,
-        // Protocol::Bonk,
-        // Protocol::RaydiumCpmm,
-        Protocol::RaydiumClmm,
-        // Protocol::RaydiumAmmV4,
-    ];
+    if agg_config.enable_pumpfun {
+        account_include.push(PUMPFUN_PROGRAM_ID.to_string());
+        protocols.push(Protocol::PumpFun);
+    }
+    if agg_config.enable_pumpfun_swap {
+        account_include.push(PUMPSWAP_PROGRAM_ID.to_string());
+        protocols.push(Protocol::PumpSwap);
+    }
+    if agg_config.enable_bonk {
+        account_include.push(BONK_PROGRAM_ID.to_string());
+        protocols.push(Protocol::Bonk);
+    }
+    if agg_config.enable_raydium_cpmm {
+        account_include.push(RAYDIUM_CPMM_PROGRAM_ID.to_string());
+        protocols.push(Protocol::RaydiumCpmm);
+    }
+    if agg_config.enable_raydium_clmm {
+        account_include.push(RAYDIUM_CLMM_PROGRAM_ID.to_string());
+        protocols.push(Protocol::RaydiumClmm);
+    }
+    if agg_config.enable_raydium_amm_v4 {
+        account_include.push(RAYDIUM_AMM_V4_PROGRAM_ID.to_string());
+        protocols.push(Protocol::RaydiumAmmV4);
+    }
 
     let account_exclude = vec![];
     let account_required = vec![];
@@ -330,6 +307,9 @@ pub async fn create_grpc_service(
         owner: account_include.clone(),
         filters: vec![],
     };
+
+    log::info!("Enabled DEXes: {:?}", protocols);
+    log::info!("Monitoring programs: {:?}", account_include);
 
     Ok((
         Arc::new(GrpcService {

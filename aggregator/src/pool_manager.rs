@@ -33,15 +33,33 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::interval;
 
+/// Type alias for the complex pool storage type
+type PoolStorage = Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>;
+/// Type alias for token pair to pool addresses mapping
+type PairToPoolsMap = Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>;
+/// Type alias for DEX to pool addresses mapping
+type DexPoolsMap = Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>;
+/// Type alias for pending pool updates buffer
+type PendingUpdatesMap = Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType, i32), PoolUpdateEvent>>>;
+/// Type alias for batch event receiver
+type BatchEventReceiver = mpsc::UnboundedReceiver<
+    Vec<(
+        Vec<Box<dyn UnifiedEvent>>,
+        Vec<PubkeyData>,
+        Vec<u64>,
+        HashMap<String, SimplifiedTokenBalance>,
+    )>,
+>;
+
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
     grpc_service: Arc<GrpcService>,
     /// Pool states indexed by pool address
-    pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
+    pools: PoolStorage,
     /// Pool addresses indexed by token pair
-    pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>,
+    pair_to_pools: PairToPoolsMap,
     /// DEX-specific pool addresses
-    dex_pools: Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>,
+    dex_pools: DexPoolsMap,
     /// Token metadata cache
     token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
 
@@ -49,10 +67,9 @@ pub struct PoolStateManager {
     rpc_client: Arc<RpcClient>,
 
     /// Coalescing buffer: latest update per pool address
-    pending_updates: Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType, i32), PoolUpdateEvent>>>,
+    pending_updates: PendingUpdatesMap,
     /// Coalescing buffer: latest update per pool address
-    pending_updates_account_event:
-        Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType, i32), PoolUpdateEvent>>>,
+    pending_updates_account_event: PendingUpdatesMap,
     pending_pools_to_fetch_tick_arrays: Arc<Mutex<HashSet<Pubkey>>>,
     tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
     /// RocksDB instance for persistence
@@ -218,7 +235,7 @@ impl PoolStateManager {
                 let concurrency_limit = 5usize;
                 // Process the drained pools in parallel using join!
                 stream::iter(draineds.into_iter().map(|pool_id| {
-                    let pools_c: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>> = Arc::clone(&pools);
+                    let pools_c: PoolStorage = Arc::clone(&pools);
                     let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
                     let pool_update_tx_clone = pool_update_tx.clone();
                     let fetcher_c = fetcher.clone();
@@ -243,7 +260,7 @@ impl PoolStateManager {
                             let pool_guard = pool_mutex.lock().await;
                             let pool_state = (*pool_guard).clone();
                             match pool_state {
-                                PoolState::RadyiumClmmPoolState(ref clmm_pool_state) => {
+                                PoolState::RadyiumClmm(ref clmm_pool_state) => {
                                     let start_time = std::time::Instant::now();
                                     let tick_array_state_result = fetcher_c.fetch_all_tick_arrays(pool_id, Arc::new(clmm_pool_state)).await;
                                     // get recv_us as time receive the tick arrays
@@ -258,7 +275,7 @@ impl PoolStateManager {
                                             // create raw events and sending it to start_batch_event_processing
 
                                             tick_arrays.iter().for_each(|tick_array_state| {
-                                                let tick_array_state_event = PoolUpdateEvent::RaydiumClmmPoolUpdate(RaydiumClmmPoolUpdate {
+                                                let tick_array_state_event = PoolUpdateEvent::RaydiumClmm(RaydiumClmmPoolUpdate {
                                                     slot: 0,    // dont care
                                                     transaction_index: None, // dont care
                                                     address: pool_id,
@@ -268,7 +285,7 @@ impl PoolStateManager {
                                                     tick_array_bitmap_extension: None,
                                                     last_updated: recv_us as u64,
                                                     is_account_state_update: true,
-                                                    pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayStateAccountEvent,
+                                                    pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayStateAccount,
                                                     additional_event_type: tick_array_state.start_tick_index, // use start tick index as additional event type
                                                 });
                                                 // send to pool update event processor
@@ -466,14 +483,7 @@ impl PoolStateManager {
 
     // receive raw batches of unified events, parse them into PoolUpdateEvents, and send to pool_update_tx for start_pool_update_event_processing to handle
     pub fn start_batch_event_processing(
-        mut batch_rx: mpsc::UnboundedReceiver<
-            Vec<(
-                Vec<Box<dyn UnifiedEvent>>,
-                Vec<PubkeyData>,
-                Vec<u64>,
-                HashMap<String, SimplifiedTokenBalance>,
-            )>,
-        >,
+        mut batch_rx: BatchEventReceiver,
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
@@ -578,11 +588,12 @@ impl PoolStateManager {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn apply_pool_update(
         update: &PoolUpdateEvent,
-        pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
-        pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>,
-        dex_pools: Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>,
+        pools: PoolStorage,
+        pair_to_pools: PairToPoolsMap,
+        dex_pools: DexPoolsMap,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         pending_pools_to_fetch_tick_arrays: Arc<Mutex<HashSet<Pubkey>>>,
         tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
@@ -641,9 +652,9 @@ impl PoolStateManager {
 
     async fn insert_new_pool(
         pool_state: PoolState,
-        pools: Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
-        pair_to_pools: Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>,
-        dex_pools: Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>,
+        pools: PoolStorage,
+        pair_to_pools: PairToPoolsMap,
+        dex_pools: DexPoolsMap,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         rpc_client: Arc<RpcClient>,
     ) {
@@ -939,7 +950,7 @@ impl PoolStateManager {
             let pool_state = &*pool_guard;
 
             match &pool_state {
-                PoolState::RadyiumClmmPoolState(clmm_pool_state) => {
+                PoolState::RadyiumClmm(clmm_pool_state) => {
                     // add pool to pending pools to fetch tick arrays
                     let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
                     pending.insert(*pool_address);
@@ -947,7 +958,7 @@ impl PoolStateManager {
 
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);
                 }
-                PoolState::RaydiumCpmmPoolState(cpmm_pool_state) => {
+                PoolState::RaydiumCpmm(cpmm_pool_state) => {
                     raydium_cpmm_amm_configs_set.insert(cpmm_pool_state.amm_config);
                 }
                 _ => {}
@@ -1034,7 +1045,7 @@ impl PoolStateManager {
     /// Save in-memory data to RocksDB
     async fn save_to_db(
         db: &Arc<DB>,
-        pools: &Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>,
+        pools: &PoolStorage,
         token_cache: &Arc<RwLock<HashMap<Pubkey, Token>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Clone the pools Arc for the blocking task

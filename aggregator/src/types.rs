@@ -119,6 +119,13 @@ pub struct AggregatorConfig {
     pub gas_config: GasConfig,
     pub mev_protection: MevProtectionConfig,
     pub split_config: SplitConfig,
+    // DEX enable/disable flags
+    pub enable_pumpfun: bool,
+    pub enable_pumpfun_swap: bool,
+    pub enable_bonk: bool,
+    pub enable_raydium_cpmm: bool,
+    pub enable_raydium_clmm: bool,
+    pub enable_raydium_amm_v4: bool,
 }
 
 /// Smart routing configuration
@@ -136,67 +143,67 @@ pub struct SmartRoutingConfig {
 
 #[derive(Debug, Clone)]
 pub enum PoolUpdateEvent {
-    PumpfunPoolUpdate(PumpfunPoolUpdate),
-    PumpSwapPoolUpdate(PumpSwapPoolUpdate),
-    RaydiumPoolUpdate(RaydiumAmmV4PoolUpdate),
-    RaydiumCpmmPoolUpdate(RaydiumCpmmPoolUpdate),
-    BonkPoolUpdate(BonkPoolUpdate),
-    RaydiumClmmPoolUpdate(RaydiumClmmPoolUpdate),
+    Pumpfun(PumpfunPoolUpdate),
+    PumpSwap(PumpSwapPoolUpdate),
+    Raydium(RaydiumAmmV4PoolUpdate),
+    RaydiumCpmm(RaydiumCpmmPoolUpdate),
+    Bonk(BonkPoolUpdate),
+    RaydiumClmm(RaydiumClmmPoolUpdate),
 }
 
 impl PoolUpdateEvent {
     pub fn address(&self) -> Pubkey {
         match self {
-            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.address,
-            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.address,
-            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.address,
-            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.address,
-            PoolUpdateEvent::BonkPoolUpdate(update) => update.address,
-            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.address,
+            PoolUpdateEvent::Pumpfun(update) => update.address,
+            PoolUpdateEvent::PumpSwap(update) => update.address,
+            PoolUpdateEvent::Raydium(update) => update.address,
+            PoolUpdateEvent::RaydiumCpmm(update) => update.address,
+            PoolUpdateEvent::Bonk(update) => update.address,
+            PoolUpdateEvent::RaydiumClmm(update) => update.address,
         }
     }
 
     pub fn is_account_state_update(&self) -> bool {
         match self {
-            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.is_account_state_update,
-            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.is_account_state_update,
-            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.is_account_state_update,
-            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.is_account_state_update,
-            PoolUpdateEvent::BonkPoolUpdate(update) => update.is_account_state_update,
-            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.is_account_state_update,
+            PoolUpdateEvent::Pumpfun(update) => update.is_account_state_update,
+            PoolUpdateEvent::PumpSwap(update) => update.is_account_state_update,
+            PoolUpdateEvent::Raydium(update) => update.is_account_state_update,
+            PoolUpdateEvent::RaydiumCpmm(update) => update.is_account_state_update,
+            PoolUpdateEvent::Bonk(update) => update.is_account_state_update,
+            PoolUpdateEvent::RaydiumClmm(update) => update.is_account_state_update,
         }
     }
 
     pub fn get_pool_update_event_type(&self) -> PoolUpdateEventType {
         match self {
-            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.pool_update_event_type,
-            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.pool_update_event_type,
-            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.pool_update_event_type,
-            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.pool_update_event_type,
-            PoolUpdateEvent::BonkPoolUpdate(update) => update.pool_update_event_type,
-            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.pool_update_event_type,
+            PoolUpdateEvent::Pumpfun(update) => update.pool_update_event_type,
+            PoolUpdateEvent::PumpSwap(update) => update.pool_update_event_type,
+            PoolUpdateEvent::Raydium(update) => update.pool_update_event_type,
+            PoolUpdateEvent::RaydiumCpmm(update) => update.pool_update_event_type,
+            PoolUpdateEvent::Bonk(update) => update.pool_update_event_type,
+            PoolUpdateEvent::RaydiumClmm(update) => update.pool_update_event_type,
         }
     }
 
     pub fn recv_us(&self) -> u64 {
         match self {
-            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::BonkPoolUpdate(update) => update.last_updated,
-            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.last_updated,
+            PoolUpdateEvent::Pumpfun(update) => update.last_updated,
+            PoolUpdateEvent::PumpSwap(update) => update.last_updated,
+            PoolUpdateEvent::Raydium(update) => update.last_updated,
+            PoolUpdateEvent::RaydiumCpmm(update) => update.last_updated,
+            PoolUpdateEvent::Bonk(update) => update.last_updated,
+            PoolUpdateEvent::RaydiumClmm(update) => update.last_updated,
         }
     }
 
     pub fn get_additional_event_type(&self) -> i32 {
         match self {
-            PoolUpdateEvent::PumpfunPoolUpdate(update) => update.additional_event_type,
-            PoolUpdateEvent::PumpSwapPoolUpdate(update) => update.additional_event_type,
-            PoolUpdateEvent::RaydiumPoolUpdate(update) => update.additional_event_type,
-            PoolUpdateEvent::RaydiumCpmmPoolUpdate(update) => update.additional_event_type,
-            PoolUpdateEvent::BonkPoolUpdate(update) => update.additional_event_type,
-            PoolUpdateEvent::RaydiumClmmPoolUpdate(update) => update.additional_event_type,
+            PoolUpdateEvent::Pumpfun(update) => update.additional_event_type,
+            PoolUpdateEvent::PumpSwap(update) => update.additional_event_type,
+            PoolUpdateEvent::Raydium(update) => update.additional_event_type,
+            PoolUpdateEvent::RaydiumCpmm(update) => update.additional_event_type,
+            PoolUpdateEvent::Bonk(update) => update.additional_event_type,
+            PoolUpdateEvent::RaydiumClmm(update) => update.additional_event_type,
         }
     }
 }
@@ -212,6 +219,13 @@ impl Default for AggregatorConfig {
             gas_config: GasConfig::default(),
             mev_protection: MevProtectionConfig::default(),
             split_config: SplitConfig::default(),
+            // Enable all DEXes by default
+            enable_pumpfun: true,
+            enable_pumpfun_swap: true,
+            enable_bonk: true,
+            enable_raydium_cpmm: true,
+            enable_raydium_clmm: true,
+            enable_raydium_amm_v4: true,
         }
     }
 }

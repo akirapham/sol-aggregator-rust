@@ -64,6 +64,7 @@ struct SwapStepComputeResult {
 }
 
 impl SwapMath {
+    #[allow(clippy::too_many_arguments)]
     pub fn swap_compute(
         program_id: &Pubkey,
         pool_id: &Pubkey,
@@ -216,17 +217,13 @@ impl SwapMath {
             let next_init_tick = next_init_tick_opt.unwrap();
             step.tick_next = next_init_tick.tick;
             step.initialized = next_init_tick.liquidity_gross.gt(&0);
-            if last_saved_tick_array_start_index != tick_array_start_index
-                && tick_array_address.is_some()
-            {
-                state.accounts.push(tick_array_address.unwrap());
-                last_saved_tick_array_start_index = tick_array_start_index;
+            if last_saved_tick_array_start_index != tick_array_start_index {
+                if let Some(addr) = tick_array_address {
+                    state.accounts.push(addr);
+                    last_saved_tick_array_start_index = tick_array_start_index;
+                }
             }
-            if step.tick_next < MIN_TICK {
-                step.tick_next = MIN_TICK;
-            } else if step.tick_next > MAX_TICK {
-                step.tick_next = MAX_TICK;
-            }
+            step.tick_next = step.tick_next.clamp(MIN_TICK, MAX_TICK);
             step.sqrt_price_next_x64 = SqrtPriceMath::get_sqrt_price_x64_from_tick(step.tick_next)?;
             let target_price = if (zero_for_one
                 && step.sqrt_price_next_x64.lt(&sqrt_price_limit_x64))
@@ -393,7 +390,7 @@ impl SwapMath {
                     true,
                 )?);
             }
-            if !(reach_target_price && !base_input) {
+            if !reach_target_price || base_input {
                 amount_out = Some(LiquidityMath::get_token_amount_b_from_liquidity(
                     sqrt_price_x64_next,
                     sqrt_price_x64_current,

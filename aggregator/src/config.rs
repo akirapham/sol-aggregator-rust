@@ -31,6 +31,13 @@ impl ConfigLoader {
             gas_config: Self::load_gas_config()?,
             mev_protection: Self::load_mev_protection_config()?,
             split_config: Self::load_split_config()?,
+            // DEX enable/disable flags (default enabled, can be disabled via env vars)
+            enable_pumpfun: !Self::get_bool("DISABLE_PUMPFUN", false)?,
+            enable_pumpfun_swap: !Self::get_bool("DISABLE_PUMPFUN_SWAP", false)?,
+            enable_bonk: !Self::get_bool("DISABLE_BONK", false)?,
+            enable_raydium_cpmm: !Self::get_bool("DISABLE_RAYDIUM_CPMM", false)?,
+            enable_raydium_clmm: !Self::get_bool("DISABLE_RAYDIUM_CLMM", false)?,
+            enable_raydium_amm_v4: !Self::get_bool("DISABLE_RAYDIUM_AMM_V4", false)?,
         })
     }
 

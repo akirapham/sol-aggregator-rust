@@ -13,46 +13,46 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PoolState {
-    PumpfunPoolState(PumpfunPoolState),
-    PumpSwapPoolState(PumpSwapPoolState),
-    RaydiumAmmV4PoolState(RaydiumAmmV4PoolState),
-    RaydiumCpmmPoolState(RaydiumCpmmPoolState),
-    BonkPoolState(BonkPoolState),
-    RadyiumClmmPoolState(RaydiumClmmPoolState),
+    Pumpfun(PumpfunPoolState),
+    PumpSwap(PumpSwapPoolState),
+    RaydiumAmmV4(RaydiumAmmV4PoolState),
+    RaydiumCpmm(RaydiumCpmmPoolState),
+    Bonk(BonkPoolState),
+    RadyiumClmm(RaydiumClmmPoolState),
 }
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum PoolUpdateEventType {
-    PumpFunTradeEvent,
-    PumpFunMigrateEvent,
-    PumpFunCreateTokenEvent,
-    PumpSwapBuyEvent,
-    PumpSwapSellEvent,
-    PumpSwapCreatePoolEvent,
-    PumpSwapDepositEvent,
-    PumpSwapWithdrawEvent,
-    RaydiumCpmmSwapEvent,
-    RaydiumCpmmDepositEvent,
-    RaydiumCpmmInitializeEvent,
-    RaydiumCpmmWithdrawEvent,
-    RaydiumClmmSwapEvent,
-    RaydiumClmmSwapV2Event,
-    RaydiumClmmClosePositionEvent,
-    RaydiumClmmDecreaseLiquidityV2Event,
-    RaydiumClmmIncreaseLiquidityV2Event,
-    RaydiumClmmOpenPositionWithToken22NftEvent,
-    RaydiumClmmOpenPositionV2Event,
-    RaydiumAmmV4SwapEvent,
-    RaydiumAmmV4DepositEvent,
-    RaydiumAmmV4Initialize2Event,
-    RaydiumAmmV4WithdrawEvent,
-    RaydiumAmmV4WithdrawPnlEvent,
-    BonkPoolStateAccountEvent,
-    PumpSwapPoolAccountEvent,
-    RaydiumClmmPoolStateAccountEvent,
-    RaydiumClmmTickArrayStateAccountEvent,
-    RaydiumClmmTickArrayBitmapExtensionAccountEvent,
-    RaydiumCpmmPoolStateAccountEvent,
+    PumpFunTrade,
+    PumpFunMigrate,
+    PumpFunCreateToken,
+    PumpSwapBuy,
+    PumpSwapSell,
+    PumpSwapCreatePool,
+    PumpSwapDeposit,
+    PumpSwapWithdraw,
+    RaydiumCpmmSwap,
+    RaydiumCpmmDeposit,
+    RaydiumCpmmInitialize,
+    RaydiumCpmmWithdraw,
+    RaydiumClmmSwap,
+    RaydiumClmmSwapV2,
+    RaydiumClmmClosePosition,
+    RaydiumClmmDecreaseLiquidityV2,
+    RaydiumClmmIncreaseLiquidityV2,
+    RaydiumClmmOpenPositionWithToken22Nft,
+    RaydiumClmmOpenPositionV2,
+    RaydiumAmmV4Swap,
+    RaydiumAmmV4Deposit,
+    RaydiumAmmV4Initialize2,
+    RaydiumAmmV4Withdraw,
+    RaydiumAmmV4WithdrawPnl,
+    BonkPoolStateAccount,
+    PumpSwapPoolAccount,
+    RaydiumClmmPoolStateAccount,
+    RaydiumClmmTickArrayStateAccount,
+    RaydiumClmmTickArrayBitmapExtensionAccount,
+    RaydiumCpmmPoolStateAccount,
 }
 
 #[derive(Debug, Clone)]
@@ -65,71 +65,71 @@ pub struct PoolStateMetadata {
 impl PoolState {
     pub fn last_updated(&self) -> u64 {
         match self {
-            PoolState::PumpfunPoolState(state) => state.last_updated,
-            PoolState::PumpSwapPoolState(state) => state.last_updated,
-            PoolState::RaydiumAmmV4PoolState(state) => state.last_updated,
-            PoolState::RaydiumCpmmPoolState(state) => state.last_updated,
-            PoolState::BonkPoolState(state) => state.last_updated,
-            PoolState::RadyiumClmmPoolState(state) => state.last_updated,
+            PoolState::Pumpfun(state) => state.last_updated,
+            PoolState::PumpSwap(state) => state.last_updated,
+            PoolState::RaydiumAmmV4(state) => state.last_updated,
+            PoolState::RaydiumCpmm(state) => state.last_updated,
+            PoolState::Bonk(state) => state.last_updated,
+            PoolState::RadyiumClmm(state) => state.last_updated,
         }
     }
 
     pub fn address(&self) -> Pubkey {
         match self {
-            PoolState::PumpfunPoolState(state) => state.address,
-            PoolState::PumpSwapPoolState(state) => state.address,
-            PoolState::RaydiumAmmV4PoolState(state) => state.address,
-            PoolState::RaydiumCpmmPoolState(state) => state.address,
-            PoolState::BonkPoolState(state) => state.address,
-            PoolState::RadyiumClmmPoolState(state) => state.address,
+            PoolState::Pumpfun(state) => state.address,
+            PoolState::PumpSwap(state) => state.address,
+            PoolState::RaydiumAmmV4(state) => state.address,
+            PoolState::RaydiumCpmm(state) => state.address,
+            PoolState::Bonk(state) => state.address,
+            PoolState::RadyiumClmm(state) => state.address,
         }
     }
 
     pub fn get_tokens(&self) -> (Pubkey, Pubkey) {
         match self {
-            PoolState::PumpfunPoolState(state) => (state.mint, wsol()),
-            PoolState::PumpSwapPoolState(state) => (state.base_mint, state.quote_mint),
-            PoolState::RaydiumAmmV4PoolState(state) => (state.base_mint, state.quote_mint),
-            PoolState::RaydiumCpmmPoolState(state) => (state.token0, state.token1),
-            PoolState::BonkPoolState(state) => (state.base_mint, state.quote_mint),
-            PoolState::RadyiumClmmPoolState(state) => (state.token_mint0, state.token_mint1),
+            PoolState::Pumpfun(state) => (state.mint, wsol()),
+            PoolState::PumpSwap(state) => (state.base_mint, state.quote_mint),
+            PoolState::RaydiumAmmV4(state) => (state.base_mint, state.quote_mint),
+            PoolState::RaydiumCpmm(state) => (state.token0, state.token1),
+            PoolState::Bonk(state) => (state.base_mint, state.quote_mint),
+            PoolState::RadyiumClmm(state) => (state.token_mint0, state.token_mint1),
         }
     }
 
     pub fn dex(&self) -> DexType {
         match self {
-            PoolState::PumpfunPoolState(_) => DexType::PumpFun,
-            PoolState::PumpSwapPoolState(_) => DexType::PumpFunSwap,
-            PoolState::RaydiumAmmV4PoolState(_) => DexType::Raydium,
-            PoolState::RaydiumCpmmPoolState(_) => DexType::RaydiumCpmm,
-            PoolState::BonkPoolState(_) => DexType::Bonk,
-            PoolState::RadyiumClmmPoolState(_) => DexType::RaydiumClmm,
+            PoolState::Pumpfun(_) => DexType::PumpFun,
+            PoolState::PumpSwap(_) => DexType::PumpFunSwap,
+            PoolState::RaydiumAmmV4(_) => DexType::Raydium,
+            PoolState::RaydiumCpmm(_) => DexType::RaydiumCpmm,
+            PoolState::Bonk(_) => DexType::Bonk,
+            PoolState::RadyiumClmm(_) => DexType::RaydiumClmm,
         }
     }
 
     pub fn get_metadata(&self) -> PoolStateMetadata {
         match self {
-            PoolState::PumpfunPoolState(state) => PoolStateMetadata {
+            PoolState::Pumpfun(state) => PoolStateMetadata {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
-            PoolState::PumpSwapPoolState(state) => PoolStateMetadata {
+            PoolState::PumpSwap(state) => PoolStateMetadata {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
-            PoolState::RaydiumAmmV4PoolState(state) => PoolStateMetadata {
+            PoolState::RaydiumAmmV4(state) => PoolStateMetadata {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
-            PoolState::RaydiumCpmmPoolState(state) => PoolStateMetadata {
+            PoolState::RaydiumCpmm(state) => PoolStateMetadata {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
-            PoolState::BonkPoolState(state) => PoolStateMetadata {
+            PoolState::Bonk(state) => PoolStateMetadata {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
-            PoolState::RadyiumClmmPoolState(state) => PoolStateMetadata {
+            PoolState::RadyiumClmm(state) => PoolStateMetadata {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
@@ -137,23 +137,23 @@ impl PoolState {
     }
     pub fn get_reserves(&self) -> (u64, u64) {
         match self {
-            PoolState::PumpfunPoolState(state) => (state.token_reserve, state.sol_reserve),
-            PoolState::PumpSwapPoolState(state) => (state.base_reserve, state.quote_reserve),
-            PoolState::RaydiumAmmV4PoolState(state) => (state.base_reserve, state.quote_reserve),
-            PoolState::RaydiumCpmmPoolState(state) => (state.token0_reserve, state.token1_reserve),
-            PoolState::BonkPoolState(state) => (state.base_reserve, state.quote_reserve),
-            PoolState::RadyiumClmmPoolState(state) => (state.token0_reserve, state.token1_reserve),
+            PoolState::Pumpfun(state) => (state.token_reserve, state.sol_reserve),
+            PoolState::PumpSwap(state) => (state.base_reserve, state.quote_reserve),
+            PoolState::RaydiumAmmV4(state) => (state.base_reserve, state.quote_reserve),
+            PoolState::RaydiumCpmm(state) => (state.token0_reserve, state.token1_reserve),
+            PoolState::Bonk(state) => (state.base_reserve, state.quote_reserve),
+            PoolState::RadyiumClmm(state) => (state.token0_reserve, state.token1_reserve),
         }
     }
 
     pub fn get_liquidity_usd(&self) -> f64 {
         match self {
-            PoolState::PumpfunPoolState(state) => state.liquidity_usd,
-            PoolState::PumpSwapPoolState(state) => state.liquidity_usd,
-            PoolState::RaydiumAmmV4PoolState(state) => state.liquidity_usd,
-            PoolState::RaydiumCpmmPoolState(state) => state.liquidity_usd,
-            PoolState::BonkPoolState(state) => state.liquidity_usd,
-            PoolState::RadyiumClmmPoolState(state) => state.liquidity_usd,
+            PoolState::Pumpfun(state) => state.liquidity_usd,
+            PoolState::PumpSwap(state) => state.liquidity_usd,
+            PoolState::RaydiumAmmV4(state) => state.liquidity_usd,
+            PoolState::RaydiumCpmm(state) => state.liquidity_usd,
+            PoolState::Bonk(state) => state.liquidity_usd,
+            PoolState::RadyiumClmm(state) => state.liquidity_usd,
         }
     }
 
@@ -164,22 +164,22 @@ impl PoolState {
         amm_confi_fetcher: Arc<dyn GetAmmConfig>,
     ) -> u64 {
         match self {
-            PoolState::PumpfunPoolState(state) => {
+            PoolState::Pumpfun(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
-            PoolState::PumpSwapPoolState(state) => {
+            PoolState::PumpSwap(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
-            PoolState::RaydiumAmmV4PoolState(state) => {
+            PoolState::RaydiumAmmV4(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
-            PoolState::RaydiumCpmmPoolState(state) => {
+            PoolState::RaydiumCpmm(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
-            PoolState::BonkPoolState(state) => {
+            PoolState::Bonk(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
-            PoolState::RadyiumClmmPoolState(state) => {
+            PoolState::RadyiumClmm(state) => {
                 state
                     .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
                     .await

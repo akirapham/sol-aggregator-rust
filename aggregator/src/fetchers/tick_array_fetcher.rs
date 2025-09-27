@@ -73,7 +73,8 @@ impl TickArrayFetcher {
             .rpc_client
             .get_multiple_accounts(&[pool_id, tick_array_bitmap_extension_address])
             .await?;
-        let pool_account = pool_and_extension_accounts.first()
+        let pool_account = pool_and_extension_accounts
+            .first()
             .and_then(|opt| opt.as_ref())
             .ok_or_else(|| anyhow!("Failed to fetch pool account"))?; // Changed to anyhow! macro
                                                                       // decode pool account data

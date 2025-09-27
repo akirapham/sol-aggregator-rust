@@ -218,8 +218,8 @@ impl TickUtils {
 
     pub fn merge_tick_array_bitmap(bns: &[u64]) -> Integer {
         let mut b = Integer::ZERO;
-        for i in 0..bns.len() {
-            let sh = Integer::from_str(&bns[i].to_string()).unwrap().shl(64 * i);
+        for (i, &bn) in bns.iter().enumerate() {
+            let sh = Integer::from_str(&bn.to_string()).unwrap().shl(64 * i);
             b += sh;
         }
         b

@@ -38,8 +38,8 @@ pub fn pool_update_event_to_pool_state(
     sol_price: f64,
 ) -> (Option<PoolState>, bool) {
     match event {
-        PoolUpdateEvent::PumpfunPoolUpdate(pumpfun_pool_update) => (
-            Some(PoolState::PumpfunPoolState(PumpfunPoolState {
+        PoolUpdateEvent::Pumpfun(pumpfun_pool_update) => (
+            Some(PoolState::Pumpfun(PumpfunPoolState {
                 address: pumpfun_pool_update.address,
                 last_updated: pumpfun_pool_update.last_updated,
                 liquidity_usd: pumpfun_pool_update.sol_reserve as f64 / 1_000_000_000_f64
@@ -55,7 +55,7 @@ pub fn pool_update_event_to_pool_state(
             })),
             false,
         ),
-        PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update) => {
+        PoolUpdateEvent::Raydium(raydium_pool_update) => {
             let liquidity_usd = if raydium_pool_update.is_account_state_update {
                 0.0
             } else {
@@ -68,7 +68,7 @@ pub fn pool_update_event_to_pool_state(
                 )
             };
             (
-                Some(PoolState::RaydiumAmmV4PoolState(RaydiumAmmV4PoolState {
+                Some(PoolState::RaydiumAmmV4(RaydiumAmmV4PoolState {
                     slot: raydium_pool_update.slot,
                     transaction_index: raydium_pool_update.transaction_index,
                     address: raydium_pool_update.address,
@@ -100,7 +100,7 @@ pub fn pool_update_event_to_pool_state(
                 false,
             )
         }
-        PoolUpdateEvent::PumpSwapPoolUpdate(pump_swap_pool_update) => {
+        PoolUpdateEvent::PumpSwap(pump_swap_pool_update) => {
             let liquidity_usd = if pump_swap_pool_update.is_account_state_update {
                 0.0
             } else {
@@ -113,7 +113,7 @@ pub fn pool_update_event_to_pool_state(
                 )
             };
             (
-                Some(PoolState::PumpSwapPoolState(PumpSwapPoolState {
+                Some(PoolState::PumpSwap(PumpSwapPoolState {
                     address: pump_swap_pool_update.address,
                     index: pump_swap_pool_update.index.unwrap_or_default(),
                     creator: pump_swap_pool_update.creator,
@@ -132,7 +132,7 @@ pub fn pool_update_event_to_pool_state(
                 false,
             )
         }
-        PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_cpmm_pool_update) => {
+        PoolUpdateEvent::RaydiumCpmm(raydium_cpmm_pool_update) => {
             let liquidity_usd = if raydium_cpmm_pool_update.is_account_state_update {
                 0.0
             } else {
@@ -145,7 +145,7 @@ pub fn pool_update_event_to_pool_state(
                 )
             };
             (
-                Some(PoolState::RaydiumCpmmPoolState(RaydiumCpmmPoolState {
+                Some(PoolState::RaydiumCpmm(RaydiumCpmmPoolState {
                     slot: raydium_cpmm_pool_update.slot,
                     transaction_index: raydium_cpmm_pool_update.transaction_index,
                     address: raydium_cpmm_pool_update.address,
@@ -165,7 +165,7 @@ pub fn pool_update_event_to_pool_state(
                 false,
             )
         }
-        PoolUpdateEvent::BonkPoolUpdate(bonk_pool_update) => {
+        PoolUpdateEvent::Bonk(bonk_pool_update) => {
             let liquidity_usd = compute_pool_liquidity_usd(
                 &bonk_pool_update.base_mint,
                 &bonk_pool_update.quote_vault,
@@ -174,7 +174,7 @@ pub fn pool_update_event_to_pool_state(
                 sol_price,
             );
             (
-                Some(PoolState::BonkPoolState(BonkPoolState {
+                Some(PoolState::Bonk(BonkPoolState {
                     slot: bonk_pool_update.slot,
                     transaction_index: bonk_pool_update.transaction_index,
                     address: bonk_pool_update.address,
@@ -200,7 +200,7 @@ pub fn pool_update_event_to_pool_state(
                 false,
             )
         }
-        PoolUpdateEvent::RaydiumClmmPoolUpdate(raydium_clmm_pool_update) => {
+        PoolUpdateEvent::RaydiumClmm(raydium_clmm_pool_update) => {
             let mut pool_state = RaydiumClmmPoolState {
                 slot: raydium_clmm_pool_update.slot,
                 transaction_index: raydium_clmm_pool_update.transaction_index,
@@ -274,7 +274,7 @@ pub fn pool_update_event_to_pool_state(
                     raydium_clmm_pool_update.tick_array_bitmap_extension.clone();
             }
 
-            (Some(PoolState::RadyiumClmmPoolState(pool_state)), true)
+            (Some(PoolState::RadyiumClmm(pool_state)), true)
         }
     }
 }
@@ -286,8 +286,8 @@ pub fn update_pool_state_by_event(
 ) -> bool {
     let mut is_pool_with_ticks = false;
     match event {
-        PoolUpdateEvent::PumpfunPoolUpdate(pumpfun_pool_update) => {
-            if let PoolState::PumpfunPoolState(state) = &mut **existing_state {
+        PoolUpdateEvent::Pumpfun(pumpfun_pool_update) => {
+            if let PoolState::Pumpfun(state) = &mut **existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !pumpfun_pool_update.is_account_state_update {
                     state.last_updated = pumpfun_pool_update.last_updated;
@@ -302,8 +302,8 @@ pub fn update_pool_state_by_event(
                 state.transaction_index = pumpfun_pool_update.transaction_index;
             }
         }
-        PoolUpdateEvent::RaydiumPoolUpdate(raydium_pool_update) => {
-            if let PoolState::RaydiumAmmV4PoolState(state) = &mut **existing_state {
+        PoolUpdateEvent::Raydium(raydium_pool_update) => {
+            if let PoolState::RaydiumAmmV4(state) = &mut **existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !raydium_pool_update.is_account_state_update {
                     state.last_updated = raydium_pool_update.last_updated;
@@ -365,8 +365,8 @@ pub fn update_pool_state_by_event(
                 }
             }
         }
-        PoolUpdateEvent::PumpSwapPoolUpdate(pump_swap_pool_update) => {
-            if let PoolState::PumpSwapPoolState(state) = &mut **existing_state {
+        PoolUpdateEvent::PumpSwap(pump_swap_pool_update) => {
+            if let PoolState::PumpSwap(state) = &mut **existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !pump_swap_pool_update.is_account_state_update {
                     state.last_updated = pump_swap_pool_update.last_updated;
@@ -392,8 +392,8 @@ pub fn update_pool_state_by_event(
                 }
             }
         }
-        PoolUpdateEvent::RaydiumCpmmPoolUpdate(raydium_cpmm_pool_update) => {
-            if let PoolState::RaydiumCpmmPoolState(state) = &mut **existing_state {
+        PoolUpdateEvent::RaydiumCpmm(raydium_cpmm_pool_update) => {
+            if let PoolState::RaydiumCpmm(state) = &mut **existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !raydium_cpmm_pool_update.is_account_state_update {
                     state.last_updated = raydium_cpmm_pool_update.last_updated;
@@ -427,8 +427,8 @@ pub fn update_pool_state_by_event(
                 }
             }
         }
-        PoolUpdateEvent::BonkPoolUpdate(bonk_pool_update) => {
-            if let PoolState::BonkPoolState(state) = &mut **existing_state {
+        PoolUpdateEvent::Bonk(bonk_pool_update) => {
+            if let PoolState::Bonk(state) = &mut **existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !bonk_pool_update.is_account_state_update {
                     state.last_updated = bonk_pool_update.last_updated;
@@ -454,8 +454,8 @@ pub fn update_pool_state_by_event(
                 );
             }
         }
-        PoolUpdateEvent::RaydiumClmmPoolUpdate(raydium_clmm_pool_update) => {
-            if let PoolState::RadyiumClmmPoolState(state) = &mut **existing_state {
+        PoolUpdateEvent::RaydiumClmm(raydium_clmm_pool_update) => {
+            if let PoolState::RadyiumClmm(state) = &mut **existing_state {
                 is_pool_with_ticks = true;
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !raydium_clmm_pool_update.is_account_state_update {

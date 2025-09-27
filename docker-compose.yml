@@ -21,12 +21,12 @@ services:
       - ./logs:/app/logs
     networks:
       - aggregator-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:${API_PORT:-3000}/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:${API_PORT:-3000}/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
 
   # Optional: Redis for caching (uncomment if using redis)
   # redis:

@@ -2,11 +2,7 @@
 # Stage 1: Build the application
 FROM rust:1.90 AS builder
 
-# Set environment variables for RocksDB build
-ENV ROCKSDB_LIB_DIR=/usr/lib
-ENV SNAPPY_LIB_DIR=/usr/lib
-
-# Install system dependencies including RocksDB requirements
+# Install system dependencies (removed librocksdb-dev since we're using bundled RocksDB)
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -19,8 +15,7 @@ RUN apt-get update && apt-get install -y \
     zlib1g-dev \
     libbz2-dev \
     liblz4-dev \
-    libzstd-dev \
-    librocksdb-dev \
+  libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -46,24 +41,17 @@ COPY aggregator/ ./aggregator/
 RUN cargo build --release --package aggregator
 
 # Stage 2: Create the runtime image
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
-# Install runtime dependencies including curl for health checks and RocksDB libraries
+# Install runtime dependencies including curl for health checks
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
-    curl \
-    libgflags2.2 \
-    libsnappy1v5 \
-    zlib1g \
-    libbz2-1.0 \
-    liblz4-1 \
-    libzstd1 \
-    librocksdb9.10 \
+  curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
-RUN useradd -r -u 1000 -m -c "aggregator user" -s /bin/bash aggregator && \
+RUN useradd -r -u 1001 -m -c "aggregator user" -s /bin/bash aggregator && \
     mkdir -p /app && \
     chown -R aggregator:aggregator /app
 

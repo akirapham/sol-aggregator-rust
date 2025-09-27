@@ -10,13 +10,7 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
 };
 use solana_streamer_sdk::streaming::{
     event_parser::{
-        protocols::{
-            bonk::parser::BONK_PROGRAM_ID, pumpfun::parser::PUMPFUN_PROGRAM_ID,
-            pumpswap::parser::PUMPSWAP_PROGRAM_ID,
-            raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID,
-            raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
-            raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID,
-        },
+        protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
         Protocol, UnifiedEvent,
     },
     grpc::ClientConfig,

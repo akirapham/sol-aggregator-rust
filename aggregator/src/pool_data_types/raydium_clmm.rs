@@ -59,7 +59,7 @@ impl Default for TickArrayBitmapExtension {
 }
 
 #[derive(Clone, Debug)]
-pub struct RadyiumClmmPoolStatePart {
+pub struct RaydiumClmmPoolStatePart {
     pub amm_config: Pubkey,
     pub token_mint0: Pubkey,
     pub token_mint1: Pubkey,
@@ -90,13 +90,13 @@ pub struct RaydiumClmmAmmConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct RadyiumClmmPoolReservePart {
+pub struct RaydiumClmmPoolReservePart {
     pub token0_reserve: u64,
     pub token1_reserve: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RadyiumClmmPoolState {
+pub struct RaydiumClmmPoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
@@ -116,7 +116,7 @@ pub struct RadyiumClmmPoolState {
     pub open_time: u64,
     #[serde(skip)]
     pub tick_array_state: HashMap<i32, TickArrayState>,
-    pub tick_array_bitmap_extension: TickArrayBitmapExtension,
+    pub tick_array_bitmap_extension: Option<TickArrayBitmapExtension>,
     pub last_updated: u64, // Unix timestamp
     pub token0_reserve: u64,
     pub token1_reserve: u64,
@@ -128,8 +128,8 @@ pub struct RaydiumClmmPoolUpdate {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
-    pub pool_state_part: Option<RadyiumClmmPoolStatePart>,
-    pub reserve_part: Option<RadyiumClmmPoolReservePart>,
+    pub pool_state_part: Option<RaydiumClmmPoolStatePart>,
+    pub reserve_part: Option<RaydiumClmmPoolReservePart>,
     pub tick_array_state: Option<TickArrayState>,
     pub tick_array_bitmap_extension: Option<TickArrayBitmapExtension>,
     pub last_updated: u64,
@@ -150,7 +150,7 @@ pub struct SwapComputeResult {
     pub accounts: Vec<Pubkey>,
 }
 
-impl RadyiumClmmPoolState {
+impl RaydiumClmmPoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::new_from_array(*RAYDIUM_CLMM_PROGRAM_ID.as_array())
     }
@@ -193,10 +193,11 @@ impl RadyiumClmmPoolState {
             self.address,
             Self::get_program_id(),
             self,
-            Some(&self.tick_array_bitmap_extension),
+            self.tick_array_bitmap_extension.as_ref(),
             amm_config_fetcher
                 .get_raydium_clmm_amm_config(&self.amm_config)
-                .await,
+                .await
+                .unwrap_or(None),
         );
         let result = PoolUtils::get_output_amount_and_remain_accounts(
             &pool_info,

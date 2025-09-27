@@ -56,10 +56,10 @@ impl TickUtils {
         }
         None
     }
-    pub fn first_initialized_tick<'a>(
-        tick_array_current: &'a TickArrayState,
+    pub fn first_initialized_tick(
+        tick_array_current: &TickArrayState,
         zero_for_one: bool,
-    ) -> Result<&'a TickState, String> {
+    ) -> Result<&TickState, String> {
         if zero_for_one {
             let mut i = (TICK_ARRAY_SIZE - 1) as isize;
             while i >= 0 {
@@ -97,7 +97,7 @@ impl TickUtils {
         }
     }
     pub fn check_is_out_of_boundary(tick: i32) -> bool {
-        tick < MIN_TICK || tick > MAX_TICK
+        !(MIN_TICK..=MAX_TICK).contains(&tick)
     }
     pub fn get_tick_array_bit_index(tick_index: i32, tick_spacing: u16) -> i32 {
         let ticks_in_array = TickQuery::tick_count(tick_spacing);
@@ -126,7 +126,7 @@ impl TickUtils {
         // println!("tick_array_start_index: {tick_array_start_index} tick_spacing: {tick_spacing} tick_array_offset: {tick_array_offset}");
         let mut res = TickUtils::search_low_bit_from_start(
             tick_array_bitmap,
-            &ex_bitmap_info,
+            ex_bitmap_info,
             tick_array_offset - 1,
             expected_count,
             tick_spacing,
@@ -134,7 +134,7 @@ impl TickUtils {
         // println!("search_low_bit_from_start: {res:?}");
         let mut high = TickUtils::search_high_bit_from_start(
             tick_array_bitmap,
-            &ex_bitmap_info,
+            ex_bitmap_info,
             tick_array_offset,
             expected_count,
             tick_spacing,

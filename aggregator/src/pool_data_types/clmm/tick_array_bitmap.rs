@@ -79,7 +79,7 @@ impl TickArrayBitmap {
             compressed -= 1;
         }
         let bit_pos = compressed.abs();
-        return if zero_for_one {
+        if zero_for_one {
             let offset_bitmap = bitmap.shl(1024 - bit_pos - 1).complete();
             match most_significant_bit(1024, &offset_bitmap) {
                 None => Ok(NextTickArray {
@@ -109,7 +109,7 @@ impl TickArrayBitmap {
                     })
                 }
             }
-        };
+        }
     }
 }
 
@@ -142,7 +142,7 @@ impl TickArrayBitmapExtensionUtils {
         if zero_for_one {
             let offset_bitmap = TickUtils::merge_tick_array_bitmap(tick_array_bitmap.as_slice())
                 .shl(TICK_ARRAY_BITMAP_SIZE as u32 - 1 - tick_array_offset_in_bitmap);
-            return if is_zero(512, &offset_bitmap) {
+            if is_zero(512, &offset_bitmap) {
                 NextTickArray {
                     is_init: false,
                     tick_index: bitmap_tick_boundary.min,
@@ -155,11 +155,11 @@ impl TickArrayBitmapExtensionUtils {
                     is_init: true,
                     tick_index: next_array_start_index,
                 }
-            };
+            }
         } else {
             let offset_bitmap = TickUtils::merge_tick_array_bitmap(tick_array_bitmap.as_slice())
                 .shr(tick_array_offset_in_bitmap);
-            return if is_zero(512, &offset_bitmap) {
+            if is_zero(512, &offset_bitmap) {
                 NextTickArray {
                     is_init: false,
                     tick_index: bitmap_tick_boundary.max
@@ -173,7 +173,7 @@ impl TickArrayBitmapExtensionUtils {
                     is_init: true,
                     tick_index: next_array_start_index,
                 }
-            };
+            }
         }
     }
     pub fn next_initialized_tick_array_from_one_bitmap(
@@ -184,7 +184,7 @@ impl TickArrayBitmapExtensionUtils {
     ) -> Result<NextTickArray, String> {
         let multiplier = TickQuery::tick_count(tick_spacing) as i32;
         let next_tick_array_start_index = if zero_for_one {
-            last_tick_array_start_index - multiplier as i32
+            last_tick_array_start_index - multiplier
         } else {
             last_tick_array_start_index + multiplier
         };
@@ -237,10 +237,10 @@ impl TickArrayBitmapExtensionUtils {
         Self::check_extension_boundary(tick_index, tick_spacing)?;
 
         let ticks_in_one_bitmap = TickArrayBitmap::max_tick_in_tick_array_bitmap(tick_spacing);
-        let tick_index_abs = tick_index.abs() as u32;
+        let tick_index_abs = tick_index.unsigned_abs();
         // floor
         let mut offset = (tick_index_abs / ticks_in_one_bitmap) - 1;
-        if tick_index < 0 && tick_index_abs % ticks_in_one_bitmap == 0 {
+        if tick_index < 0 && tick_index_abs.is_multiple_of(ticks_in_one_bitmap) {
             offset -= 1;
         }
         Ok(offset)
@@ -282,7 +282,7 @@ impl TickArrayBitmapExtensionUtils {
         })
     }
     pub fn tick_array_offset_in_bitmap(tick_array_start_index: i32, tick_spacing: u16) -> u32 {
-        let m = tick_array_start_index.abs() as u32
+        let m = tick_array_start_index.unsigned_abs()
             % TickArrayBitmap::max_tick_in_tick_array_bitmap(tick_spacing);
         // floor
         let mut tick_array_offset_in_bitmap = m / TickQuery::tick_count(tick_spacing);

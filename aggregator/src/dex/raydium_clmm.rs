@@ -2,18 +2,18 @@ use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
 use std::sync::Arc;
 
-use crate::{dex::DexInterface, pool_data_types::RadyiumClmmPoolState, utils::tokens_equal};
+use crate::{dex::DexInterface, pool_data_types::RaydiumClmmPoolState, utils::tokens_equal};
 
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
 
 pub struct RaydiumClmmDex {
-    pool_state: Arc<RadyiumClmmPoolState>,
+    pool_state: Arc<RaydiumClmmPoolState>,
     program_id: Pubkey,
 }
 
 impl RaydiumClmmDex {
-    pub fn new(pool_state: Arc<RadyiumClmmPoolState>) -> Self {
+    pub fn new(pool_state: Arc<RaydiumClmmPoolState>) -> Self {
         Self {
             pool_state,
             program_id: Self::get_program_id(),

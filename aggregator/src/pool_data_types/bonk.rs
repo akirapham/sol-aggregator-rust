@@ -75,7 +75,7 @@ impl BonkPoolState {
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
     ) -> u64 {
-        let is_buy = tokens_equal(&input_token, &get_sol_mint());
+        let is_buy = tokens_equal(input_token, &get_sol_mint());
 
         if is_buy {
             get_buy_token_amount_from_sol_amount(

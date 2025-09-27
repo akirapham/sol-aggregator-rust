@@ -7,7 +7,7 @@ use crate::{
     constants::wsol,
     pool_data_types::{
         BonkPoolState, DexType, GetAmmConfig, PumpSwapPoolState, PumpfunPoolState,
-        RadyiumClmmPoolState, RaydiumAmmV4PoolState, RaydiumCpmmPoolState,
+        RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState,
     },
 };
 
@@ -18,7 +18,7 @@ pub enum PoolState {
     RaydiumAmmV4PoolState(RaydiumAmmV4PoolState),
     RaydiumCpmmPoolState(RaydiumCpmmPoolState),
     BonkPoolState(BonkPoolState),
-    RadyiumClmmPoolState(RadyiumClmmPoolState),
+    RadyiumClmmPoolState(RaydiumClmmPoolState),
 }
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]

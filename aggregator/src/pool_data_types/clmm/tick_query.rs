@@ -50,7 +50,7 @@ impl TickQuery {
                 tick_spacing,
             )
         };
-        if res.len() > 0 {
+        if !res.is_empty() {
             Some(res[0])
         } else {
             None

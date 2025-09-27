@@ -58,8 +58,8 @@ use tokio::sync::mpsc;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RadyiumClmmPoolReservePart,
-        RadyiumClmmPoolStatePart, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate,
+        PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
+        RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart, RaydiumClmmPoolUpdate,
         RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState, TickState,
     },
     types::PoolUpdateEvent,
@@ -391,7 +391,7 @@ pub fn handle_dex_event(
                                 transaction_index: e.metadata.transaction_index,
                                 last_updated: e.metadata.recv_us as u64,
                                 pool_state_part: None,
-                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                reserve_part: Some(RaydiumClmmPoolReservePart {
                                     token0_reserve: if token0_is_input { inputb.amount } else { outputb.amount },
                                     token1_reserve: if token0_is_input { outputb.amount } else { inputb.amount }
                                 }),
@@ -417,7 +417,7 @@ pub fn handle_dex_event(
                                 transaction_index: e.metadata.transaction_index,
                                 last_updated: e.metadata.recv_us as u64,
                                 pool_state_part: None,
-                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                reserve_part: Some(RaydiumClmmPoolReservePart {
                                     token0_reserve: if token0_is_input { inputb.amount } else { outputb.amount },
                                     token1_reserve: if token0_is_input { outputb.amount } else { inputb.amount }
                                 }),
@@ -445,7 +445,7 @@ pub fn handle_dex_event(
                                 transaction_index: e.metadata.transaction_index,
                                 last_updated: e.metadata.recv_us as u64,
                                 pool_state_part: None,
-                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                reserve_part: Some(RaydiumClmmPoolReservePart {
                                     token0_reserve: t0b.amount,
                                     token1_reserve: t1b.amount
                                 }),
@@ -473,7 +473,7 @@ pub fn handle_dex_event(
                                 transaction_index: e.metadata.transaction_index,
                                 last_updated: e.metadata.recv_us as u64,
                                 pool_state_part: None,
-                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                reserve_part: Some(RaydiumClmmPoolReservePart {
                                     token0_reserve: t0b.amount,
                                     token1_reserve: t1b.amount
                                 }),
@@ -498,7 +498,7 @@ pub fn handle_dex_event(
                                 transaction_index: e.metadata.transaction_index,
                                 last_updated: e.metadata.recv_us as u64,
                                 pool_state_part: None,
-                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                reserve_part: Some(RaydiumClmmPoolReservePart {
                                     token0_reserve: t0b.amount,
                                     token1_reserve: t1b.amount
                                 }),
@@ -523,7 +523,7 @@ pub fn handle_dex_event(
                                 transaction_index: e.metadata.transaction_index,
                                 last_updated: e.metadata.recv_us as u64,
                                 pool_state_part: None,
-                                reserve_part: Some(RadyiumClmmPoolReservePart {
+                                reserve_part: Some(RaydiumClmmPoolReservePart {
                                     token0_reserve: t0b.amount,
                                     token1_reserve: t1b.amount
                                 }),
@@ -791,7 +791,7 @@ pub fn handle_dex_event(
                         slot:e.metadata.slot,
                         transaction_index:e.metadata.transaction_index,
                         last_updated: e.metadata.recv_us as u64,
-                        pool_state_part: Some(RadyiumClmmPoolStatePart {
+                        pool_state_part: Some(RaydiumClmmPoolStatePart {
                             amm_config: Pubkey::new_from_array(e.pool_state.amm_config.as_array().clone()),
                             token_mint0: Pubkey::new_from_array(e.pool_state.token_mint0.as_array().clone()),
                             token_mint1: Pubkey::new_from_array(e.pool_state.token_mint1.as_array().clone()),

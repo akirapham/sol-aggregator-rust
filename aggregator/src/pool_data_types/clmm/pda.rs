@@ -6,10 +6,10 @@ pub const TICK_ARRAY_SEED: &str = "tick_array";
 pub fn get_pda_ex_bitmap_account(program_id: &Pubkey, pool_id: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[
-            &POOL_TICK_ARRAY_BITMAP_SEED.as_bytes(),
-            &pool_id.to_bytes().as_slice(),
+            POOL_TICK_ARRAY_BITMAP_SEED.as_bytes(),
+            pool_id.to_bytes().as_slice(),
         ],
-        &program_id,
+        program_id,
     )
 }
 
@@ -20,10 +20,10 @@ pub fn get_pda_tick_array_address(
 ) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[
-            &TICK_ARRAY_SEED.as_bytes(),
-            &pool_id.to_bytes().as_slice(),
+            TICK_ARRAY_SEED.as_bytes(),
+            pool_id.to_bytes().as_slice(),
             start_index.to_be_bytes().as_slice(),
         ],
-        &program_id,
+        program_id,
     )
 }

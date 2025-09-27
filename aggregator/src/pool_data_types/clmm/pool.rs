@@ -102,13 +102,13 @@ impl PoolUtils {
                     last_tick_array_start_index,
                     tick_spacing,
                     zero_for_one,
-                    &ex_bitmap_info,
+                    ex_bitmap_info,
                 )?;
             if next_initialized_tick_array_from_one_bitmap.is_init {
                 return Ok(Some(next_initialized_tick_array_from_one_bitmap.tick_index));
             }
             last_tick_array_start_index = next_initialized_tick_array_from_one_bitmap.tick_index;
-            if last_tick_array_start_index < MIN_TICK || last_tick_array_start_index > MAX_TICK {
+            if !(MIN_TICK..=MAX_TICK).contains(&last_tick_array_start_index) {
                 return Ok(None);
             }
         }
@@ -128,7 +128,7 @@ impl PoolUtils {
                     pool_info.pool_state.tick_spacing,
                 ),
                 pool_info.pool_state.tick_spacing,
-                &pool_info.ex_bitmap_info.as_ref().unwrap(),
+                pool_info.ex_bitmap_info.as_ref().unwrap(),
             )?
         } else {
             // println!("2");
@@ -156,7 +156,7 @@ impl PoolUtils {
                 pool_info.pool_state.tick_current_index,
                 pool_info.pool_state.tick_spacing,
                 &pool_info.pool_state.tick_array_bitmap,
-                &pool_info.ex_bitmap_info.as_ref().unwrap(),
+                pool_info.ex_bitmap_info.as_ref().unwrap(),
                 // TickQuery::get_array_start_index(pool_info.pool_state.tick_current, pool_info.pool_state.tick_spacing),
                 zero_for_one,
             )? {
@@ -209,7 +209,7 @@ impl PoolUtils {
             None,
             false,
         )?;
-        all_needed_accounts.extend(swap_compute.accounts.into_iter());
+        all_needed_accounts.extend(swap_compute.accounts);
         // println!("swap_compute {swap_compute:?}");
         //
         Ok(GetOutputAmountAndRemainAccountsResult {
@@ -253,7 +253,7 @@ impl PoolUtils {
             None,
             false,
         )?;
-        all_needed_accounts.extend(swap_compute.accounts.into_iter());
+        all_needed_accounts.extend(swap_compute.accounts);
         // println!("swap_compute {swap_compute:?}");
         //
         Ok(GetInputAmountAndRemainAccountsResult {

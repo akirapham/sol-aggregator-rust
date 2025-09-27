@@ -139,7 +139,7 @@ impl SwapMath {
         {
             //@TODO
             let mut step = StepComputations {
-                sqrt_price_start_x64: state.sqrt_price_x64.clone(),
+                sqrt_price_start_x64: state.sqrt_price_x64,
                 tick_next: 0,
                 initialized: false,
                 sqrt_price_next_x64: 0,
@@ -249,7 +249,7 @@ impl SwapMath {
             step.amount_out = swap_step_compute.amount_out;
             step.fee_amount = swap_step_compute.fee_amount;
 
-            state.fee_amount = state.fee_amount + &step.fee_amount;
+            state.fee_amount += &step.fee_amount;
 
             if base_input {
                 state.amount_specified_remaining = state
@@ -452,7 +452,7 @@ fn to_twos(n: Integer, bit_width: u32) -> Integer {
 }
 fn notn(n: Integer, width: u32) -> Integer {
     let mask = (Integer::from(1u32) << width) - 1u32;
-    let not_n = Integer::from(!n); // convert to full Integer
+    let not_n = !n; // convert to full Integer
     not_n & mask
 }
 fn from_twos(val: Integer, bits: u32) -> Integer {
@@ -529,7 +529,7 @@ impl SqrtPriceMath {
             }
             Ok(MathUtil::mul_div_rounding_up(
                 &numerator1,
-                &rug::Integer::ONE,
+                rug::Integer::ONE,
                 &(&numerator1).div(&sqrt_price_x64).complete().add(amount),
             ))
         } else {
@@ -556,7 +556,7 @@ impl SqrtPriceMath {
             Ok(sqrt_price_x64.add(delta_y.div(liquidity)))
         } else {
             let amount_div_liquidity =
-                MathUtil::mul_div_rounding_up(&delta_y, &rug::Integer::ONE, &liquidity);
+                MathUtil::mul_div_rounding_up(&delta_y, rug::Integer::ONE, &liquidity);
             if !sqrt_price_x64.gt(&amount_div_liquidity) {
                 return Err("getNextSqrtPriceFromTokenAmountBRoundingDown sqrtPriceX64 must gt amountDivLiquidity".to_string());
             }
@@ -659,15 +659,15 @@ impl SqrtPriceMath {
         let log_2p_fraction_x32 = log_2p_fraction_x64.shr(32);
 
         let log_2p_x32: rug::Integer = log_2p_integer_x32.add(&log_2p_fraction_x32);
-        let log_bp_x64 = (&log_2p_x32).mul(rug::Integer::from_str(&LOG_B_2_X32).unwrap());
+        let log_bp_x64 = (&log_2p_x32).mul(rug::Integer::from_str(LOG_B_2_X32).unwrap());
 
         let tick_low = signed_right_shift(
-            (&log_bp_x64).sub(rug::Integer::from_str(&LOG_B_P_ERR_MARGIN_LOWER_X64).unwrap()),
+            (&log_bp_x64).sub(rug::Integer::from_str(LOG_B_P_ERR_MARGIN_LOWER_X64).unwrap()),
             64,
             128,
         );
         let tick_high = signed_right_shift(
-            (&log_bp_x64).add(rug::Integer::from_str(&LOG_B_P_ERR_MARGIN_UPPER_X64).unwrap()),
+            (&log_bp_x64).add(rug::Integer::from_str(LOG_B_P_ERR_MARGIN_UPPER_X64).unwrap()),
             64,
             128,
         );
@@ -692,7 +692,7 @@ impl SqrtPriceMath {
         }
     }
     fn get_sqrt_price_x64_from_tick(tick: i32) -> Result<u128, String> {
-        if tick < MIN_TICK || tick > MAX_TICK {
+        if !(MIN_TICK..=MAX_TICK).contains(&tick) {
             return Err("tick must be in MIN_TICK and MAX_TICK".to_string());
         }
         let tick_abs = tick.abs();
@@ -824,7 +824,7 @@ impl LiquidityMath {
             return Err("(1) sqrtPriceX64A must greater than 0".to_string());
         }
         let numerator1 =
-            rug::Integer::from_str(&(liquidity.clone() << U64_RESOLUTION).to_string()).unwrap();
+            rug::Integer::from_str(&(liquidity << U64_RESOLUTION).to_string()).unwrap();
         let numerator2 = rug::Integer::from_str(&b.sub(a).to_string()).unwrap();
 
         let amount = if round_up {

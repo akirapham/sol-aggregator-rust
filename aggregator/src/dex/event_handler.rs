@@ -19,12 +19,14 @@ use solana_streamer_sdk::{
                     BonkTradeEvent,
                 },
                 orca_whirlpools::{
-                    WhirlpoolConfigAccountEvent, WhirlpoolPoolStateAccountEvent,
-                    WhirlpoolTickArrayStateAccountEvent, WhirlpoolSwapV2Event, WhirlpoolInitializePoolEvent,
-                    WhirlpoolTwoHopSwapV2Event, WhirlpoolSwapEvent, WhirlpoolIncreaseLiquidityEvent,
-                    WhirlpoolIncreaseLiquidityV2Event, WhirlpoolDecreaseLiquidityEvent, WhirlpoolCollectFeesEvent,
-                    WhirlpoolCollectProtocolFeesEvent, WhirlpoolInitializePoolV2Event, WhirlpoolDecreaseLiquidityV2Event,
-                    WhirlpoolTwoHopSwapEvent, WhirlpoolCollectFeesV2Event, WhirlpoolCollectProtocolFeesV2Event
+                    WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
+                    WhirlpoolCollectProtocolFeesEvent, WhirlpoolCollectProtocolFeesV2Event,
+                    WhirlpoolConfigAccountEvent, WhirlpoolDecreaseLiquidityEvent,
+                    WhirlpoolDecreaseLiquidityV2Event, WhirlpoolIncreaseLiquidityEvent,
+                    WhirlpoolIncreaseLiquidityV2Event, WhirlpoolInitializePoolEvent,
+                    WhirlpoolInitializePoolV2Event, WhirlpoolPoolStateAccountEvent,
+                    WhirlpoolSwapEvent, WhirlpoolSwapV2Event, WhirlpoolTickArrayStateAccountEvent,
+                    WhirlpoolTwoHopSwapEvent, WhirlpoolTwoHopSwapV2Event,
                 },
                 pumpfun::{
                     PumpFunBondingCurveAccountEvent, PumpFunCreateTokenEvent,

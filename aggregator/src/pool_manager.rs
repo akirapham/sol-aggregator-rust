@@ -291,11 +291,11 @@ impl PoolStateManager {
                                                 // send to pool update event processor
                                                 let _ = pool_update_tx_clone.send(vec![tick_array_state_event]);
                                             });
-                                            log::info!(
-                                                "Synced {} tick arrays CLMM pool {:?}",
-                                                tick_arrays.len(),
-                                                clmm_pool_state.address,
-                                            );
+                                            // log::info!(
+                                            //     "Synced {} tick arrays CLMM pool {:?}",
+                                            //     tick_arrays.len(),
+                                            //     clmm_pool_state.address,
+                                            // );
                                         }
                                         Err(e) => {
                                             log::error!(

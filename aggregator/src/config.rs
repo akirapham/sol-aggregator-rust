@@ -38,6 +38,7 @@ impl ConfigLoader {
             enable_raydium_cpmm: !Self::get_bool("DISABLE_RAYDIUM_CPMM", false)?,
             enable_raydium_clmm: !Self::get_bool("DISABLE_RAYDIUM_CLMM", false)?,
             enable_raydium_amm_v4: !Self::get_bool("DISABLE_RAYDIUM_AMM_V4", false)?,
+            enable_orca_whirlpools: !Self::get_bool("DISABLE_ORCA_WHIRLPOOLS", false)?,
         })
     }
 

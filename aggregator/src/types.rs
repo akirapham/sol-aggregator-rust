@@ -126,6 +126,7 @@ pub struct AggregatorConfig {
     pub enable_raydium_cpmm: bool,
     pub enable_raydium_clmm: bool,
     pub enable_raydium_amm_v4: bool,
+    pub enable_orca_whirlpools: bool,
 }
 
 /// Smart routing configuration
@@ -226,6 +227,7 @@ impl Default for AggregatorConfig {
             enable_raydium_cpmm: true,
             enable_raydium_clmm: true,
             enable_raydium_amm_v4: true,
+            enable_orca_whirlpools: true,
         }
     }
 }

@@ -66,7 +66,7 @@ solana-streamer-sdk = { path = "./crates/solana-streamer" }
 spl-token-2022 = "9.0.0"
 
 solana-commitment-config = "3.0.0"
-yellowstone-grpc-proto = {  version = "8.0.0" }
+yellowstone-grpc-proto = {  version = "9.0.0" }
 
 axum = "0.7"
 uuid = { version = "1.0", features = ["v4"] }

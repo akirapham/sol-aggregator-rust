@@ -8,6 +8,7 @@ use crate::types::PoolUpdateEvent;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
+use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::parser::ORCA_WHIRLPOOL_PROGRAM_ID;
 use solana_streamer_sdk::streaming::{
     event_parser::{
         protocols::{
@@ -45,10 +46,7 @@ impl BatchProcessor {
     pub fn new(
         batch_size: usize,
         timeout_duration: Duration,
-    ) -> (
-        Self,
-        mpsc::UnboundedReceiver<Vec<EventBatch>>,
-    ) {
+    ) -> (Self, mpsc::UnboundedReceiver<Vec<EventBatch>>) {
         let (event_tx, event_rx) = mpsc::unbounded_channel::<EventBatch>();
         let (batch_tx, batch_rx) = mpsc::unbounded_channel::<Vec<EventBatch>>();
 
@@ -83,7 +81,7 @@ impl BatchProcessor {
 
     async fn process_batches(
         mut event_rx: mpsc::UnboundedReceiver<EventBatch>, // Receive individual events
-        batch_tx: mpsc::UnboundedSender<Vec<EventBatch>>, // Send batches
+        batch_tx: mpsc::UnboundedSender<Vec<EventBatch>>,  // Send batches
         batch_size: usize,
         timeout_duration: Duration,
     ) {
@@ -235,13 +233,8 @@ impl GrpcService {
 pub async fn create_grpc_service(
     batch_size: usize,
     batch_timeout_ms: u64,
-) -> Result<
-    (
-        Arc<GrpcService>,
-        mpsc::UnboundedReceiver<Vec<EventBatch>>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> Result<(Arc<GrpcService>, mpsc::UnboundedReceiver<Vec<EventBatch>>), Box<dyn std::error::Error>>
+{
     let agg_config = AggregatorConfig::from_env().unwrap();
 
     // Create low-latency configuration
@@ -289,6 +282,11 @@ pub async fn create_grpc_service(
     if agg_config.enable_raydium_amm_v4 {
         account_include.push(RAYDIUM_AMM_V4_PROGRAM_ID.to_string());
         protocols.push(Protocol::RaydiumAmmV4);
+    }
+
+    if agg_config.enable_orca_whirlpools {
+        account_include.push(ORCA_WHIRLPOOL_PROGRAM_ID.to_string());
+        protocols.push(Protocol::OrcaWhirlpools);
     }
 
     let account_exclude = vec![];

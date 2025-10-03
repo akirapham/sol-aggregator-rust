@@ -4,6 +4,7 @@ use crate::mexc::mexc_generated::PushDataV3ApiWrapper;
 use crate::types::{PriceProvider, TokenPrice};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use axum::body::Bytes;
 use dashmap::DashMap;
 use futures_util::{future::try_join_all, SinkExt, StreamExt};
 use log::{error, info, warn};
@@ -83,14 +84,19 @@ impl MexcService {
                         &chunk,
                         &price_cache,
                         &market_symbol_to_contract,
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("WebSocket connection {} failed: {}", connection_id, e);
                         info!("Reconnecting connection {} in 5 seconds...", connection_id);
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
 
-                    info!("WebSocket connection {} ended, reconnecting in 5 seconds...", connection_id);
+                    info!(
+                        "WebSocket connection {} ended, reconnecting in 5 seconds...",
+                        connection_id
+                    );
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                 }
             });
@@ -164,55 +170,72 @@ impl MexcService {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
 
-        // Handle incoming messages
+        // Create a ping interval timer
+        let mut ping_interval = tokio::time::interval(tokio::time::Duration::from_secs(20));
+        ping_interval.tick().await; // Skip the first immediate tick
+
+        // Handle incoming messages and periodic pings
         loop {
-            match read.next().await {
-                Some(Ok(WsMessage::Text(text))) => {
-                    // Handle text messages if needed
-                    log::debug!("Connection {}: Received text message: {}", connection_id, text);
-                }
-                Some(Ok(WsMessage::Binary(data))) => {
-                    if let Err(e) = Self::handle_protobuf_message(
-                        &data,
-                        price_cache,
-                        market_symbol_to_contract,
-                        connection_id,
-                    ) {
-                        error!(
-                            "Connection {}: Error handling protobuf message: {}",
-                            connection_id, e
-                        );
+            tokio::select! {
+                // Handle incoming WebSocket messages
+                msg = read.next() => {
+                    match msg {
+                        Some(Ok(WsMessage::Text(text))) => {
+                            // Handle text messages if needed
+                            log::debug!("Connection {}: Received text message: {}", connection_id, text);
+                        }
+                        Some(Ok(WsMessage::Binary(data))) => {
+                            if let Err(e) = Self::handle_protobuf_message(
+                                &data,
+                                price_cache,
+                                market_symbol_to_contract,
+                                connection_id,
+                            ) {
+                                error!(
+                                    "Connection {}: Error handling protobuf message: {}",
+                                    connection_id, e
+                                );
+                            }
+                        }
+                        Some(Ok(WsMessage::Ping(data))) => {
+                            info!("Connection {}: Received ping, sending pong", connection_id);
+                            if let Err(e) = write.send(WsMessage::Pong(data)).await {
+                                error!(
+                                    "Connection {}: Failed to send pong: {}",
+                                    connection_id, e
+                                );
+                            }
+                        }
+                        Some(Ok(WsMessage::Pong(_))) => {
+                            log::debug!("Connection {}: Received pong", connection_id);
+                        }
+                        Some(Ok(WsMessage::Close(frame))) => {
+                            warn!(
+                                "Connection {}: WebSocket connection closed: {:?}",
+                                connection_id, frame
+                            );
+                            break;
+                        }
+                        Some(Ok(WsMessage::Frame(_))) => {
+                            warn!("Connection {}: Received raw frame - unexpected", connection_id);
+                        }
+                        Some(Err(e)) => {
+                            error!("Connection {}: WebSocket error: {}", connection_id, e);
+                            break;
+                        }
+                        None => {
+                            warn!("Connection {}: WebSocket stream ended", connection_id);
+                            break;
+                        }
                     }
                 }
-                Some(Ok(WsMessage::Ping(data))) => {
-                    info!("Connection {}: Received ping, sending pong", connection_id);
-                    if let Err(e) = write.send(WsMessage::Pong(data)).await {
-                        error!(
-                            "Connection {}: Failed to send pong: {}",
-                            connection_id, e
-                        );
+                // Send periodic ping
+                _ = ping_interval.tick() => {
+                    log::info!("Connection {}: Sending ping to keep connection alive", connection_id);
+                    if let Err(e) = write.send(WsMessage::Ping(Bytes::new())).await {
+                        error!("Connection {}: Failed to send ping: {}", connection_id, e);
+                        break;
                     }
-                }
-                Some(Ok(WsMessage::Pong(_))) => {
-                    // Pong received
-                }
-                Some(Ok(WsMessage::Close(frame))) => {
-                    warn!(
-                        "Connection {}: WebSocket connection closed: {:?}",
-                        connection_id, frame
-                    );
-                    break;
-                }
-                Some(Ok(WsMessage::Frame(_))) => {
-                    warn!("Connection {}: Received raw frame - unexpected", connection_id);
-                }
-                Some(Err(e)) => {
-                    error!("Connection {}: WebSocket error: {}", connection_id, e);
-                    break;
-                }
-                None => {
-                    warn!("Connection {}: WebSocket stream ended", connection_id);
-                    break;
                 }
             }
         }
@@ -237,11 +260,15 @@ impl MexcService {
                             Body::PublicAggreDeals(item) => {
                                 if let Some(deal) = item.deals.first() {
                                     let price = TokenPrice {
-                                        symbol: market_symbol.strip_suffix("USDT").unwrap_or(&market_symbol).to_string(),
+                                        symbol: market_symbol
+                                            .strip_suffix("USDT")
+                                            .unwrap_or(&market_symbol)
+                                            .to_string(),
                                         price: f64::from_str(&deal.price).unwrap_or(0.0),
                                         timestamp: deal.time,
                                     };
-                                    price_cache.insert(contract_address.value().clone(), price.clone());
+                                    price_cache
+                                        .insert(contract_address.value().clone(), price.clone());
                                     log::info!(
                                         "Connection {}: Updated price: {} = {}, price count {}",
                                         connection_id,
@@ -261,7 +288,8 @@ impl MexcService {
             Err(e) => {
                 log::warn!(
                     "Connection {}: Failed to decode protobuf message: {}",
-                    connection_id, e
+                    connection_id,
+                    e
                 );
                 // Log first 200 bytes in hex for debugging
                 log::debug!(
@@ -272,7 +300,11 @@ impl MexcService {
 
                 // Try to decode as UTF-8 string to see if it's actually JSON
                 if let Ok(text) = std::str::from_utf8(data) {
-                    log::debug!("Connection {}: Data as UTF-8 string: {}", connection_id, text);
+                    log::debug!(
+                        "Connection {}: Data as UTF-8 string: {}",
+                        connection_id,
+                        text
+                    );
                 } else {
                     log::debug!("Connection {}: Data is not valid UTF-8", connection_id);
                 }

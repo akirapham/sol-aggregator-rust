@@ -2,14 +2,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::{
-    parser::DBC_PROGRAM_ID, types::PoolConfig,
-};
+use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::parser::DBC_PROGRAM_ID;
 
-use crate::{
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType},
-    utils::{get_sol_mint, tokens_equal},
-};
+use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbcPoolState {
     pub slot: u64,

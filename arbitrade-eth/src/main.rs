@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
                     match cex_price {
                         Some(price) => {
                             let price_diff_percent =
-                                ((update.price_in_usd - price.price).abs() / price.price) * 100.0;
+                                ((update.price_in_usd - price.price) / price.price) * 100.0;
                             log::info!(
                                 "Token: {}, Symbol {}, DEX Price: {}, CEX Price: {}, Diff: {:.2}%",
                                 update.token_address,

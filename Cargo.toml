@@ -4,6 +4,8 @@ members = [
   "crates/solana-streamer",
   "aggregator",
   "arbitrade",
+  "amm-eth",
+  "crates/binance-price-stream"
 ]
 default-members = ["aggregator"]
 

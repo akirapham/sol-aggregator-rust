@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use ethers::types::Address;
+use serde::{Deserialize, Serialize};
 
 /// Token price information stored in memory
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,6 +10,7 @@ pub struct TokenPrice {
     pub last_updated: u64,
     pub pool_address: Address,
     pub dex_version: DexVersion,
+    pub decimals: u8,
 }
 
 /// DEX version identifier
@@ -40,6 +41,8 @@ pub struct EthConfig {
     pub uniswap_v3_factory: Address,
     pub uniswap_v4_factory: Option<Address>,
     pub weth_address: Address,
+    pub usdc_address: Address,
+    pub usdt_address: Address,
     /// Shared ETH price updated from Binance WebSocket
     pub eth_price_usd: Arc<RwLock<Option<f64>>>,
 }
@@ -60,8 +63,29 @@ impl Default for EthConfig {
             weth_address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
                 .parse()
                 .unwrap(),
+            usdc_address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                .parse()
+                .unwrap(),
+            usdt_address: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+                .parse()
+                .unwrap(),
             // ETH price will be updated from Binance WebSocket
             eth_price_usd: Arc::new(RwLock::new(None)),
+        }
+    }
+}
+
+impl EthConfig {
+    /// Get known decimals for well-known tokens to avoid RPC calls
+    pub fn get_known_decimals(&self, token_address: Address) -> Option<u8> {
+        if token_address == self.weth_address {
+            Some(18)
+        } else if token_address == self.usdc_address {
+            Some(6)
+        } else if token_address == self.usdt_address {
+            Some(6)
+        } else {
+            None
         }
     }
 }

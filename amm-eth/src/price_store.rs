@@ -1,13 +1,16 @@
 use crate::types::TokenPrice;
+use crate::ws_server::{broadcast_price_update, WsMessage};
 use dashmap::DashMap;
 use ethers::types::Address;
-use log::{info, debug};
+use log::info;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 /// In-memory price storage using DashMap for concurrent access
 #[derive(Debug, Clone)]
 pub struct PriceStore {
     prices: Arc<DashMap<Address, TokenPrice>>,
+    broadcaster: Option<mpsc::UnboundedSender<WsMessage>>,
 }
 
 impl PriceStore {
@@ -15,21 +18,45 @@ impl PriceStore {
     pub fn new() -> Self {
         Self {
             prices: Arc::new(DashMap::new()),
+            broadcaster: None,
+        }
+    }
+
+    /// Create a price store with WebSocket broadcaster
+    pub fn with_broadcaster(broadcaster: mpsc::UnboundedSender<WsMessage>) -> Self {
+        Self {
+            prices: Arc::new(DashMap::new()),
+            broadcaster: Some(broadcaster),
         }
     }
 
     /// Store or update a token price
     pub fn update_price(&self, token_address: Address, price: TokenPrice) {
-        debug!(
-            "Updating price for token {:?}: {} ETH ({})",
-            token_address, price.price_in_eth, price.dex_version
-        );
-        self.prices.insert(token_address, price);
+        // Check if this is a new price or an update with different USD price
+        let should_broadcast = if let Some(old_price) = self.prices.get(&token_address) {
+            // Only broadcast if USD price changed
+            old_price.price_in_usd != price.price_in_usd && price.price_in_usd.is_some()
+        } else {
+            // New token price with USD value
+            price.price_in_usd.is_some()
+        };
+
+        // Insert the new price
+        self.prices.insert(token_address, price.clone());
+
+        // Broadcast if conditions are met
+        if should_broadcast {
+            if let Some(ref broadcaster) = self.broadcaster {
+                broadcast_price_update(broadcaster, token_address, price);
+            }
+        }
     }
 
     /// Get the price of a token
     pub fn get_price(&self, token_address: &Address) -> Option<TokenPrice> {
-        self.prices.get(token_address).map(|entry| entry.value().clone())
+        self.prices
+            .get(token_address)
+            .map(|entry| entry.value().clone())
     }
 
     /// Get all stored prices
@@ -57,10 +84,7 @@ impl PriceStore {
 
     /// Get prices for multiple tokens
     pub fn get_prices(&self, tokens: &[Address]) -> Vec<Option<TokenPrice>> {
-        tokens
-            .iter()
-            .map(|token| self.get_price(token))
-            .collect()
+        tokens.iter().map(|token| self.get_price(token)).collect()
     }
 
     /// Log statistics about stored prices

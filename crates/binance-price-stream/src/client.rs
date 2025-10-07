@@ -27,9 +27,7 @@ impl BinancePriceStream {
     }
 
     /// Start the WebSocket client with automatic reconnection
-    pub async fn start(
-        &self,
-    ) -> Result<mpsc::UnboundedReceiver<PriceUpdate>> {
+    pub async fn start(&self) -> Result<mpsc::UnboundedReceiver<PriceUpdate>> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         let config = self.config.clone();
@@ -40,12 +38,7 @@ impl BinancePriceStream {
             loop {
                 info!("Connecting to Binance WebSocket...");
 
-                match Self::connect_and_stream(
-                    &config,
-                    &symbols,
-                    &price_cache,
-                    &tx,
-                ).await {
+                match Self::connect_and_stream(&config, &symbols, &price_cache, &tx).await {
                     Ok(_) => {
                         info!("WebSocket connection ended normally");
                     }
@@ -54,10 +47,7 @@ impl BinancePriceStream {
                     }
                 }
 
-                warn!(
-                    "Reconnecting in {} seconds...",
-                    config.reconnect_delay_secs
-                );
+                warn!("Reconnecting in {} seconds...", config.reconnect_delay_secs);
                 tokio::time::sleep(Duration::from_secs(config.reconnect_delay_secs)).await;
             }
         });

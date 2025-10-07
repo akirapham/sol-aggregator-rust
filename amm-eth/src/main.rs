@@ -18,8 +18,7 @@ async fn main() -> Result<()> {
     info!("Starting Ethereum Uniswap swap listener");
 
     // Create WebSocket server
-    let ws_port = std::env::var("ETH_PRICE_WS_PORT")
-        .unwrap_or_else(|_| "8080".to_string());
+    let ws_port = std::env::var("ETH_PRICE_WS_PORT").unwrap_or_else(|_| "8080".to_string());
     let ws_addr = format!("127.0.0.1:{}", ws_port).parse()?;
     info!("Starting WebSocket server on: {}", ws_addr);
     let ws_server = Arc::new(WsServer::new(ws_addr));

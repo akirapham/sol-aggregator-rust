@@ -55,7 +55,6 @@ abigen!(
 pub struct EthSwapListener {
     config: EthConfig,
     price_store: PriceStore,
-    provider: Arc<Provider<Ws>>,
     // Cache for token pairs: pool_address -> (token0, token1, decimals0, decimals1)
     token_pair_cache: Arc<DashMap<Address, (Address, Address, u8, u8)>>,
     // Cache for token decimals: token_address -> decimals
@@ -67,15 +66,7 @@ pub struct EthSwapListener {
 impl EthSwapListener {
     /// Create a new Ethereum swap listener
     pub async fn new(config: EthConfig, price_store: PriceStore) -> Result<Self> {
-        info!("Connecting to Ethereum WebSocket: {}", config.websocket_url);
-
-        let ws = Ws::connect(&config.websocket_url)
-            .await
-            .context("Failed to connect to Ethereum WebSocket")?;
-
-        let provider = Arc::new(Provider::new(ws));
-
-        info!("Connected to Ethereum network");
+        info!("Initializing Ethereum swap listener");
 
         // Limit concurrent event processing to 50 tasks
         let processing_semaphore = Arc::new(Semaphore::new(50));
@@ -84,7 +75,6 @@ impl EthSwapListener {
         Ok(Self {
             config,
             price_store,
-            provider,
             token_pair_cache: Arc::new(DashMap::new()),
             token_decimal_cache: Arc::new(DashMap::new()),
             processing_semaphore,
@@ -107,14 +97,15 @@ impl EthSwapListener {
 
         // Subscribe to Uniswap V2 Sync events
         let v2_handle = {
-            let provider = self.provider.clone();
+            let websocket_url = self.config.websocket_url.clone();
             let price_store = self.price_store.clone();
             let config = self.config.clone();
             let token_cache = self.token_pair_cache.clone();
             let semaphore = self.processing_semaphore.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    Self::listen_v2_sync(provider, price_store, config, token_cache, semaphore).await
+                    Self::listen_v2_sync(websocket_url, price_store, config, token_cache, semaphore)
+                        .await
                 {
                     error!("Uniswap V2 listener error: {}", e);
                 }
@@ -123,14 +114,20 @@ impl EthSwapListener {
 
         // Subscribe to Uniswap V3 swap events
         let v3_handle = {
-            let provider = self.provider.clone();
+            let websocket_url = self.config.websocket_url.clone();
             let price_store = self.price_store.clone();
             let config = self.config.clone();
             let token_cache = self.token_pair_cache.clone();
             let semaphore = self.processing_semaphore.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    Self::listen_v3_swaps(provider, price_store, config, token_cache, semaphore).await
+                if let Err(e) = Self::listen_v3_swaps(
+                    websocket_url,
+                    price_store,
+                    config,
+                    token_cache,
+                    semaphore,
+                )
+                .await
                 {
                     error!("Uniswap V3 listener error: {}", e);
                 }
@@ -143,16 +140,67 @@ impl EthSwapListener {
         Ok(())
     }
 
-    /// Listen to Uniswap V2 Sync events (emitted after swaps with updated reserves)
+    /// Listen to Uniswap V2 Sync events with auto-reconnection and ping
     async fn listen_v2_sync(
-        provider: Arc<Provider<Ws>>,
+        websocket_url: String,
         price_store: PriceStore,
         config: EthConfig,
         token_cache: Arc<DashMap<Address, (Address, Address, u8, u8)>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
-        info!("Starting Uniswap V2 Sync event listener");
+        info!("Starting Uniswap V2 Sync event listener with auto-reconnection");
 
+        loop {
+            info!(
+                "Connecting to Ethereum WebSocket for V2 events: {}",
+                websocket_url
+            );
+
+            match Ws::connect(&websocket_url).await {
+                Ok(ws) => {
+                    let provider = Arc::new(Provider::new(ws));
+                    info!("Connected to Ethereum network for V2 events");
+
+                    match Self::listen_v2_sync_with_provider(
+                        provider,
+                        &price_store,
+                        &config,
+                        &token_cache,
+                        &semaphore,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!("V2 sync listener completed normally");
+                            break;
+                        }
+                        Err(e) => {
+                            error!("V2 sync listener error: {}", e);
+                            // Continue to reconnection logic
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect to Ethereum WebSocket for V2: {}", e);
+                }
+            }
+
+            // Wait before attempting to reconnect
+            warn!("Reconnecting V2 sync listener in 5 seconds...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+
+        Ok(())
+    }
+
+    /// Listen to V2 events with a connected provider
+    async fn listen_v2_sync_with_provider(
+        provider: Arc<Provider<Ws>>,
+        price_store: &PriceStore,
+        config: &EthConfig,
+        token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        semaphore: &Arc<Semaphore>,
+    ) -> Result<()> {
         // Create a filter for V2 Sync events
         let sync_filter = Filter::new().event("Sync(uint112,uint112)");
 
@@ -163,36 +211,58 @@ impl EthSwapListener {
 
         info!("Subscribed to Uniswap V2 Sync events");
 
-        while let Some(log) = stream.next().await {
-            // Acquire semaphore permit before spawning task
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
-
-            // Spawn processing task to not block the stream
-            let provider_clone = provider.clone();
-            let price_store_clone = price_store.clone();
-            let config_clone = config.clone();
-            let token_cache_clone = token_cache.clone();
-
-            tokio::spawn(async move {
-                // Permit will be dropped when task completes
-                let _permit = permit;
-
-                if let Err(e) = Self::process_v2_sync_log(
-                    log,
-                    &provider_clone,
-                    &price_store_clone,
-                    &config_clone,
-                    &token_cache_clone,
-                )
-                .await
-                {
-                    error!("Error processing V2 sync: {}", e);
+        // Start ping task to keep connection alive
+        let ping_provider = provider.clone();
+        let ping_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                // Send a simple ping by requesting the latest block number
+                // This keeps the connection alive and detects if it's broken
+                if let Err(e) = ping_provider.get_block_number().await {
+                    error!("Ping failed, connection may be broken: {}", e);
+                    break;
                 }
-            });
-        }
+                debug!("WebSocket ping successful");
+            }
+        });
 
-        warn!("Uniswap V2 sync stream ended");
-        Ok(())
+        let result = async {
+            while let Some(log) = stream.next().await {
+                // Acquire semaphore permit before spawning task
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+
+                // Spawn processing task to not block the stream
+                let provider_clone = provider.clone();
+                let price_store_clone = price_store.clone();
+                let config_clone = config.clone();
+                let token_cache_clone = token_cache.clone();
+
+                tokio::spawn(async move {
+                    // Permit will be dropped when task completes
+                    let _permit = permit;
+
+                    if let Err(e) = Self::process_v2_sync_log(
+                        log,
+                        &provider_clone,
+                        &price_store_clone,
+                        &config_clone,
+                        &token_cache_clone,
+                    )
+                    .await
+                    {
+                        error!("Error processing V2 sync: {}", e);
+                    }
+                });
+            }
+            Ok(())
+        }
+        .await;
+
+        // Cancel ping task
+        ping_handle.abort();
+
+        result
     }
 
     /// Process a Uniswap V2 Sync event (has updated reserves)
@@ -312,16 +382,67 @@ impl EthSwapListener {
         Ok(())
     }
 
-    /// Listen to Uniswap V3 swap events
+    /// Listen to Uniswap V3 swap events with auto-reconnection and ping
     async fn listen_v3_swaps(
-        provider: Arc<Provider<Ws>>,
+        websocket_url: String,
         price_store: PriceStore,
         config: EthConfig,
         token_cache: Arc<DashMap<Address, (Address, Address, u8, u8)>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
-        info!("Starting Uniswap V3 swap listener");
+        info!("Starting Uniswap V3 swap listener with auto-reconnection");
 
+        loop {
+            info!(
+                "Connecting to Ethereum WebSocket for V3 events: {}",
+                websocket_url
+            );
+
+            match Ws::connect(&websocket_url).await {
+                Ok(ws) => {
+                    let provider = Arc::new(Provider::new(ws));
+                    info!("Connected to Ethereum network for V3 events");
+
+                    match Self::listen_v3_swaps_with_provider(
+                        provider,
+                        &price_store,
+                        &config,
+                        &token_cache,
+                        &semaphore,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!("V3 swap listener completed normally");
+                            break;
+                        }
+                        Err(e) => {
+                            error!("V3 swap listener error: {}", e);
+                            // Continue to reconnection logic
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect to Ethereum WebSocket for V3: {}", e);
+                }
+            }
+
+            // Wait before attempting to reconnect
+            warn!("Reconnecting V3 swap listener in 5 seconds...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+
+        Ok(())
+    }
+
+    /// Listen to V3 events with a connected provider
+    async fn listen_v3_swaps_with_provider(
+        provider: Arc<Provider<Ws>>,
+        price_store: &PriceStore,
+        config: &EthConfig,
+        token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        semaphore: &Arc<Semaphore>,
+    ) -> Result<()> {
         // Create a filter for V3 Swap events
         let swap_filter =
             Filter::new().event("Swap(address,address,int256,int256,uint160,uint128,int24)");
@@ -333,36 +454,58 @@ impl EthSwapListener {
 
         info!("Subscribed to Uniswap V3 swap events");
 
-        while let Some(log) = stream.next().await {
-            // Acquire semaphore permit before spawning task
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
-
-            // Spawn processing task to not block the stream
-            let provider_clone = provider.clone();
-            let price_store_clone = price_store.clone();
-            let config_clone = config.clone();
-            let token_cache_clone = token_cache.clone();
-
-            tokio::spawn(async move {
-                // Permit will be dropped when task completes
-                let _permit = permit;
-
-                if let Err(e) = Self::process_v3_swap_log(
-                    log,
-                    &provider_clone,
-                    &price_store_clone,
-                    &config_clone,
-                    &token_cache_clone,
-                )
-                .await
-                {
-                    error!("Error processing V3 swap: {}", e);
+        // Start ping task to keep connection alive
+        let ping_provider = provider.clone();
+        let ping_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                // Send a simple ping by requesting the latest block number
+                // This keeps the connection alive and detects if it's broken
+                if let Err(e) = ping_provider.get_block_number().await {
+                    error!("Ping failed, connection may be broken: {}", e);
+                    break;
                 }
-            });
-        }
+                debug!("WebSocket ping successful");
+            }
+        });
 
-        warn!("Uniswap V3 swap stream ended");
-        Ok(())
+        let result = async {
+            while let Some(log) = stream.next().await {
+                // Acquire semaphore permit before spawning task
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+
+                // Spawn processing task to not block the stream
+                let provider_clone = provider.clone();
+                let price_store_clone = price_store.clone();
+                let config_clone = config.clone();
+                let token_cache_clone = token_cache.clone();
+
+                tokio::spawn(async move {
+                    // Permit will be dropped when task completes
+                    let _permit = permit;
+
+                    if let Err(e) = Self::process_v3_swap_log(
+                        log,
+                        &provider_clone,
+                        &price_store_clone,
+                        &config_clone,
+                        &token_cache_clone,
+                    )
+                    .await
+                    {
+                        error!("Error processing V3 swap: {}", e);
+                    }
+                });
+            }
+            Ok(())
+        }
+        .await;
+
+        // Cancel ping task
+        ping_handle.abort();
+
+        result
     }
 
     /// Process a Uniswap V3 swap log (use sqrtPriceX96 to compute price)
@@ -415,7 +558,8 @@ impl EthSwapListener {
         // Calculate price from sqrtPriceX96 using U256 for precision
         // price = (sqrtPriceX96 / 2^96)^2 * (10^decimals0 / 10^decimals1)
         // Rearranged: price = (sqrtPriceX96^2 * 10^decimals0) / (2^192 * 10^decimals1)
-        let price_token0_in_token1 = Self::sqrt_price_x96_to_price(sqrt_price_x96, decimals0, decimals1);
+        let price_token0_in_token1 =
+            Self::sqrt_price_x96_to_price(sqrt_price_x96, decimals0, decimals1);
 
         let price_token1_in_token0 = if price_token0_in_token1 > 0.0 {
             1.0 / price_token0_in_token1
@@ -449,11 +593,7 @@ impl EthSwapListener {
         Ok(())
     }
 
-    fn sqrt_price_x96_to_price(
-        sqrt_price_x96: U256,
-        decimals0: u8,
-        decimals1: u8,
-    ) -> f64 {
+    fn sqrt_price_x96_to_price(sqrt_price_x96: U256, decimals0: u8, decimals1: u8) -> f64 {
         // price = (sqrtPriceX96 / 2^96)^2 * (10^decimals0 / 10^decimals1)
         // Rearranged: price = (sqrtPriceX96^2 * 10^decimals0) / (2^192 * 10^decimals1)
 
@@ -474,28 +614,6 @@ impl EthSwapListener {
         };
 
         ret
-    }
-
-    /// Get or fetch token decimals from cache
-    pub async fn get_token_decimals(&self, token_address: Address) -> Result<u8> {
-        // Check cache first
-        if let Some(decimals) = self.token_decimal_cache.get(&token_address) {
-            return Ok(*decimals.value());
-        }
-
-        // Not in cache, fetch from contract
-        let token_contract = ERC20::new(token_address, self.provider.clone());
-        let decimals = token_contract.decimals().call().await.unwrap_or(18);
-
-        // Store in cache
-        self.token_decimal_cache.insert(token_address, decimals);
-
-        info!(
-            "Fetched decimals for token {:?}: {}",
-            token_address, decimals
-        );
-
-        Ok(decimals)
     }
 
     /// Get or fetch token pair from cache (with decimals)

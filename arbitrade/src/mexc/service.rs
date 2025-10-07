@@ -1,6 +1,4 @@
 use crate::mexc::client::MexcClient;
-use mexc_proto::push_data_v3_api_wrapper::Body;
-use mexc_proto::PushDataV3ApiWrapper;
 use crate::types::{PriceProvider, TokenPrice};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -8,6 +6,8 @@ use axum::body::Bytes;
 use dashmap::DashMap;
 use futures_util::{future::try_join_all, SinkExt, StreamExt};
 use log::{error, info, warn};
+use mexc_proto::push_data_v3_api_wrapper::Body;
+use mexc_proto::PushDataV3ApiWrapper;
 use prost::Message;
 use std::str::FromStr;
 use std::sync::Arc;

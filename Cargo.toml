@@ -3,7 +3,7 @@ resolver = "2"
 members = [
   "crates/solana-streamer",
   "aggregator",
-  "cex-pricing",
+  "arbitrade",
 ]
 default-members = ["aggregator"]
 

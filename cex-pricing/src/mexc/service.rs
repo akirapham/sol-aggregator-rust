@@ -128,12 +128,6 @@ impl MexcService {
             .await
             .context("Failed to connect to MEXC WebSocket")?;
 
-        info!(
-            "Connection {}: WebSocket connected. Response: {:?}",
-            connection_id,
-            response.status()
-        );
-
         let (mut write, mut read) = ws_stream.split();
 
         // Subscribe to ticker streams for all pairs in this connection
@@ -156,11 +150,6 @@ impl MexcService {
                     connection_id, e
                 );
             } else {
-                info!(
-                    "Connection {}: Subscribed to {} ticker streams in batch",
-                    connection_id,
-                    stream_names.len()
-                );
                 for stream in &stream_names {
                     info!("  - {}", stream);
                 }
@@ -269,13 +258,6 @@ impl MexcService {
                                     };
                                     price_cache
                                         .insert(contract_address.value().clone(), price.clone());
-                                    log::info!(
-                                        "Connection {}: Updated price: {} = {}, price count {}",
-                                        connection_id,
-                                        price.symbol,
-                                        price.price,
-                                        price_cache.len()
-                                    );
                                 }
                             }
                         },
@@ -321,6 +303,17 @@ impl PriceProvider for MexcService {
         self.price_cache
             .get(symbol)
             .map(|entry| entry.value().clone())
+    }
+
+    async fn get_prices(&self, mints: &Vec<String>) -> Vec<Option<TokenPrice>> {
+        mints
+            .iter()
+            .map(|mint| {
+                self.price_cache
+                    .get(mint)
+                    .map(|entry| entry.value().clone())
+            })
+            .collect()
     }
 
     async fn get_all_prices(&self) -> Vec<TokenPrice> {

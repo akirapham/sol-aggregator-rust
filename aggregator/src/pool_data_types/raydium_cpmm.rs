@@ -89,4 +89,8 @@ impl RaydiumCpmmPoolState {
 
         output_amount * 9975 / 10000 // Apply 0.25% fee
     }
+
+    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
+        (0.0, 0.0) // TODO
+    }
 }

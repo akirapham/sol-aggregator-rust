@@ -8,6 +8,7 @@ use crate::types::PoolUpdateEvent;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
+use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::parser::DBC_PROGRAM_ID;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::parser::ORCA_WHIRLPOOL_PROGRAM_ID;
 use solana_streamer_sdk::streaming::{
     event_parser::{
@@ -282,6 +283,11 @@ pub async fn create_grpc_service(
     if agg_config.enable_raydium_amm_v4 {
         account_include.push(RAYDIUM_AMM_V4_PROGRAM_ID.to_string());
         protocols.push(Protocol::RaydiumAmmV4);
+    }
+
+    if agg_config.enable_meteora_dbc {
+        account_include.push(DBC_PROGRAM_ID.to_string());
+        protocols.push(Protocol::MeteoraDbc);
     }
 
     if agg_config.enable_orca_whirlpools {

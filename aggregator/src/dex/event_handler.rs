@@ -18,6 +18,7 @@ use solana_streamer_sdk::{
                     BonkPlatformConfigAccountEvent, BonkPoolCreateEvent, BonkPoolStateAccountEvent,
                     BonkTradeEvent,
                 },
+                meteora_dbc::{DbcPoolConfigAccountEvent, DbcVirtualPoolAccountEvent},
                 orca_whirlpools::{
                     WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
                     WhirlpoolCollectProtocolFeesEvent, WhirlpoolCollectProtocolFeesV2Event,
@@ -952,6 +953,12 @@ pub fn handle_dex_event(
             },
             WhirlpoolCollectProtocolFeesV2Event => |e: WhirlpoolCollectProtocolFeesV2Event| {
                 // log::info!("WhirlpoolCollectProtocolFeesV2Event");
+            },
+            DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
+                log::info!("DbcVirtualPoolAccountEvent, pool config {}", e.virtual_pool.config);
+            },
+            DbcPoolConfigAccountEvent => |e: DbcPoolConfigAccountEvent| {
+                log::info!("DbcPoolConfigAccountEvent pool config {}", e.pubkey);
             },
         });
     }

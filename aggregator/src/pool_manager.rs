@@ -25,6 +25,7 @@ use solana_streamer_sdk::streaming::event_parser::common::high_performance_clock
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
+use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig;
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -1164,6 +1165,11 @@ impl GetAmmConfig for PoolStateManager {
                 Err(_) => Ok(None),
             }
         }
+    }
+
+    async fn get_dbc_pool_config(&self, _pool_address: &Pubkey) -> Result<Option<PoolConfig>> {
+        // DBC pool config is not cached in this implementation
+        Ok(None)
     }
 }
 

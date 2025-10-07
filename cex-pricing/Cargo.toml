@@ -28,6 +28,7 @@ tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 solana-sdk = { workspace = true }
+dotenv = { workspace = true }
 
 [features]
 

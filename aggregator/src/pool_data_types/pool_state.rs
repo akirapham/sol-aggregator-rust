@@ -6,7 +6,7 @@ use solana_sdk::pubkey::Pubkey;
 use crate::{
     constants::wsol,
     pool_data_types::{
-        BonkPoolState, DexType, GetAmmConfig, PumpSwapPoolState, PumpfunPoolState,
+        BonkPoolState, DbcPoolState, DexType, GetAmmConfig, PumpSwapPoolState, PumpfunPoolState,
         RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState,
     },
 };
@@ -19,6 +19,7 @@ pub enum PoolState {
     RaydiumCpmm(RaydiumCpmmPoolState),
     Bonk(BonkPoolState),
     RadyiumClmm(RaydiumClmmPoolState),
+    MeteoraDbc(DbcPoolState),
 }
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
@@ -53,6 +54,7 @@ pub enum PoolUpdateEventType {
     RaydiumClmmTickArrayStateAccount,
     RaydiumClmmTickArrayBitmapExtensionAccount,
     RaydiumCpmmPoolStateAccount,
+    DbcPoolStateAccount,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +73,7 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => state.last_updated,
             PoolState::Bonk(state) => state.last_updated,
             PoolState::RadyiumClmm(state) => state.last_updated,
+            PoolState::MeteoraDbc(state) => state.last_updated,
         }
     }
 
@@ -82,6 +85,7 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => state.address,
             PoolState::Bonk(state) => state.address,
             PoolState::RadyiumClmm(state) => state.address,
+            PoolState::MeteoraDbc(state) => state.address,
         }
     }
 
@@ -93,6 +97,7 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => (state.token0, state.token1),
             PoolState::Bonk(state) => (state.base_mint, state.quote_mint),
             PoolState::RadyiumClmm(state) => (state.token_mint0, state.token_mint1),
+            PoolState::MeteoraDbc(state) => (state.base_mint, state.base_mint),
         }
     }
 
@@ -104,6 +109,7 @@ impl PoolState {
             PoolState::RaydiumCpmm(_) => DexType::RaydiumCpmm,
             PoolState::Bonk(_) => DexType::Bonk,
             PoolState::RadyiumClmm(_) => DexType::RaydiumClmm,
+            PoolState::MeteoraDbc(_) => DexType::MeteoraDbc,
         }
     }
 
@@ -133,6 +139,10 @@ impl PoolState {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
+            PoolState::MeteoraDbc(state) => PoolStateMetadata {
+                slot: state.slot,
+                transaction_index: state.transaction_index,
+            },
         }
     }
     pub fn get_reserves(&self) -> (u64, u64) {
@@ -143,6 +153,7 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => (state.token0_reserve, state.token1_reserve),
             PoolState::Bonk(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RadyiumClmm(state) => (state.token0_reserve, state.token1_reserve),
+            PoolState::MeteoraDbc(state) => (state.base_reserve, state.quote_reserve),
         }
     }
 
@@ -154,6 +165,7 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => state.liquidity_usd,
             PoolState::Bonk(state) => state.liquidity_usd,
             PoolState::RadyiumClmm(state) => state.liquidity_usd,
+            PoolState::MeteoraDbc(state) => state.liquidity_usd,
         }
     }
 
@@ -184,6 +196,21 @@ impl PoolState {
                     .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
                     .await
             }
+            PoolState::MeteoraDbc(state) => {
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+            }
+        }
+    }
+
+    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
+        match self {
+            PoolState::Pumpfun(state) => state.calculate_token_prices(sol_price),
+            PoolState::PumpSwap(state) => state.calculate_token_prices(sol_price),
+            PoolState::RaydiumAmmV4(state) => state.calculate_token_prices(sol_price),
+            PoolState::RaydiumCpmm(state) => state.calculate_token_prices(sol_price),
+            PoolState::Bonk(state) => state.calculate_token_prices(sol_price),
+            PoolState::RadyiumClmm(state) => state.calculate_token_prices(sol_price),
+            PoolState::MeteoraDbc(state) => state.calculate_token_prices(sol_price),
         }
     }
 }

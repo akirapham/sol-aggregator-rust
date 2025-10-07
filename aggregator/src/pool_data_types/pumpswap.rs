@@ -72,4 +72,8 @@ impl PumpSwapPoolState {
 
         output_amount * 997 / 1000 // Apply 0.3% fee
     }
+
+    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
+        (0.0, 0.0) // TODO
+    }
 }

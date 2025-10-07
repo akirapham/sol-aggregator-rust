@@ -1,5 +1,6 @@
 pub mod bonk;
 pub mod clmm;
+pub mod dbc;
 pub mod pool_state;
 pub mod pumpfun;
 pub mod pumpswap;
@@ -9,6 +10,7 @@ pub mod raydium_cpmm;
 pub mod traits;
 
 pub use bonk::*;
+pub use dbc::*;
 pub use pool_state::*;
 pub use pumpfun::*;
 pub use pumpswap::*;
@@ -29,4 +31,5 @@ pub enum DexType {
     Orca,
     Bonk,
     RaydiumClmm,
+    MeteoraDbc,
 }

@@ -5,8 +5,8 @@ use solana_sdk::pubkey::Pubkey;
 use crate::{
     error::Result,
     pool_data_types::{
-        BonkPoolUpdate, DexType, PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
-        RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
+        BonkPoolUpdate, DbcPoolUpdate, DexType, PoolUpdateEventType, PumpSwapPoolUpdate,
+        PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
     },
 };
 
@@ -83,6 +83,7 @@ impl std::fmt::Display for DexType {
             DexType::Orca => write!(f, "Orca"),
             DexType::Bonk => write!(f, "Bonk"),
             DexType::RaydiumClmm => write!(f, "Raydium CLMM"),
+            DexType::MeteoraDbc => write!(f, "Meteora DBC"),
         }
     }
 }
@@ -127,6 +128,7 @@ pub struct AggregatorConfig {
     pub enable_raydium_clmm: bool,
     pub enable_raydium_amm_v4: bool,
     pub enable_orca_whirlpools: bool,
+    pub enable_meteora_dbc: bool,
 }
 
 /// Smart routing configuration
@@ -150,6 +152,7 @@ pub enum PoolUpdateEvent {
     RaydiumCpmm(RaydiumCpmmPoolUpdate),
     Bonk(BonkPoolUpdate),
     RaydiumClmm(RaydiumClmmPoolUpdate),
+    MeteoraDbc(DbcPoolUpdate),
 }
 
 impl PoolUpdateEvent {
@@ -161,6 +164,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumCpmm(update) => update.address,
             PoolUpdateEvent::Bonk(update) => update.address,
             PoolUpdateEvent::RaydiumClmm(update) => update.address,
+            PoolUpdateEvent::MeteoraDbc(update) => update.address,
         }
     }
 
@@ -172,6 +176,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumCpmm(update) => update.is_account_state_update,
             PoolUpdateEvent::Bonk(update) => update.is_account_state_update,
             PoolUpdateEvent::RaydiumClmm(update) => update.is_account_state_update,
+            PoolUpdateEvent::MeteoraDbc(update) => update.is_account_state_update,
         }
     }
 
@@ -183,6 +188,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumCpmm(update) => update.pool_update_event_type,
             PoolUpdateEvent::Bonk(update) => update.pool_update_event_type,
             PoolUpdateEvent::RaydiumClmm(update) => update.pool_update_event_type,
+            PoolUpdateEvent::MeteoraDbc(update) => update.pool_update_event_type,
         }
     }
 
@@ -194,6 +200,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumCpmm(update) => update.last_updated,
             PoolUpdateEvent::Bonk(update) => update.last_updated,
             PoolUpdateEvent::RaydiumClmm(update) => update.last_updated,
+            PoolUpdateEvent::MeteoraDbc(update) => update.last_updated,
         }
     }
 
@@ -205,6 +212,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumCpmm(update) => update.additional_event_type,
             PoolUpdateEvent::Bonk(update) => update.additional_event_type,
             PoolUpdateEvent::RaydiumClmm(update) => update.additional_event_type,
+            PoolUpdateEvent::MeteoraDbc(update) => update.additional_event_type,
         }
     }
 }
@@ -228,6 +236,7 @@ impl Default for AggregatorConfig {
             enable_raydium_clmm: true,
             enable_raydium_amm_v4: true,
             enable_orca_whirlpools: true,
+            enable_meteora_dbc: true,
         }
     }
 }

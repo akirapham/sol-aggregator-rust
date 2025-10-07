@@ -69,14 +69,16 @@ async fn main() -> Result<()> {
                         Some(price) => {
                             let price_diff_percent =
                                 ((update.price_in_usd - price.price) / price.price) * 100.0;
-                            log::info!(
-                                "Token: {}, Symbol {}, DEX Price: {}, CEX Price: {}, Diff: {:.2}%",
-                                update.token_address,
-                                price.symbol,
-                                update.price_in_usd,
-                                price.price,
-                                price_diff_percent
-                            );
+                            if price_diff_percent < -1.0 {
+                                log::info!(
+                                    "Token: {}, Symbol {}, DEX Price: {}, CEX Price: {}, Diff: {:.2}%",
+                                    update.token_address,
+                                    price.symbol,
+                                    update.price_in_usd,
+                                    price.price,
+                                    price_diff_percent
+                                );
+                            }
                         }
                         None => {
                             // do nothing

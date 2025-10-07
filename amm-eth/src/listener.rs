@@ -223,7 +223,7 @@ impl EthSwapListener {
                     error!("Ping failed, connection may be broken: {}", e);
                     break;
                 }
-                debug!("WebSocket ping successful");
+                info!("WebSocket ping successful");
             }
         });
 
@@ -466,7 +466,7 @@ impl EthSwapListener {
                     error!("Ping failed, connection may be broken: {}", e);
                     break;
                 }
-                debug!("WebSocket ping successful");
+                info!("WebSocket ping successful");
             }
         });
 

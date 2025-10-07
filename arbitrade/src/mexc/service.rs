@@ -1,6 +1,6 @@
 use crate::mexc::client::MexcClient;
-use crate::mexc::mexc_generated::push_data_v3_api_wrapper::Body;
-use crate::mexc::mexc_generated::PushDataV3ApiWrapper;
+use mexc_proto::push_data_v3_api_wrapper::Body;
+use mexc_proto::PushDataV3ApiWrapper;
 use crate::types::{PriceProvider, TokenPrice};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;

@@ -29,6 +29,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 solana-sdk = { workspace = true }
 dotenv = { workspace = true }
+mexc-proto = { path = "../crates/mexc-proto" }
 
 [features]
 

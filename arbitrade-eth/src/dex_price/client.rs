@@ -49,7 +49,7 @@ impl Default for DexPriceConfig {
             batch_timeout_ms: std::env::var("DEX_BATCH_TIMEOUT_MS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(1000),
+                .unwrap_or(500),
         }
     }
 }
@@ -135,7 +135,7 @@ impl DexPriceClient {
         ping_interval.tick().await; // Skip first immediate tick
 
         // Create batching mechanism
-        let mut batch_buffer = Vec::with_capacity(self.config.batch_size);
+        let mut batch_buffer = HashMap::new();
         let mut batch_timer =
             tokio::time::interval(Duration::from_millis(self.config.batch_timeout_ms));
         batch_timer.tick().await; // Skip first immediate tick
@@ -215,12 +215,16 @@ impl DexPriceClient {
     async fn handle_text_message(
         &self,
         text: &str,
-        batch_buffer: &mut Vec<TokenPriceUpdate>,
+        batch_buffer: &mut HashMap<(String, String), TokenPriceUpdate>,
     ) -> Result<()> {
         // Try to parse as DexPriceMessage (the actual structure from the stream)
         if let Ok(dex_message) = serde_json::from_str::<DexPriceMessage>(text) {
             if dex_message.r#type == "price_update" {
-                batch_buffer.push(dex_message.data);
+                let key = (
+                    dex_message.data.token_address.clone(),
+                    dex_message.data.pool_address.clone(),
+                );
+                batch_buffer.insert(key, dex_message.data);
                 return Ok(());
             }
         }
@@ -231,22 +235,13 @@ impl DexPriceClient {
     }
 
     /// Send batched price updates to the channel
-    async fn send_batch(&self, batch_buffer: &mut Vec<TokenPriceUpdate>) {
+    async fn send_batch(&self, batch_buffer: &mut HashMap<(String, String), TokenPriceUpdate>) {
         if batch_buffer.is_empty() {
             return;
         }
 
-        // Deduplicate prices by (token, pair_address) - keep the most recent price for each unique pair
-        let mut deduped_updates = HashMap::new();
-        for update in batch_buffer.drain(..) {
-            let key = (update.token_address.clone(), update.pool_address.clone());
-            deduped_updates.insert(key, update);
-        }
-
-        let batch: Vec<TokenPriceUpdate> = deduped_updates
-            .into_iter()
-            .map(|(_, update)| update)
-            .collect();
+        // Convert HashMap values to Vec (already deduplicated)
+        let batch: Vec<TokenPriceUpdate> = batch_buffer.drain().map(|(_, update)| update).collect();
         let batch_size = batch.len();
 
         if let Err(e) = self.price_sender.send(batch) {

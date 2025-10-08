@@ -8,7 +8,7 @@ use log::{debug, error, info, warn};
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Semaphore;
 
 // Uniswap V2 Pair ABI - Sync event (emitted after every swap with updated reserves)
@@ -150,10 +150,13 @@ impl EthSwapListener {
     ) -> Result<()> {
         info!("Starting Uniswap V2 Sync event listener with auto-reconnection");
 
+        let mut reconnect_delay = Duration::from_secs(5);
+        let max_reconnect_delay = Duration::from_secs(300); // 5 minutes max
+
         loop {
             info!(
-                "Connecting to Ethereum WebSocket for V2 events: {}",
-                websocket_url
+                "Connecting to Ethereum WebSocket for V2 events: {} (reconnect delay: {:?})",
+                websocket_url, reconnect_delay
             );
 
             match Ws::connect(&websocket_url).await {
@@ -176,7 +179,8 @@ impl EthSwapListener {
                         }
                         Err(e) => {
                             error!("V2 sync listener error: {}", e);
-                            // Continue to reconnection logic
+                            // Reset reconnect delay on successful connection but error
+                            reconnect_delay = Duration::from_secs(5);
                         }
                     }
                 }
@@ -185,9 +189,12 @@ impl EthSwapListener {
                 }
             }
 
-            // Wait before attempting to reconnect
-            warn!("Reconnecting V2 sync listener in 5 seconds...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            // Exponential backoff for reconnection
+            warn!("Reconnecting V2 sync listener in {:?}...", reconnect_delay);
+            tokio::time::sleep(reconnect_delay).await;
+
+            // Increase delay for next attempt (exponential backoff)
+            reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
         }
 
         Ok(())
@@ -215,52 +222,112 @@ impl EthSwapListener {
         let ping_provider = provider.clone();
         let ping_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            let mut consecutive_failures = 0;
+            const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
             loop {
                 interval.tick().await;
                 // Send a simple ping by requesting the latest block number
                 // This keeps the connection alive and detects if it's broken
-                if let Err(e) = ping_provider.get_block_number().await {
-                    error!("Ping failed, connection may be broken: {}", e);
-                    break;
+                match ping_provider.get_block_number().await {
+                    Ok(block_num) => {
+                        consecutive_failures = 0;
+                        debug!("V2 WebSocket ping successful, block: {}", block_num);
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        error!(
+                            "V2 Ping failed ({} consecutive), connection may be broken: {}",
+                            consecutive_failures, e
+                        );
+
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                            error!(
+                                "V2 Too many consecutive ping failures, triggering reconnection"
+                            );
+                            break;
+                        }
+                    }
                 }
-                info!("WebSocket ping successful");
             }
         });
 
         let result = async {
-            while let Some(log) = stream.next().await {
-                // Acquire semaphore permit before spawning task
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let mut event_count = 0;
+            let mut last_event_time = std::time::Instant::now();
+            let mut timeout_check_interval = tokio::time::interval(std::time::Duration::from_secs(5));
 
-                // Spawn processing task to not block the stream
-                let provider_clone = provider.clone();
-                let price_store_clone = price_store.clone();
-                let config_clone = config.clone();
-                let token_cache_clone = token_cache.clone();
+            loop {
+                tokio::select! {
+                    // Handle incoming events
+                    log = stream.next() => {
+                        match log {
+                            Some(log) => {
+                                event_count += 1;
+                                last_event_time = std::time::Instant::now();
 
-                tokio::spawn(async move {
-                    // Permit will be dropped when task completes
-                    let _permit = permit;
+                                // Acquire semaphore permit before spawning task
+                                let permit = semaphore.clone().acquire_owned().await.unwrap();
 
-                    if let Err(e) = Self::process_v2_sync_log(
-                        log,
-                        &provider_clone,
-                        &price_store_clone,
-                        &config_clone,
-                        &token_cache_clone,
-                    )
-                    .await
-                    {
-                        error!("Error processing V2 sync: {}", e);
+                                // Spawn processing task to not block the stream
+                                let provider_clone = provider.clone();
+                                let price_store_clone = price_store.clone();
+                                let config_clone = config.clone();
+                                let token_cache_clone = token_cache.clone();
+
+                                tokio::spawn(async move {
+                                    // Permit will be dropped when task completes
+                                    let _permit = permit;
+
+                                    if let Err(e) = Self::process_v2_sync_log(
+                                        log,
+                                        &provider_clone,
+                                        &price_store_clone,
+                                        &config_clone,
+                                        &token_cache_clone,
+                                    )
+                                    .await
+                                    {
+                                        error!("Error processing V2 sync: {}", e);
+                                    }
+                                });
+                            }
+                            None => {
+                                // Stream ended
+                                warn!("V2 Event stream ended (received None)");
+                                break;
+                            }
+                        }
                     }
-                });
+
+                    // Periodic timeout check
+                    _ = timeout_check_interval.tick() => {
+                        // Check if ping task has failed (connection issues)
+                        if ping_handle.is_finished() {
+                            match ping_handle.await {
+                                Ok(_) => {
+                                    warn!("V2 Ping task completed normally");
+                                    return Err(anyhow::anyhow!("V2 Ping task ended unexpectedly"));
+                                }
+                                Err(e) => {
+                                    error!("V2 Ping task panicked: {}", e);
+                                    return Err(anyhow::anyhow!("V2 Ping task failed: {}", e));
+                                }
+                            }
+                        }
+
+                        // Check for event timeout (no events for 13 seconds - Ethereum block time + buffer)
+                        if last_event_time.elapsed() > std::time::Duration::from_secs(13) && event_count > 0 {
+                            warn!("V2 No events received for 13 seconds, connection may be stale");
+                            return Err(anyhow::anyhow!("V2 Event timeout - no events received for 13 seconds"));
+                        }
+                    }
+                }
             }
+
             Ok(())
         }
         .await;
-
-        // Cancel ping task
-        ping_handle.abort();
 
         result
     }
@@ -268,7 +335,7 @@ impl EthSwapListener {
     /// Process a Uniswap V2 Sync event (has updated reserves)
     async fn process_v2_sync_log(
         log: Log,
-        provider: &Arc<Provider<Ws>>,
+        _provider: &Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
         token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
@@ -286,23 +353,17 @@ impl EthSwapListener {
             };
 
         // Get token addresses and decimals from cache or fetch via contract
-        let (token0, token1, decimals0, decimals1) = match Self::get_or_fetch_token_pair(
-            pool_address,
-            provider,
-            token_cache,
-            config,
-        )
-        .await
-        {
-            Ok(pair) => pair,
-            Err(e) => {
-                error!(
-                    "Failed to get token pair for pool {:?}: {}",
-                    pool_address, e
-                );
-                return Ok(());
-            }
-        };
+        let (token0, token1, decimals0, decimals1) =
+            match Self::get_or_fetch_token_pair(pool_address, token_cache, config).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    error!(
+                        "Failed to get token pair for pool {:?}: {}",
+                        pool_address, e
+                    );
+                    return Ok(());
+                }
+            };
 
         let reserve0 = sync_event.reserve_0;
         let reserve1 = sync_event.reserve_1;
@@ -392,10 +453,13 @@ impl EthSwapListener {
     ) -> Result<()> {
         info!("Starting Uniswap V3 swap listener with auto-reconnection");
 
+        let mut reconnect_delay = Duration::from_secs(5);
+        let max_reconnect_delay = Duration::from_secs(300); // 5 minutes max
+
         loop {
             info!(
-                "Connecting to Ethereum WebSocket for V3 events: {}",
-                websocket_url
+                "Connecting to Ethereum WebSocket for V3 events: {} (reconnect delay: {:?})",
+                websocket_url, reconnect_delay
             );
 
             match Ws::connect(&websocket_url).await {
@@ -418,7 +482,8 @@ impl EthSwapListener {
                         }
                         Err(e) => {
                             error!("V3 swap listener error: {}", e);
-                            // Continue to reconnection logic
+                            // Reset reconnect delay on successful connection but error
+                            reconnect_delay = Duration::from_secs(5);
                         }
                     }
                 }
@@ -427,9 +492,12 @@ impl EthSwapListener {
                 }
             }
 
-            // Wait before attempting to reconnect
-            warn!("Reconnecting V3 swap listener in 5 seconds...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            // Exponential backoff for reconnection
+            warn!("Reconnecting V3 swap listener in {:?}...", reconnect_delay);
+            tokio::time::sleep(reconnect_delay).await;
+
+            // Increase delay for next attempt (exponential backoff)
+            reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
         }
 
         Ok(())
@@ -458,52 +526,112 @@ impl EthSwapListener {
         let ping_provider = provider.clone();
         let ping_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            let mut consecutive_failures = 0;
+            const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
             loop {
                 interval.tick().await;
                 // Send a simple ping by requesting the latest block number
                 // This keeps the connection alive and detects if it's broken
-                if let Err(e) = ping_provider.get_block_number().await {
-                    error!("Ping failed, connection may be broken: {}", e);
-                    break;
+                match ping_provider.get_block_number().await {
+                    Ok(block_num) => {
+                        consecutive_failures = 0;
+                        debug!("V3 WebSocket ping successful, block: {}", block_num);
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        error!(
+                            "V3 Ping failed ({} consecutive), connection may be broken: {}",
+                            consecutive_failures, e
+                        );
+
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                            error!(
+                                "V3 Too many consecutive ping failures, triggering reconnection"
+                            );
+                            break;
+                        }
+                    }
                 }
-                info!("WebSocket ping successful");
             }
         });
 
         let result = async {
-            while let Some(log) = stream.next().await {
-                // Acquire semaphore permit before spawning task
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let mut event_count = 0;
+            let mut last_event_time = std::time::Instant::now();
+            let mut timeout_check_interval = tokio::time::interval(std::time::Duration::from_secs(5));
 
-                // Spawn processing task to not block the stream
-                let provider_clone = provider.clone();
-                let price_store_clone = price_store.clone();
-                let config_clone = config.clone();
-                let token_cache_clone = token_cache.clone();
+            loop {
+                tokio::select! {
+                    // Handle incoming events
+                    log = stream.next() => {
+                        match log {
+                            Some(log) => {
+                                event_count += 1;
+                                last_event_time = std::time::Instant::now();
 
-                tokio::spawn(async move {
-                    // Permit will be dropped when task completes
-                    let _permit = permit;
+                                // Acquire semaphore permit before spawning task
+                                let permit = semaphore.clone().acquire_owned().await.unwrap();
 
-                    if let Err(e) = Self::process_v3_swap_log(
-                        log,
-                        &provider_clone,
-                        &price_store_clone,
-                        &config_clone,
-                        &token_cache_clone,
-                    )
-                    .await
-                    {
-                        error!("Error processing V3 swap: {}", e);
+                                // Spawn processing task to not block the stream
+                                let provider_clone = provider.clone();
+                                let price_store_clone = price_store.clone();
+                                let config_clone = config.clone();
+                                let token_cache_clone = token_cache.clone();
+
+                                tokio::spawn(async move {
+                                    // Permit will be dropped when task completes
+                                    let _permit = permit;
+
+                                    if let Err(e) = Self::process_v3_swap_log(
+                                        log,
+                                        &provider_clone,
+                                        &price_store_clone,
+                                        &config_clone,
+                                        &token_cache_clone,
+                                    )
+                                    .await
+                                    {
+                                        error!("Error processing V3 swap: {}", e);
+                                    }
+                                });
+                            }
+                            None => {
+                                // Stream ended
+                                warn!("V3 Event stream ended (received None)");
+                                break;
+                            }
+                        }
                     }
-                });
+
+                    // Periodic timeout check
+                    _ = timeout_check_interval.tick() => {
+                        // Check if ping task has failed (connection issues)
+                        if ping_handle.is_finished() {
+                            match ping_handle.await {
+                                Ok(_) => {
+                                    warn!("V3 Ping task completed normally");
+                                    return Err(anyhow::anyhow!("V3 Ping task ended unexpectedly"));
+                                }
+                                Err(e) => {
+                                    error!("V3 Ping task panicked: {}", e);
+                                    return Err(anyhow::anyhow!("V3 Ping task failed: {}", e));
+                                }
+                            }
+                        }
+
+                        // Check for event timeout (no events for 13 seconds - Ethereum block time + buffer)
+                        if last_event_time.elapsed() > std::time::Duration::from_secs(13) && event_count > 0 {
+                            warn!("V3 No events received for 13 seconds, connection may be stale");
+                            return Err(anyhow::anyhow!("V3 Event timeout - no events received for 13 seconds"));
+                        }
+                    }
+                }
             }
+
             Ok(())
         }
         .await;
-
-        // Cancel ping task
-        ping_handle.abort();
 
         result
     }
@@ -511,7 +639,7 @@ impl EthSwapListener {
     /// Process a Uniswap V3 swap log (use sqrtPriceX96 to compute price)
     async fn process_v3_swap_log(
         log: Log,
-        provider: &Arc<Provider<Ws>>,
+        _provider: &Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
         token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
@@ -529,23 +657,17 @@ impl EthSwapListener {
             };
 
         // Get token addresses and decimals from cache or fetch via contract
-        let (token0, token1, decimals0, decimals1) = match Self::get_or_fetch_token_pair(
-            pool_address,
-            provider,
-            token_cache,
-            config,
-        )
-        .await
-        {
-            Ok(pair) => pair,
-            Err(e) => {
-                error!(
-                    "Failed to get token pair for pool {:?}: {}",
-                    pool_address, e
-                );
-                return Ok(());
-            }
-        };
+        let (token0, token1, decimals0, decimals1) =
+            match Self::get_or_fetch_token_pair(pool_address, token_cache, config).await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    error!(
+                        "Failed to get token pair for pool {:?}: {}",
+                        pool_address, e
+                    );
+                    return Ok(());
+                }
+            };
 
         // Extract sqrtPriceX96 from the event
         let sqrt_price_x96 = swap_event.sqrt_price_x96;
@@ -619,7 +741,6 @@ impl EthSwapListener {
     /// Get or fetch token pair from cache (with decimals)
     async fn get_or_fetch_token_pair(
         pool_address: Address,
-        provider: &Arc<Provider<Ws>>,
         token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
         config: &EthConfig,
     ) -> Result<(Address, Address, u8, u8)> {
@@ -628,11 +749,19 @@ impl EthSwapListener {
             return Ok(*pair.value());
         }
 
+        // Create RPC provider from environment variable
+        let rpc_url =
+            std::env::var("ETH_RPC_URL").context("ETH_RPC_URL environment variable not set")?;
+        let provider = Arc::new(
+            Provider::<Http>::try_from(rpc_url)
+                .context("Failed to create HTTP provider from ETH_RPC_URL")?,
+        );
+
         // Not in cache, fetch from contract with retry logic (3 attempts)
         let mut last_error = None;
 
         for attempt in 1..=3 {
-            match Self::fetch_token_pair_with_decimals(pool_address, provider, config).await {
+            match Self::fetch_token_pair_with_decimals(pool_address, &provider, config).await {
                 Ok((token0, token1, decimals0, decimals1)) => {
                     // Store in cache
                     token_cache.insert(pool_address, (token0, token1, decimals0, decimals1));
@@ -670,7 +799,7 @@ impl EthSwapListener {
     /// Fetch token pair and decimals in parallel
     async fn fetch_token_pair_with_decimals(
         pool_address: Address,
-        provider: &Arc<Provider<Ws>>,
+        provider: &Arc<Provider<Http>>,
         config: &EthConfig,
     ) -> Result<(Address, Address, u8, u8)> {
         let pair_contract = UniswapV2Pair::new(pool_address, provider.clone());

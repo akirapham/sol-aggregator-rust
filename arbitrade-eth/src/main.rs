@@ -10,16 +10,19 @@ use tracing_subscriber;
 
 mod api;
 mod dex_price;
+mod kyber;
 mod mexc;
 mod types;
 
 use dex_price::{DexPriceClient, DexPriceConfig};
+use kyber::KyberClient;
 use mexc::MexcService;
 
 use crate::types::{PriceProvider, TokenPriceUpdate};
 
 /// Simulate arbitrage opportunity and log results
 async fn process_arbitrage(
+    kyber_client: &KyberClient,
     mexc_service: &Arc<MexcService>,
     update: &TokenPriceUpdate,
     cex_price: f64,
@@ -27,8 +30,55 @@ async fn process_arbitrage(
     arb_amount_usdt: f64,
     price_diff_percent: f64,
 ) {
-    // Step 1: Calculate how many tokens we'd get on DEX with arb_amount_usdt
-    let tokens_from_dex = arb_amount_usdt / update.price_in_usd;
+    log::info!(
+        "Processing arbitrage for token: {}, symbol: {} with price difference: {:.2}%",
+        update.token_address,
+        cex_symbol,
+        price_diff_percent
+    );
+    // USDT contract address on Ethereum
+    const USDT_ADDRESS: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
+
+    // Step 1: Get real quote from KyberSwap for USDT → Token swap
+    // Convert USDT amount to wei (USDT has 6 decimals)
+    let usdt_amount_wei = (arb_amount_usdt * 1_000_000.0) as u64;
+    let mut gas_fee_usd: f64 = 0.0;
+
+    let tokens_from_dex = match kyber_client
+        .estimate_swap_output(
+            USDT_ADDRESS,
+            &update.token_address,
+            &usdt_amount_wei.to_string(),
+        )
+        .await
+    {
+        Ok((amount_out_wei, gas_usd_str)) => {
+            gas_fee_usd = gas_usd_str.parse::<f64>().unwrap_or(0.0);
+            // Convert from wei to token amount using decimals
+            match amount_out_wei.parse::<u128>() {
+                Ok(wei) => {
+                    let divisor = 10_u128.pow(update.decimals as u32);
+                    wei as f64 / divisor as f64
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse KyberSwap output amount for {}: {}", update.token_address, e);
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to get KyberSwap quote for {}: {}", update.token_address, e);
+            return;
+        }
+    };
+
+    // waiting 20s to simulate real-world delay for swap execution
+    log::info!("Simulating swap execution delay...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
+
+    // waiting 16 confirmations on ethereum with block time ~13s
+    log::info!("Waiting for 16 confirmations on Ethereum...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(16 * 13)).await;
 
     // Step 2: Estimate USDT output from selling tokens on MEXC
     match mexc_service
@@ -36,8 +86,8 @@ async fn process_arbitrage(
         .await
     {
         Ok(usdt_from_cex) => {
-            let profit = usdt_from_cex - arb_amount_usdt;
-            let profit_percent = (profit / arb_amount_usdt) * 100.0;
+            let profit = usdt_from_cex - arb_amount_usdt - gas_fee_usd;
+            let profit_percent = (profit / (arb_amount_usdt + gas_fee_usd)) * 100.0;
 
             log::info!(
                 "🎯 ARBITRAGE OPPORTUNITY - Token: {}, Symbol: {}",
@@ -51,7 +101,7 @@ async fn process_arbitrage(
                 price_diff_percent
             );
             log::info!(
-                "  Simulation: ${:.2} USDT → {:.6} tokens (DEX) → ${:.2} USDT (CEX)",
+                "  Simulation: ${:.2} USDT → {:.6} tokens (KyberSwap) → ${:.2} USDT (MEXC)",
                 arb_amount_usdt,
                 tokens_from_dex,
                 usdt_from_cex
@@ -86,6 +136,10 @@ async fn main() -> Result<()> {
     let mexc_service = Arc::new(MexcService::new().await?);
     info!("MEXC service initialized successfully");
 
+    info!("Initializing KyberSwap client...");
+    let kyber_client = Arc::new(KyberClient::new());
+    info!("KyberSwap client initialized successfully");
+
     // Start the WebSocket service in background
     info!("Starting MEXC WebSocket service in background...");
     let mexc_service_clone = mexc_service.clone();
@@ -117,12 +171,14 @@ async fn main() -> Result<()> {
 
         // Handle DEX price updates in background
         let mexc_service_clone = mexc_service.clone();
+        let kyber_client_clone = kyber_client.clone();
         tokio::spawn(async move {
             // Read minimum percentage difference threshold from environment
             let min_percent_diff: f64 = std::env::var("MIN_PERCENT_DIFF")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(2.0);
+            log::info!("Using minimum percentage difference threshold: {:.2}%", min_percent_diff);
 
             // Read arbitrage simulation amount from environment (default: 400 USDT)
             let arb_amount_usdt: f64 = std::env::var("ARB_SIMULATION_USDT")
@@ -173,6 +229,7 @@ async fn main() -> Result<()> {
                                         .insert(token_address.clone(), current_time);
 
                                     // Spawn task to process arbitrage
+                                    let kyber_client = kyber_client_clone.clone();
                                     let mexc_service = mexc_service_clone.clone();
                                     let update = update.clone();
                                     let symbol = price.symbol.clone();
@@ -180,6 +237,7 @@ async fn main() -> Result<()> {
 
                                     tokio::spawn(async move {
                                         process_arbitrage(
+                                            &kyber_client,
                                             &mexc_service,
                                             &update,
                                             cex_price,

@@ -20,6 +20,7 @@ pub struct MexcService {
     client: MexcClient,
     price_cache: Arc<DashMap<String, TokenPrice>>,
     market_symbol_to_contract: Arc<DashMap<String, String>>,
+    contract_to_market_symbol: Arc<DashMap<String, String>>,
 }
 
 impl MexcService {
@@ -28,6 +29,7 @@ impl MexcService {
             client: MexcClient::new(),
             price_cache: Arc::new(DashMap::new()),
             market_symbol_to_contract: Arc::new(DashMap::new()),
+            contract_to_market_symbol: Arc::new(DashMap::new()),
         })
     }
 
@@ -41,10 +43,11 @@ impl MexcService {
         }
 
         pairs.iter().for_each(|pair| {
-            self.market_symbol_to_contract.insert(
-                pair.symbol.clone(),
-                pair.contract_address.to_lowercase().clone(),
-            );
+            let contract = pair.contract_address.to_lowercase();
+            self.market_symbol_to_contract
+                .insert(pair.symbol.clone(), contract.clone());
+            self.contract_to_market_symbol
+                .insert(contract, pair.symbol.clone());
         });
 
         // Split pairs into chunks for multiple WebSocket connections
@@ -335,5 +338,51 @@ impl PriceProvider for MexcService {
             .iter()
             .map(|entry| entry.value().clone())
             .collect()
+    }
+}
+
+impl MexcService {
+    /// Estimate how much USDT you'd get by selling a certain amount of tokens on MEXC
+    /// Uses the orderbook to simulate market sell order
+    pub async fn estimate_sell_output(
+        &self,
+        token_contract: &str,
+        token_amount: f64,
+    ) -> Result<f64> {
+        // Get the market symbol for this token
+        let market_symbol = self
+            .contract_to_market_symbol
+            .get(&token_contract.to_lowercase())
+            .map(|entry| entry.value().clone())
+            .context("Token not found in MEXC markets")?;
+
+        // Fetch orderbook (bids = buy orders, we want to sell into these)
+        let orderbook = self.client.get_orderbook(&market_symbol, 100).await?;
+
+        let mut remaining_tokens = token_amount;
+        let mut total_usdt = 0.0;
+
+        // Iterate through bids (buy orders) from highest to lowest price
+        for bid in orderbook.bids {
+            if remaining_tokens <= 0.0 {
+                break;
+            }
+
+            let price: f64 = bid[0].parse().context("Failed to parse bid price")?;
+            let quantity: f64 = bid[1].parse().context("Failed to parse bid quantity")?;
+
+            let tokens_to_sell = remaining_tokens.min(quantity);
+            total_usdt += tokens_to_sell * price;
+            remaining_tokens -= tokens_to_sell;
+        }
+
+        if remaining_tokens > 0.0 {
+            warn!(
+                "Orderbook depth insufficient for {} {}, {} tokens remaining unsold",
+                token_amount, market_symbol, remaining_tokens
+            );
+        }
+
+        Ok(total_usdt)
     }
 }

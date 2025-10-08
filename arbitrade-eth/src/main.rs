@@ -1,8 +1,10 @@
 use anyhow::Result;
 use axum::Router;
+use dashmap::DashMap;
 use dotenv::dotenv;
 use log::{error, info};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber;
 
@@ -14,7 +16,61 @@ mod types;
 use dex_price::{DexPriceClient, DexPriceConfig};
 use mexc::MexcService;
 
-use crate::types::PriceProvider;
+use crate::types::{PriceProvider, TokenPriceUpdate};
+
+/// Simulate arbitrage opportunity and log results
+async fn process_arbitrage(
+    mexc_service: &Arc<MexcService>,
+    update: &TokenPriceUpdate,
+    cex_price: f64,
+    cex_symbol: &str,
+    arb_amount_usdt: f64,
+    price_diff_percent: f64,
+) {
+    // Step 1: Calculate how many tokens we'd get on DEX with arb_amount_usdt
+    let tokens_from_dex = arb_amount_usdt / update.price_in_usd;
+
+    // Step 2: Estimate USDT output from selling tokens on MEXC
+    match mexc_service
+        .estimate_sell_output(&update.token_address.to_lowercase(), tokens_from_dex)
+        .await
+    {
+        Ok(usdt_from_cex) => {
+            let profit = usdt_from_cex - arb_amount_usdt;
+            let profit_percent = (profit / arb_amount_usdt) * 100.0;
+
+            log::info!(
+                "🎯 ARBITRAGE OPPORTUNITY - Token: {}, Symbol: {}",
+                update.token_address,
+                cex_symbol
+            );
+            log::info!(
+                "  DEX Price: ${:.6}, CEX Price: ${:.6}, Price Diff: {:.2}%",
+                update.price_in_usd,
+                cex_price,
+                price_diff_percent
+            );
+            log::info!(
+                "  Simulation: ${:.2} USDT → {:.6} tokens (DEX) → ${:.2} USDT (CEX)",
+                arb_amount_usdt,
+                tokens_from_dex,
+                usdt_from_cex
+            );
+            log::info!(
+                "  💰 Estimated Profit: ${:.2} USDT ({:.2}%)",
+                profit,
+                profit_percent
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to estimate CEX sell for {}: {}",
+                update.token_address,
+                e
+            );
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -68,6 +124,21 @@ async fn main() -> Result<()> {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(2.0);
 
+            // Read arbitrage simulation amount from environment (default: 400 USDT)
+            let arb_amount_usdt: f64 = std::env::var("ARB_SIMULATION_USDT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(400.0);
+
+            // Read minimum cooldown period between arbitrage attempts for same token (default: 3600 seconds)
+            let arb_cooldown_secs: u64 = std::env::var("ARB_COOLDOWN_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3600);
+
+            // Cache to track last arbitrage processing time per token
+            let arb_processing_cache: Arc<DashMap<String, u64>> = Arc::new(DashMap::new());
+
             while let Some(price_updates) = dex_receiver.recv().await {
                 info!("Received {} DEX price updates", price_updates.len());
 
@@ -81,14 +152,54 @@ async fn main() -> Result<()> {
                             let price_diff_percent =
                                 ((update.price_in_usd - price.price) / price.price) * 100.0;
                             if price_diff_percent < -min_percent_diff {
-                                log::info!(
-                                    "Token: {}, Symbol {}, DEX Price: {}, CEX Price: {}, Diff: {:.2}%",
-                                    update.token_address,
-                                    price.symbol,
-                                    update.price_in_usd,
-                                    price.price,
-                                    price_diff_percent
-                                );
+                                let token_address = update.token_address.to_lowercase();
+                                let current_time = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs();
+
+                                // Check if we can process this token (not in cooldown)
+                                let can_process = if let Some(last_time) =
+                                    arb_processing_cache.get(&token_address)
+                                {
+                                    current_time - *last_time >= arb_cooldown_secs
+                                } else {
+                                    true
+                                };
+
+                                if can_process {
+                                    // Mark token as being processed
+                                    arb_processing_cache
+                                        .insert(token_address.clone(), current_time);
+
+                                    // Spawn task to process arbitrage
+                                    let mexc_service = mexc_service_clone.clone();
+                                    let update = update.clone();
+                                    let symbol = price.symbol.clone();
+                                    let cex_price = price.price;
+
+                                    tokio::spawn(async move {
+                                        process_arbitrage(
+                                            &mexc_service,
+                                            &update,
+                                            cex_price,
+                                            &symbol,
+                                            arb_amount_usdt,
+                                            price_diff_percent,
+                                        )
+                                        .await;
+                                    });
+                                } else {
+                                    let last_time =
+                                        arb_processing_cache.get(&token_address).unwrap();
+                                    let time_remaining =
+                                        arb_cooldown_secs - (current_time - *last_time);
+                                    log::debug!(
+                                        "Skipping arbitrage for {} - cooldown active ({} seconds remaining)",
+                                        token_address,
+                                        time_remaining
+                                    );
+                                }
                             }
                         }
                         None => {

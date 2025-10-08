@@ -1,6 +1,14 @@
 use crate::types::{ExchangeInfo, SymbolInfo};
 use anyhow::{Context, Result};
 use reqwest::Client;
+use serde::Deserialize;
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct OrderbookResponse {
+    pub bids: Vec<[String; 2]>, // [price, quantity]
+    pub asks: Vec<[String; 2]>, // [price, quantity]
+}
 
 pub struct MexcClient {
     client: Client,
@@ -68,5 +76,27 @@ impl MexcClient {
         );
 
         Ok(symbols)
+    }
+
+    /// Fetch orderbook for a specific symbol
+    pub async fn get_orderbook(&self, symbol: &str, limit: u32) -> Result<OrderbookResponse> {
+        let url = format!(
+            "{}/api/v3/depth?symbol={}&limit={}",
+            self.base_url, symbol, limit
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to send orderbook request to MEXC API")?;
+
+        let orderbook: OrderbookResponse = response
+            .json()
+            .await
+            .context("Failed to parse orderbook response")?;
+
+        Ok(orderbook)
     }
 }

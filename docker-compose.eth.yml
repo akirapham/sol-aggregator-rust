@@ -7,7 +7,6 @@ services:
       dockerfile: docker/Dockerfile.amm-eth
     container_name: amm-eth-listener
     restart: unless-stopped
-    cpus: 2.0  # Limit to 2 CPU cores
     environment:
       - RUST_LOG=${RUST_LOG:-info}
     env_file:
@@ -28,7 +27,6 @@ services:
       dockerfile: docker/Dockerfile.arbitrade-eth
     container_name: arbitrade-eth-service
     restart: unless-stopped
-    cpus: 1.0  # Limit to 1 CPU core
     ports:
       - "${ARBITRADE_PORT:-3001}:3001"
     environment:

@@ -105,6 +105,24 @@ impl MexcService {
             connection_handles.push(handle);
         }
 
+        // Start a background task to log statistics periodically
+        let stats_price_cache = self.price_cache.clone();
+        let stats_market_map = self.market_symbol_to_contract.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+
+                let token_count = stats_price_cache.len();
+                let market_count = stats_market_map.len();
+
+                info!(
+                    "MEXC Service Stats - Tokens: {}, Markets: {}",
+                    token_count, market_count
+                );
+            }
+        });
+
         // Wait for all connections (they should run indefinitely)
         let results: Result<Vec<_>, _> = try_join_all(connection_handles).await;
         results.context("One or more WebSocket connections failed")?;

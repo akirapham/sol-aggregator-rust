@@ -62,6 +62,12 @@ async fn main() -> Result<()> {
         // Handle DEX price updates in background
         let mexc_service_clone = mexc_service.clone();
         tokio::spawn(async move {
+            // Read minimum percentage difference threshold from environment
+            let min_percent_diff: f64 = std::env::var("MIN_PERCENT_DIFF")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2.0);
+
             while let Some(price_updates) = dex_receiver.recv().await {
                 info!("Received {} DEX price updates", price_updates.len());
 
@@ -74,7 +80,7 @@ async fn main() -> Result<()> {
                         Some(price) => {
                             let price_diff_percent =
                                 ((update.price_in_usd - price.price) / price.price) * 100.0;
-                            if price_diff_percent < -1.0 {
+                            if price_diff_percent < -min_percent_diff {
                                 log::info!(
                                     "Token: {}, Symbol {}, DEX Price: {}, CEX Price: {}, Diff: {:.2}%",
                                     update.token_address,

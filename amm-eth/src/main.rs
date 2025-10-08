@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
 
     // Create WebSocket server
     let ws_port = std::env::var("ETH_PRICE_WS_PORT").unwrap_or_else(|_| "8080".to_string());
-    let ws_addr = format!("127.0.0.1:{}", ws_port).parse()?;
+    let ws_addr = format!("0.0.0.0:{}", ws_port).parse()?;
     info!("Starting WebSocket server on: {}", ws_addr);
     let ws_server = Arc::new(WsServer::new(ws_addr));
     let broadcaster = ws_server.get_broadcaster();

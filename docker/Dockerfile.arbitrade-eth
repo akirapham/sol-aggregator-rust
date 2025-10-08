@@ -1,0 +1,74 @@
+# Multi-stage Docker build for Ethereum Arbitrage Service
+FROM rust:1.90 AS builder
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    build-essential \
+    git \
+    clang \
+    cmake \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /usr/src/app
+
+# Copy workspace files first for better layer caching
+COPY Cargo.toml Cargo.lock ./
+
+# Copy all workspace members for dependency resolution
+COPY crates/ ./crates/
+COPY aggregator/ ./aggregator/
+COPY arbitrade/ ./arbitrade/
+COPY amm-eth/ ./amm-eth/
+COPY arbitrade-eth/Cargo.toml ./arbitrade-eth/
+
+# Create dummy source files to cache dependencies
+RUN mkdir -p arbitrade-eth/src && \
+    echo "fn main() {}" > arbitrade-eth/src/main.rs
+
+# Build dependencies only
+RUN cargo build --release --package arbitrade-eth --bin arbitrade-eth
+
+# Copy all source code
+COPY aggregator/ ./aggregator/
+COPY arbitrade/ ./arbitrade/
+COPY amm-eth/ ./amm-eth/
+COPY arbitrade-eth/ ./arbitrade-eth/
+
+# Build the application in release mode
+RUN cargo build --release --package arbitrade-eth --bin arbitrade-eth
+
+# Stage 2: Create the runtime image
+FROM ubuntu:24.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN useradd -r -u 1003 -m -c "arbitrade-eth user" -s /bin/bash arbitrade-eth && \
+    mkdir -p /app && \
+    chown -R arbitrade-eth:arbitrade-eth /app
+
+# Set working directory
+WORKDIR /app
+
+# Copy the binary from builder stage
+COPY --from=builder /usr/src/app/target/release/arbitrade-eth /app/arbitrade-eth
+
+# Copy environment template
+COPY .env.example /app/.env.example
+
+# Change ownership
+RUN chown -R arbitrade-eth:arbitrade-eth /app
+
+# Switch to non-root user
+USER arbitrade-eth
+
+# Run the application
+CMD ["./arbitrade-eth"]

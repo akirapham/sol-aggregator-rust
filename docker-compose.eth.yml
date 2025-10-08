@@ -1,0 +1,49 @@
+# Docker Compose for Ethereum Services (AMM Listener and Arbitrage)
+services:
+  # Ethereum AMM Listener
+  amm-eth:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.amm-eth
+    container_name: amm-eth-listener
+    restart: unless-stopped
+    cpus: 2.0  # Limit to 2 CPU cores
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+      - ./rocksdb_data/amm-eth:/app/rocksdb_data/amm-eth
+    networks:
+      - eth-network
+    ports:
+      - "${ETH_PRICE_WS_PORT:-8080}:${ETH_PRICE_WS_PORT:-8080}"
+
+  # Ethereum Arbitrage Service
+  arbitrade-eth:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.arbitrade-eth
+    container_name: arbitrade-eth-service
+    restart: unless-stopped
+    cpus: 1.0  # Limit to 1 CPU core
+    ports:
+      - "${ARBITRADE_PORT:-3001}:3001"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - DEX_PRICE_STREAM=ws://amm-eth:${ETH_PRICE_WS_PORT:-8080}
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+    networks:
+      - eth-network
+    depends_on:
+      - amm-eth
+
+networks:
+  eth-network:
+    driver: bridge

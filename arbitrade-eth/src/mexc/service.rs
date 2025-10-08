@@ -150,10 +150,6 @@ impl MexcService {
                     "Connection {}: Failed to send batch subscription: {}",
                     connection_id, e
                 );
-            } else {
-                for stream in &stream_names {
-                    info!("  - {}", stream);
-                }
             }
 
             // Small delay between subscription batches

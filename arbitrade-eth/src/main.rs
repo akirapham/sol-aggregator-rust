@@ -26,33 +26,38 @@ async fn main() -> Result<()> {
 
     info!("Starting CEX Pricing Service");
 
+    info!("Initializing MEXC service...");
     let mexc_service = Arc::new(MexcService::new().await?);
+    info!("MEXC service initialized successfully");
 
     // Start the WebSocket service in background
+    info!("Starting MEXC WebSocket service in background...");
     let mexc_service_clone = mexc_service.clone();
     tokio::spawn(async move {
         if let Err(e) = mexc_service_clone.start().await {
             error!("MEXC service error: {}", e);
         }
     });
+    info!("MEXC WebSocket service started in background");
 
     // Example: Start DEX price client (if DEX_PRICE_STREAM environment variable is set)
     if std::env::var("DEX_PRICE_STREAM").is_ok() {
         let dex_config = DexPriceConfig::from_env();
-
         info!(
-            "Starting DEX price client with URL: {}",
+            "DEX_PRICE_STREAM is set, starting DEX price client with URL: {}",
             dex_config.websocket_url
         );
 
         let (dex_client, mut dex_receiver) = DexPriceClient::new(dex_config);
 
         // Start DEX client in background
+        info!("Starting DEX client in background...");
         tokio::spawn(async move {
             if let Err(e) = dex_client.start().await {
                 error!("DEX price client error: {}", e);
             }
         });
+        info!("DEX client started in background");
 
         // Handle DEX price updates in background
         let mexc_service_clone = mexc_service.clone();
@@ -100,14 +105,18 @@ async fn main() -> Result<()> {
     }
 
     // Start HTTP API server
+    info!("Starting HTTP API server...");
     let app = Router::new()
         .merge(api::create_router(mexc_service))
         .layer(CorsLayer::permissive());
 
+    info!("Binding to 0.0.0.0:3001...");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await?;
-    info!("CEX Pricing API server listening on http://0.0.0.0:3001");
+    info!("Successfully bound to 0.0.0.0:3001");
 
+    info!("Starting axum server...");
     axum::serve(listener, app).await?;
 
+    info!("Server shutdown gracefully");
     Ok(())
 }

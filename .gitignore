@@ -26,3 +26,4 @@ target/
 # Config
 config.yaml
 rocksdb_data
+logs

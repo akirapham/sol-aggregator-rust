@@ -126,14 +126,20 @@ impl GateClient {
 
         log::debug!("Currency chains raw response: {}", response_text);
 
-        let chains: Vec<CurrencyInfo> = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse currency chains response for {}: {}", currency, response_text))?;
+        let chains: Vec<CurrencyInfo> = serde_json::from_str(&response_text).context(format!(
+            "Failed to parse currency chains response for {}: {}",
+            currency, response_text
+        ))?;
 
         Ok(chains)
     }
 
     /// Fetch orderbook for a specific currency pair
-    pub async fn get_orderbook(&self, currency_pair: &str, limit: u32) -> Result<OrderbookResponse> {
+    pub async fn get_orderbook(
+        &self,
+        currency_pair: &str,
+        limit: u32,
+    ) -> Result<OrderbookResponse> {
         let url = format!(
             "{}/api/v4/spot/order_book?currency_pair={}&limit={}",
             self.base_url, currency_pair, limit
@@ -151,8 +157,9 @@ impl GateClient {
             .await
             .context("Failed to read orderbook response text")?;
 
-        let orderbook: OrderbookResponse = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse orderbook response: {}", response_text))?;
+        let orderbook: OrderbookResponse = serde_json::from_str(&response_text).context(
+            format!("Failed to parse orderbook response: {}", response_text),
+        )?;
 
         Ok(orderbook)
     }

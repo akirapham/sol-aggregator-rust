@@ -170,10 +170,9 @@ impl MexcService {
                                             .strip_suffix("USDT")
                                             .unwrap_or(&market_symbol)
                                             .to_string(),
-                                        price: f64::from_str(&deal.price).unwrap_or(0.0)
+                                        price: f64::from_str(&deal.price).unwrap_or(0.0),
                                     };
-                                    price_cache
-                                        .insert(contract_address.value().clone(), price);
+                                    price_cache.insert(contract_address.value().clone(), price);
                                 }
                             }
                         },

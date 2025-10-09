@@ -6,6 +6,10 @@ authors = ["Your Name <your.email@example.com>"]
 description = "Service to subscribe to token price updates from CEXs and provide an API"
 license = "MIT"
 
+[[bin]]
+name = "arbitrade-eth"
+path = "src/main.rs"
+
 [dependencies]
 tokio = { workspace = true }
 reqwest = { workspace = true }
@@ -30,8 +34,3 @@ tracing-subscriber = { workspace = true }
 solana-sdk = { workspace = true }
 dotenv = { workspace = true }
 cex-price-provider = { path = "../crates/cex-price-provider" }
-
-[features]
-
-[build-dependencies]
-prost-build = { workspace = true }

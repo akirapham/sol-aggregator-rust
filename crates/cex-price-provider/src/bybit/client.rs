@@ -30,11 +30,11 @@ pub struct OrderbookResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct OrderbookResult {
-    pub s: String,                    // Symbol
-    pub b: Vec<[String; 2]>,          // Bids: [price, size]
-    pub a: Vec<[String; 2]>,          // Asks: [price, size]
-    pub ts: u64,                      // Timestamp
-    pub u: u64,                       // Update ID
+    pub s: String,           // Symbol
+    pub b: Vec<[String; 2]>, // Bids: [price, size]
+    pub a: Vec<[String; 2]>, // Asks: [price, size]
+    pub ts: u64,             // Timestamp
+    pub u: u64,              // Update ID
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -87,7 +87,11 @@ impl BybitClient {
     }
 
     /// Create client with API credentials for authenticated endpoints
-    pub fn with_credentials(address_type: FilterAddressType, api_key: String, api_secret: String) -> Self {
+    pub fn with_credentials(
+        address_type: FilterAddressType,
+        api_key: String,
+        api_secret: String,
+    ) -> Self {
         Self {
             client: Client::new(),
             base_url: "https://api.bybit.com".to_string(),
@@ -241,7 +245,9 @@ impl BybitClient {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
 
-        let api_secret = self.api_secret.as_ref()
+        let api_secret = self
+            .api_secret
+            .as_ref()
             .context("API secret not configured")?;
 
         let api_key = self.api_key.as_ref().unwrap();
@@ -313,8 +319,10 @@ impl BybitClient {
             .await
             .context("Failed to read coin info response text")?;
 
-        let coin_info: CoinInfoResponse = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse coin info response. Raw response: {}", response_text))?;
+        let coin_info: CoinInfoResponse = serde_json::from_str(&response_text).context(format!(
+            "Failed to parse coin info response. Raw response: {}",
+            response_text
+        ))?;
 
         if coin_info.ret_code != 0 {
             return Err(anyhow::anyhow!(

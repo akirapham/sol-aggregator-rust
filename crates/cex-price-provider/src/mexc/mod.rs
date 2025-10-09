@@ -23,4 +23,3 @@ pub struct ExchangeInfo {
     pub server_time: u64,
     pub symbols: Vec<SymbolInfo>,
 }
-

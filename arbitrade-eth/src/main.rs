@@ -1,6 +1,10 @@
 use anyhow::Result;
 use axum::Router;
-use cex_price_provider::mexc::{MexcService};
+use cex_price_provider::bitget::BitgetService;
+use cex_price_provider::bybit::BybitService;
+use cex_price_provider::gate::GateService;
+use cex_price_provider::kucoin::KucoinService;
+use cex_price_provider::mexc::MexcService;
 use cex_price_provider::PriceProvider;
 use dashmap::DashMap;
 use dotenv::dotenv;
@@ -9,32 +13,98 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber;
-
 mod api;
 mod dex_price;
 mod kyber;
 mod types;
 use dex_price::{DexPriceClient, DexPriceConfig};
 use kyber::KyberClient;
+use std::env;
 
 use crate::types::TokenPriceUpdate;
+
+struct CexProvider {
+    name: &'static str,
+    service: Arc<dyn PriceProvider + Send + Sync>,
+    // Store concrete service types for orderbook access
+    mexc: Option<Arc<MexcService>>,
+    bybit: Option<Arc<BybitService>>,
+    kucoin: Option<Arc<KucoinService>>,
+    bitget: Option<Arc<BitgetService>>,
+    gate: Option<Arc<GateService>>,
+}
+
+/// Structure to hold CEX opportunity with liquidity info
+struct CexOpportunity {
+    cex_name: String,
+    cex_price: f64,
+    cex_symbol: String,
+    price_diff_percent: f64,
+    liquidity_usdt: f64, // Total USDT liquidity in orderbook
+}
+
+impl CexProvider {
+    /// Calculate total orderbook liquidity (bid side) in USDT
+    async fn get_orderbook_liquidity(
+        &self,
+        token_contract: &str,
+        token_amount: f64,
+    ) -> Option<f64> {
+        // Try to estimate sell output which uses orderbook depth
+        if let Some(mexc) = &self.mexc {
+            return mexc
+                .estimate_sell_output(token_contract, token_amount)
+                .await
+                .ok();
+        }
+        if let Some(bybit) = &self.bybit {
+            return bybit
+                .estimate_sell_output(token_contract, token_amount)
+                .await
+                .ok();
+        }
+        if let Some(kucoin) = &self.kucoin {
+            return kucoin
+                .estimate_sell_output(token_contract, token_amount)
+                .await
+                .ok();
+        }
+        if let Some(bitget) = &self.bitget {
+            return bitget
+                .estimate_sell_output(token_contract, token_amount)
+                .await
+                .ok();
+        }
+        if let Some(gate) = &self.gate {
+            return gate
+                .estimate_sell_output(token_contract, token_amount)
+                .await
+                .ok();
+        }
+        None
+    }
+}
+
+/// Structure to hold the best arbitrage opportunity across CEXes
+struct BestArbitrageOpportunity {
+    cex_name: String,
+    cex_price: f64,
+    cex_symbol: String,
+    price_diff_percent: f64,
+    liquidity_usdt: f64,
+    usdt_from_cex: f64,
+    profit: f64,
+    profit_percent: f64,
+}
 
 /// Simulate arbitrage opportunity and log results
 async fn process_arbitrage(
     kyber_client: &KyberClient,
-    mexc_service: &Arc<MexcService>,
+    cex_providers: &[CexProvider],
     update: &TokenPriceUpdate,
-    cex_price: f64,
-    cex_symbol: &str,
     arb_amount_usdt: f64,
-    price_diff_percent: f64,
 ) {
-    log::info!(
-        "Processing arbitrage for token: {}, symbol: {} with price difference: {:.2}%",
-        update.token_address,
-        cex_symbol,
-        price_diff_percent
-    );
+    log::info!("Processing arbitrage for token: {}", update.token_address);
     // USDT contract address on Ethereum
     const USDT_ADDRESS: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 
@@ -60,13 +130,21 @@ async fn process_arbitrage(
                     wei as f64 / divisor as f64
                 }
                 Err(e) => {
-                    log::warn!("Failed to parse KyberSwap output amount for {}: {}", update.token_address, e);
+                    log::warn!(
+                        "Failed to parse KyberSwap output amount for {}: {}",
+                        update.token_address,
+                        e
+                    );
                     return;
                 }
             }
         }
         Err(e) => {
-            log::warn!("Failed to get KyberSwap quote for {}: {}", update.token_address, e);
+            log::warn!(
+                "Failed to get KyberSwap quote for {}: {}",
+                update.token_address,
+                e
+            );
             return;
         }
     };
@@ -79,77 +157,273 @@ async fn process_arbitrage(
     log::info!("Waiting for 16 confirmations on Ethereum...");
     tokio::time::sleep(tokio::time::Duration::from_secs(16 * 13)).await;
 
-    // Step 2: Estimate USDT output from selling tokens on MEXC
-    match mexc_service
-        .estimate_sell_output(&update.token_address.to_lowercase(), tokens_from_dex)
-        .await
-    {
-        Ok(usdt_from_cex) => {
-            let profit = usdt_from_cex - arb_amount_usdt - gas_fee_usd;
+    // Step 2: Check all CEXes and collect opportunities with good price differences
+    let mut opportunities: Vec<CexOpportunity> = Vec::new();
+
+    log::info!("Checking prices across all CEXes...");
+    for cex in cex_providers {
+        // Get price from CEX
+        if let Some(price_info) = cex
+            .service
+            .get_price(&update.token_address.to_lowercase())
+            .await
+        {
+            let price_diff_percent =
+                ((update.price_in_usd - price_info.price) / price_info.price) * 100.0;
+
+            // Check if there's a profitable opportunity (DEX price lower than CEX price)
+            if price_diff_percent < 0.0 {
+                log::debug!(
+                    "  {} - Price: ${:.6}, Diff: {:.2}%",
+                    cex.name,
+                    price_info.price,
+                    price_diff_percent
+                );
+
+                // Get orderbook liquidity for this CEX
+                if let Some(liquidity) = cex
+                    .get_orderbook_liquidity(&update.token_address.to_lowercase(), tokens_from_dex)
+                    .await
+                {
+                    log::debug!(
+                        "    {} - Orderbook liquidity: ${:.2} USDT",
+                        cex.name,
+                        liquidity
+                    );
+
+                    opportunities.push(CexOpportunity {
+                        cex_name: cex.name.to_string(),
+                        cex_price: price_info.price,
+                        cex_symbol: price_info.symbol.clone(),
+                        price_diff_percent,
+                        liquidity_usdt: liquidity,
+                    });
+                } else {
+                    log::debug!("    {} - Failed to get orderbook liquidity", cex.name);
+                }
+            }
+        }
+    }
+
+    // Step 3: Pick the CEX with deepest liquidity (highest USDT output from orderbook)
+    let best_opportunity = opportunities
+        .into_iter()
+        .max_by(|a, b| {
+            a.liquidity_usdt
+                .partial_cmp(&b.liquidity_usdt)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|opp| {
+            let profit = opp.liquidity_usdt - arb_amount_usdt - gas_fee_usd;
             let profit_percent = (profit / (arb_amount_usdt + gas_fee_usd)) * 100.0;
 
-            log::info!(
-                "🎯 ARBITRAGE OPPORTUNITY - Token: {}, Symbol: {}",
-                update.token_address,
-                cex_symbol
-            );
-            log::info!(
-                "  DEX Price: ${:.6}, CEX Price: ${:.6}, Price Diff: {:.2}%",
-                update.price_in_usd,
-                cex_price,
-                price_diff_percent
-            );
-            log::info!(
-                "  Simulation: ${:.2} USDT → {:.6} tokens (KyberSwap) → ${:.2} USDT (MEXC)",
-                arb_amount_usdt,
-                tokens_from_dex,
-                usdt_from_cex
-            );
-            log::info!(
-                "  💰 Estimated Profit: ${:.2} USDT ({:.2}%)",
+            BestArbitrageOpportunity {
+                cex_name: opp.cex_name,
+                cex_price: opp.cex_price,
+                cex_symbol: opp.cex_symbol,
+                price_diff_percent: opp.price_diff_percent,
+                liquidity_usdt: opp.liquidity_usdt,
+                usdt_from_cex: opp.liquidity_usdt,
                 profit,
-                profit_percent
-            );
-        }
-        Err(e) => {
-            log::warn!(
-                "Failed to estimate CEX sell for {}: {}",
-                update.token_address,
-                e
-            );
-        }
+                profit_percent,
+            }
+        });
+
+    // Log the best opportunity
+    if let Some(best) = best_opportunity {
+        log::info!(
+            "🎯 BEST ARBITRAGE OPPORTUNITY - Token: {}, CEX: {} (Deepest Liquidity), Symbol: {}",
+            update.token_address,
+            best.cex_name,
+            best.cex_symbol
+        );
+        log::info!(
+            "  DEX Price: ${:.6}, CEX Price: ${:.6}, Price Diff: {:.2}%",
+            update.price_in_usd,
+            best.cex_price,
+            best.price_diff_percent
+        );
+        log::info!(
+            "  Orderbook Depth: ${:.2} USDT available",
+            best.liquidity_usdt
+        );
+        log::info!(
+            "  Simulation: ${:.2} USDT → {:.6} tokens (KyberSwap) → ${:.2} USDT ({})",
+            arb_amount_usdt,
+            tokens_from_dex,
+            best.usdt_from_cex,
+            best.cex_name
+        );
+        log::info!(
+            "  💰 Estimated Profit: ${:.2} USDT ({:.2}%)",
+            best.profit,
+            best.profit_percent
+        );
+    } else {
+        log::info!(
+            "No profitable arbitrage opportunity found across all CEXes for token: {}",
+            update.token_address
+        );
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    eprintln!("DEBUG: main() started");
+
     // Load environment variables from .env file
     dotenv().ok();
+    eprintln!("DEBUG: dotenv loaded");
 
     // Initialize logging
     tracing_subscriber::fmt::init();
+    eprintln!("DEBUG: tracing initialized");
 
-    info!("Starting CEX Pricing Service");
+    info!("Starting CEX Pricing Service with Multi-CEX Support");
 
-    info!("Initializing MEXC service...");
-    let mexc_service = Arc::new(MexcService::new(cex_price_provider::FilterAddressType::Ethereum));
-    info!("MEXC service initialized successfully");
+    // Initialize all CEX services
+    info!("Initializing CEX services...");
+    let mexc_service = Arc::new(MexcService::new(
+        cex_price_provider::FilterAddressType::Ethereum,
+    ));
+
+    // Initialize Bybit with or without credentials
+    let bybit_service = match (env::var("BYBIT_API_KEY"), env::var("BYBIT_API_SECRET")) {
+        (Ok(api_key), Ok(api_secret)) => {
+            info!("Bybit API credentials found, initializing with authentication");
+            Arc::new(BybitService::with_credentials(
+                cex_price_provider::FilterAddressType::Ethereum,
+                api_key,
+                api_secret,
+            ))
+        }
+        _ => {
+            info!("Bybit API credentials not found, initializing without authentication (limited functionality)");
+            Arc::new(BybitService::new(
+                cex_price_provider::FilterAddressType::Ethereum,
+            ))
+        }
+    };
+
+    let kucoin_service = Arc::new(KucoinService::new(
+        cex_price_provider::FilterAddressType::Ethereum,
+    ));
+    let bitget_service = Arc::new(BitgetService::new(
+        cex_price_provider::FilterAddressType::Ethereum,
+    ));
+    let gate_service = Arc::new(GateService::new(
+        cex_price_provider::FilterAddressType::Ethereum,
+    ));
+    info!("All CEX services initialized successfully");
 
     info!("Initializing KyberSwap client...");
     let kyber_client = Arc::new(KyberClient::new());
     info!("KyberSwap client initialized successfully");
 
-    // Start the WebSocket service in background
-    info!("Starting MEXC WebSocket service in background...");
-    let mexc_service_clone = mexc_service.clone();
+    // Create a vector of CEX providers for arbitrage checking
+    let cex_providers: Vec<CexProvider> = vec![
+        CexProvider {
+            name: "MEXC",
+            service: mexc_service.clone() as Arc<dyn PriceProvider + Send + Sync>,
+            mexc: Some(mexc_service.clone()),
+            bybit: None,
+            kucoin: None,
+            bitget: None,
+            gate: None,
+        },
+        CexProvider {
+            name: "Bybit",
+            service: bybit_service.clone() as Arc<dyn PriceProvider + Send + Sync>,
+            mexc: None,
+            bybit: Some(bybit_service.clone()),
+            kucoin: None,
+            bitget: None,
+            gate: None,
+        },
+        CexProvider {
+            name: "KuCoin",
+            service: kucoin_service.clone() as Arc<dyn PriceProvider + Send + Sync>,
+            mexc: None,
+            bybit: None,
+            kucoin: Some(kucoin_service.clone()),
+            bitget: None,
+            gate: None,
+        },
+        CexProvider {
+            name: "Bitget",
+            service: bitget_service.clone() as Arc<dyn PriceProvider + Send + Sync>,
+            mexc: None,
+            bybit: None,
+            kucoin: None,
+            bitget: Some(bitget_service.clone()),
+            gate: None,
+        },
+        CexProvider {
+            name: "Gate.io",
+            service: gate_service.clone() as Arc<dyn PriceProvider + Send + Sync>,
+            mexc: None,
+            bybit: None,
+            kucoin: None,
+            bitget: None,
+            gate: Some(gate_service.clone()),
+        },
+    ];
+    let cex_providers = Arc::new(cex_providers);
+
+    // Start all WebSocket services in background
+    info!("Starting CEX WebSocket services in background...");
+
+    let mexc_clone = mexc_service.clone();
     tokio::spawn(async move {
-        if let Err(e) = mexc_service_clone.start().await {
+        info!("MEXC WebSocket task started");
+        if let Err(e) = mexc_clone.start().await {
             error!("MEXC service error: {}", e);
         }
+        error!("MEXC WebSocket task exited!");
     });
-    info!("MEXC WebSocket service started in background");
 
-    // Example: Start DEX price client (if DEX_PRICE_STREAM environment variable is set)
+    let bybit_clone = bybit_service.clone();
+    tokio::spawn(async move {
+        info!("Bybit WebSocket task started");
+        if let Err(e) = bybit_clone.start().await {
+            error!("Bybit service error: {}", e);
+        }
+        error!("Bybit WebSocket task exited!");
+    });
+
+    let kucoin_clone = kucoin_service.clone();
+    tokio::spawn(async move {
+        info!("KuCoin WebSocket task started");
+        if let Err(e) = kucoin_clone.start().await {
+            error!("KuCoin service error: {}", e);
+        }
+        error!("KuCoin WebSocket task exited!");
+    });
+
+    let bitget_clone = bitget_service.clone();
+    tokio::spawn(async move {
+        info!("Bitget WebSocket task started");
+        if let Err(e) = bitget_clone.start().await {
+            error!("Bitget service error: {}", e);
+        }
+        error!("Bitget WebSocket task exited!");
+    });
+
+    let gate_clone = gate_service.clone();
+    tokio::spawn(async move {
+        info!("Gate.io WebSocket task started");
+        if let Err(e) = gate_clone.start().await {
+            error!("Gate.io service error: {}", e);
+        }
+        error!("Gate.io WebSocket task exited!");
+    });
+
+    info!("All CEX WebSocket services started in background");
+
+    // Give CEX services time to initialize their connections
+    info!("Waiting 10 seconds for CEX services to initialize...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    info!("CEX initialization period complete"); // Example: Start DEX price client (if DEX_PRICE_STREAM environment variable is set)
     if std::env::var("DEX_PRICE_STREAM").is_ok() {
         let dex_config = DexPriceConfig::from_env();
         info!(
@@ -162,14 +436,16 @@ async fn main() -> Result<()> {
         // Start DEX client in background
         info!("Starting DEX client in background...");
         tokio::spawn(async move {
+            info!("DEX price client task started");
             if let Err(e) = dex_client.start().await {
                 error!("DEX price client error: {}", e);
             }
+            error!("DEX price client task exited!");
         });
         info!("DEX client started in background");
 
         // Handle DEX price updates in background
-        let mexc_service_clone = mexc_service.clone();
+        let cex_providers_clone = cex_providers.clone();
         let kyber_client_clone = kyber_client.clone();
         tokio::spawn(async move {
             // Read minimum percentage difference threshold from environment
@@ -177,7 +453,10 @@ async fn main() -> Result<()> {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(2.0);
-            log::info!("Using minimum percentage difference threshold: {:.2}%", min_percent_diff);
+            log::info!(
+                "Using minimum percentage difference threshold: {:.2}%",
+                min_percent_diff
+            );
 
             // Read arbitrage simulation amount from environment (default: 400 USDT)
             let arb_amount_usdt: f64 = std::env::var("ARB_SIMULATION_USDT")
@@ -198,78 +477,67 @@ async fn main() -> Result<()> {
                 info!("Received {} DEX price updates", price_updates.len());
 
                 for update in &price_updates {
-                    // read token price from cex
-                    let cex_price = mexc_service_clone
-                        .get_price(&update.token_address.to_lowercase())
-                        .await;
-                    match cex_price {
-                        Some(price) => {
+                    // Check if any CEX has this token at a better price
+                    let mut has_opportunity = false;
+                    for cex in cex_providers_clone.iter() {
+                        if let Some(price) = cex
+                            .service
+                            .get_price(&update.token_address.to_lowercase())
+                            .await
+                        {
                             let price_diff_percent =
                                 ((update.price_in_usd - price.price) / price.price) * 100.0;
                             if price_diff_percent < -min_percent_diff {
-                                let token_address = update.token_address.to_lowercase();
-                                let current_time = SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_secs();
-
-                                // Check if we can process this token (not in cooldown)
-                                let can_process = if let Some(last_time) =
-                                    arb_processing_cache.get(&token_address)
-                                {
-                                    current_time - *last_time >= arb_cooldown_secs
-                                } else {
-                                    true
-                                };
-
-                                if can_process {
-                                    // Mark token as being processed
-                                    arb_processing_cache
-                                        .insert(token_address.clone(), current_time);
-
-                                    // Spawn task to process arbitrage
-                                    let kyber_client = kyber_client_clone.clone();
-                                    let mexc_service = mexc_service_clone.clone();
-                                    let update = update.clone();
-                                    let symbol = price.symbol.clone();
-                                    let cex_price = price.price;
-
-                                    tokio::spawn(async move {
-                                        process_arbitrage(
-                                            &kyber_client,
-                                            &mexc_service,
-                                            &update,
-                                            cex_price,
-                                            &symbol,
-                                            arb_amount_usdt,
-                                            price_diff_percent,
-                                        )
-                                        .await;
-                                    });
-                                } else {
-                                    let last_time =
-                                        arb_processing_cache.get(&token_address).unwrap();
-                                    let time_remaining =
-                                        arb_cooldown_secs - (current_time - *last_time);
-                                    log::debug!(
-                                        "Skipping arbitrage for {} - cooldown active ({} seconds remaining)",
-                                        token_address,
-                                        time_remaining
-                                    );
-                                }
+                                has_opportunity = true;
+                                break;
                             }
                         }
-                        None => {
-                            // do nothing
+                    }
+
+                    if has_opportunity {
+                        let token_address = update.token_address.to_lowercase();
+                        let current_time = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+
+                        // Check if we can process this token (not in cooldown)
+                        let can_process =
+                            if let Some(last_time) = arb_processing_cache.get(&token_address) {
+                                current_time - *last_time >= arb_cooldown_secs
+                            } else {
+                                true
+                            };
+
+                        if can_process {
+                            // Mark token as being processed
+                            arb_processing_cache.insert(token_address.clone(), current_time);
+
+                            // Spawn task to process arbitrage across all CEXes
+                            let kyber_client = kyber_client_clone.clone();
+                            let cex_providers = cex_providers_clone.clone();
+                            let update = update.clone();
+
+                            tokio::spawn(async move {
+                                process_arbitrage(
+                                    &kyber_client,
+                                    &cex_providers,
+                                    &update,
+                                    arb_amount_usdt,
+                                )
+                                .await;
+                            });
+                        } else {
+                            let last_time = arb_processing_cache.get(&token_address).unwrap();
+                            let time_remaining = arb_cooldown_secs - (current_time - *last_time);
+                            log::debug!(
+                                "Skipping arbitrage for {} - cooldown active ({} seconds remaining)",
+                                token_address,
+                                time_remaining
+                            );
                         }
                     }
                 }
-
-                // Here you can process the price updates:
-                // - Store in database
-                // - Update internal caches
-                // - Forward to other services
-                // - Calculate arbitrage opportunities, etc.
             }
         });
 

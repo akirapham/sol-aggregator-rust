@@ -2,8 +2,8 @@ pub mod client;
 mod service;
 
 pub use client::BybitClient;
-pub use service::BybitService;
 use serde::{Deserialize, Serialize};
+pub use service::BybitService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstrumentInfo {

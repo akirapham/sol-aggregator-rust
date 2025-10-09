@@ -2,8 +2,8 @@ pub mod client;
 mod service;
 
 pub use client::KucoinClient;
-pub use service::KucoinService;
 use serde::{Deserialize, Serialize};
+pub use service::KucoinService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {

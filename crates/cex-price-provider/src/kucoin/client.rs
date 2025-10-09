@@ -127,15 +127,10 @@ impl KucoinClient {
 
         let filtered: Vec<Symbol> = all_symbols
             .into_iter()
-            .filter(|symbol| {
-                symbol.quote_currency == "USDT" && symbol.enable_trading
-            })
+            .filter(|symbol| symbol.quote_currency == "USDT" && symbol.enable_trading)
             .collect();
 
-        log::info!(
-            "Found {} USDT trading pairs on KuCoin",
-            filtered.len()
-        );
+        log::info!("Found {} USDT trading pairs on KuCoin", filtered.len());
 
         Ok(filtered)
     }
@@ -188,7 +183,10 @@ impl KucoinClient {
         log::debug!("Currencies raw response: {}", response_text);
 
         let currencies_response: CurrenciesResponse = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse currencies response. Raw: {}", response_text))?;
+            .context(format!(
+                "Failed to parse currencies response. Raw: {}",
+                response_text
+            ))?;
 
         if currencies_response.code != "200000" {
             return Err(anyhow::anyhow!(
@@ -219,7 +217,10 @@ impl KucoinClient {
         log::debug!("Currency detail raw response: {}", response_text);
 
         let detail_response: CurrencyDetailResponse = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse currency detail response. Raw: {}", response_text))?;
+            .context(format!(
+                "Failed to parse currency detail response. Raw: {}",
+                response_text
+            ))?;
 
         if detail_response.code != "200000" {
             return Err(anyhow::anyhow!(

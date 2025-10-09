@@ -18,10 +18,10 @@ async fn main() -> Result<()> {
     println!("Prices will be cached by contract address instead of symbol\n");
 
     // Get API credentials from environment variables
-    let api_key = std::env::var("BYBIT_API_KEY")
-        .expect("BYBIT_API_KEY environment variable not set");
-    let api_secret = std::env::var("BYBIT_API_SECRET")
-        .expect("BYBIT_API_SECRET environment variable not set");
+    let api_key =
+        std::env::var("BYBIT_API_KEY").expect("BYBIT_API_KEY environment variable not set");
+    let api_secret =
+        std::env::var("BYBIT_API_SECRET").expect("BYBIT_API_SECRET environment variable not set");
 
     println!("Using API Key: {}...", &api_key[..8]);
 
@@ -38,14 +38,20 @@ async fn main() -> Result<()> {
     match client.get_coin_info(Some("BTC")).await {
         Ok(coin_info) => {
             println!("✅ Successfully fetched BTC coin info");
-            println!("RetCode: {}, RetMsg: {}", coin_info.ret_code, coin_info.ret_msg);
+            println!(
+                "RetCode: {}, RetMsg: {}",
+                coin_info.ret_code, coin_info.ret_msg
+            );
             println!("Number of coins returned: {}", coin_info.result.len());
 
             for coin in &coin_info.result {
                 println!("Coin: {} ({})", coin.name, coin.coin);
                 for chain in &coin.chains {
                     if !chain.contract_address.is_empty() {
-                        println!("  {} ({}): {}", chain.chain_type, chain.chain, chain.contract_address);
+                        println!(
+                            "  {} ({}): {}",
+                            chain.chain_type, chain.chain, chain.contract_address
+                        );
                     }
                 }
             }
@@ -58,11 +64,8 @@ async fn main() -> Result<()> {
     }
 
     // Create Bybit service with authentication - enables contract address filtering
-    let bybit_service = BybitService::with_credentials(
-        FilterAddressType::Ethereum,
-        api_key,
-        api_secret,
-    );
+    let bybit_service =
+        BybitService::with_credentials(FilterAddressType::Ethereum, api_key, api_secret);
 
     println!("\n=== Starting Bybit WebSocket Service ===");
 
@@ -105,7 +108,10 @@ async fn main() -> Result<()> {
     println!("\n=== Orderbook Sell Estimation ===");
     match service_clone.estimate_sell_output("BTC", 0.1).await {
         Ok(usdt_amount) => {
-            println!("Selling 0.1 BTC would get approximately: ${:.2} USDT", usdt_amount);
+            println!(
+                "Selling 0.1 BTC would get approximately: ${:.2} USDT",
+                usdt_amount
+            );
         }
         Err(e) => {
             println!("Failed to estimate sell output for BTC: {}", e);

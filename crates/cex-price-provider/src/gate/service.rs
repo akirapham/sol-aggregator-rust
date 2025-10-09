@@ -68,7 +68,10 @@ impl GateService {
 
         let (mut write, mut read) = ws_stream.split();
 
-        log::info!("Connection {}: WebSocket connected successfully", connection_id);
+        log::info!(
+            "Connection {}: WebSocket connected successfully",
+            connection_id
+        );
 
         // Subscribe to ticker streams for each symbol
         let subscription = SubscriptionRequest {
@@ -113,7 +116,8 @@ impl GateService {
                         .unwrap()
                         .as_secs(),
                     "channel": "spot.ping"
-                }).to_string();
+                })
+                .to_string();
 
                 let mut writer = ping_write.lock().await;
                 if let Err(e) = writer.send(WsMessage::Text(ping_msg.into())).await {
@@ -125,7 +129,10 @@ impl GateService {
         });
 
         // Process incoming messages
-        log::info!("Connection {}: Starting to process messages...", connection_id);
+        log::info!(
+            "Connection {}: Starting to process messages...",
+            connection_id
+        );
 
         while let Some(msg) = read.next().await {
             match msg {
@@ -173,7 +180,9 @@ impl GateService {
         }
 
         // Handle subscription confirmation
-        if text.contains("\"event\":\"subscribe\"") && text.contains("\"result\":{\"status\":\"success\"") {
+        if text.contains("\"event\":\"subscribe\"")
+            && text.contains("\"result\":{\"status\":\"success\"")
+        {
             log::info!("Connection {}: Subscription confirmed", connection_id);
             return;
         }
@@ -252,14 +261,18 @@ impl PriceProvider for GateService {
         info!("Found {} USDT trading pairs", pairs.len());
 
         // Fetch contract addresses for each currency in parallel
-        log::info!("Fetching currency chains for {} pairs in parallel...", pairs.len());
+        log::info!(
+            "Fetching currency chains for {} pairs in parallel...",
+            pairs.len()
+        );
 
-        let unique_currencies: std::collections::HashSet<String> = pairs
-            .iter()
-            .map(|p| p.base.clone())
-            .collect();
+        let unique_currencies: std::collections::HashSet<String> =
+            pairs.iter().map(|p| p.base.clone()).collect();
 
-        log::info!("Found {} unique currencies to query", unique_currencies.len());
+        log::info!(
+            "Found {} unique currencies to query",
+            unique_currencies.len()
+        );
 
         // Fetch all currency chains concurrently in batches
         const BATCH_SIZE: usize = 20;
@@ -274,7 +287,12 @@ impl PriceProvider for GateService {
                 .map(|currency| {
                     let client = &self.client;
                     let currency = currency.clone();
-                    async move { (currency.clone(), client.get_currency_chains(&currency).await) }
+                    async move {
+                        (
+                            currency.clone(),
+                            client.get_currency_chains(&currency).await,
+                        )
+                    }
                 })
                 .collect();
 
@@ -296,7 +314,10 @@ impl PriceProvider for GateService {
             }
         }
 
-        log::info!("Fetched {} currency chain details", all_currency_chains.len());
+        log::info!(
+            "Fetched {} currency chain details",
+            all_currency_chains.len()
+        );
 
         // Build a map of currency -> contract addresses
         let mut currency_contracts: std::collections::HashMap<String, Vec<(String, String)>> =
@@ -344,14 +365,10 @@ impl PriceProvider for GateService {
                     };
 
                     if is_target_chain && self.client.is_valid_address(contract_address) {
-                        self.symbol_to_contract.insert(
-                            pair.id.clone(),
-                            contract_address.clone(),
-                        );
-                        self.contract_to_symbol.insert(
-                            contract_address.to_lowercase(),
-                            pair.id.clone(),
-                        );
+                        self.symbol_to_contract
+                            .insert(pair.id.clone(), contract_address.clone());
+                        self.contract_to_symbol
+                            .insert(contract_address.to_lowercase(), pair.id.clone());
                         contract_count += 1;
                         break;
                     } else if is_target_chain {
@@ -404,10 +421,7 @@ impl PriceProvider for GateService {
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        log::info!(
-            "Starting {} WebSocket connections",
-            connection_chunks.len()
-        );
+        log::info!("Starting {} WebSocket connections", connection_chunks.len());
 
         // Start multiple WebSocket connections concurrently
         let mut connection_handles = Vec::new();

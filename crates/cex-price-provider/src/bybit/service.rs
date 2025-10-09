@@ -1,6 +1,6 @@
 use crate::bybit::client::BybitClient;
 use crate::{FilterAddressType, PriceProvider, TokenPrice};
-use anyhow::{ Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures_util::{future::try_join_all, SinkExt, StreamExt};
@@ -41,7 +41,7 @@ struct SubscriptionRequest {
 
 pub struct BybitService {
     client: BybitClient,
-    price_cache: Arc<DashMap<String, TokenPrice>>,  // Maps contract_address -> TokenPrice
+    price_cache: Arc<DashMap<String, TokenPrice>>, // Maps contract_address -> TokenPrice
     symbol_to_contract: Arc<DashMap<String, String>>, // Maps symbol -> contract_address
     contract_to_symbol: Arc<DashMap<String, String>>, // Maps contract_address -> symbol
 }
@@ -257,11 +257,7 @@ impl BybitService {
         }
 
         // Log subscription confirmations and other messages at debug level
-        log::debug!(
-            "Connection {}: Received message: {}",
-            connection_id,
-            text
-        );
+        log::debug!("Connection {}: Received message: {}", connection_id, text);
         Ok(())
     }
 }
@@ -312,7 +308,9 @@ impl PriceProvider for BybitService {
                     for chain in &coin.chains {
                         let is_target_chain = match self.client.address_type {
                             FilterAddressType::Ethereum => chain.chain_type == "Ethereum",
-                            FilterAddressType::Solana => chain.chain_type == "Solana" || chain.chain == "SOL",
+                            FilterAddressType::Solana => {
+                                chain.chain_type == "Solana" || chain.chain == "SOL"
+                            }
                         };
 
                         // Only include if:
@@ -321,7 +319,10 @@ impl PriceProvider for BybitService {
                         // 3. Contract address is valid for the chain type
                         if is_target_chain && !chain.contract_address.is_empty() {
                             // Validate the contract address format
-                            if !self.client.is_valid_contract_address(&chain.contract_address) {
+                            if !self
+                                .client
+                                .is_valid_contract_address(&chain.contract_address)
+                            {
                                 log::debug!(
                                     "Skipping invalid contract address for {}: {}",
                                     coin.coin,
@@ -335,11 +336,11 @@ impl PriceProvider for BybitService {
                                 if pair.base_coin == coin.coin {
                                     self.symbol_to_contract.insert(
                                         pair.symbol.clone(),
-                                        chain.contract_address.clone()
+                                        chain.contract_address.clone(),
                                     );
                                     self.contract_to_symbol.insert(
                                         chain.contract_address.to_lowercase(),
-                                        pair.symbol.clone()
+                                        pair.symbol.clone(),
                                     );
 
                                     log::debug!(
@@ -422,7 +423,8 @@ impl PriceProvider for BybitService {
 
         if symbols.is_empty() {
             log::error!("No symbols to subscribe to after filtering. This means:");
-            log::error!("  - No coins have valid {} contract addresses on Bybit",
+            log::error!(
+                "  - No coins have valid {} contract addresses on Bybit",
                 match self.client.address_type {
                     FilterAddressType::Ethereum => "Ethereum",
                     FilterAddressType::Solana => "Solana",

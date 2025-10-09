@@ -96,7 +96,10 @@ impl BitgetClient {
         log::debug!("Symbols response: {}", response_text);
 
         let bitget_response: BitgetResponse<Vec<SymbolInfo>> = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse symbols response: {}", response_text))?;
+            .context(format!(
+                "Failed to parse symbols response: {}",
+                response_text
+            ))?;
 
         if bitget_response.code != "00000" {
             return Err(anyhow::anyhow!(
@@ -125,10 +128,7 @@ impl BitgetClient {
 
     /// Get currency information including contract addresses
     pub async fn get_coin_info(&self, coin: &str) -> Result<Vec<CurrencyInfo>> {
-        let url = format!(
-            "{}/api/v2/spot/public/coins?coin={}",
-            self.base_url, coin
-        );
+        let url = format!("{}/api/v2/spot/public/coins?coin={}", self.base_url, coin);
 
         log::debug!("Fetching coin info for {} from: {}", coin, url);
 
@@ -146,8 +146,11 @@ impl BitgetClient {
 
         log::debug!("Coin info raw response: {}", response_text);
 
-        let bitget_response: BitgetResponse<Vec<CurrencyInfo>> = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse coin info response: {}", response_text))?;
+        let bitget_response: BitgetResponse<Vec<CurrencyInfo>> =
+            serde_json::from_str(&response_text).context(format!(
+                "Failed to parse coin info response: {}",
+                response_text
+            ))?;
 
         if bitget_response.code != "00000" {
             return Err(anyhow::anyhow!(
@@ -180,7 +183,10 @@ impl BitgetClient {
             .context("Failed to read orderbook response text")?;
 
         let bitget_response: BitgetResponse<OrderbookData> = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse orderbook response: {}", response_text))?;
+            .context(format!(
+            "Failed to parse orderbook response: {}",
+            response_text
+        ))?;
 
         if bitget_response.code != "00000" {
             return Err(anyhow::anyhow!(

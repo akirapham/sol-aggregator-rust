@@ -133,8 +133,9 @@ impl KucoinService {
                 continue;
             }
 
-            let bullet_response: BulletResponse = serde_json::from_str(&response_text)
-                .context(format!("Failed to parse bullet response: {}", response_text))?;
+            let bullet_response: BulletResponse = serde_json::from_str(&response_text).context(
+                format!("Failed to parse bullet response: {}", response_text),
+            )?;
 
             if bullet_response.code == "429000" {
                 log::warn!("Rate limit code in response, will retry...");
@@ -142,10 +143,7 @@ impl KucoinService {
             }
 
             if bullet_response.code != "200000" {
-                return Err(anyhow!(
-                    "KuCoin bullet API error: {}",
-                    bullet_response.code
-                ));
+                return Err(anyhow!("KuCoin bullet API error: {}", bullet_response.code));
             }
 
             log::info!(
@@ -166,7 +164,10 @@ impl KucoinService {
             return Ok(bullet_response.data);
         }
 
-        Err(anyhow!("Failed to get bullet after {} retries (rate limited)", MAX_RETRIES))
+        Err(anyhow!(
+            "Failed to get bullet after {} retries (rate limited)",
+            MAX_RETRIES
+        ))
     }
 
     async fn start_websocket_connection(
@@ -198,7 +199,10 @@ impl KucoinService {
         let (write, mut read) = ws_stream.split();
         let write = Arc::new(tokio::sync::Mutex::new(write));
 
-        log::info!("Connection {}: WebSocket connected successfully", connection_id);
+        log::info!(
+            "Connection {}: WebSocket connected successfully",
+            connection_id
+        );
 
         // Wait a moment for welcome message
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -219,9 +223,12 @@ impl KucoinService {
                 };
 
                 let subscription = SubscriptionRequest {
-                    id: format!("{}", std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)?
-                        .as_millis()),
+                    id: format!(
+                        "{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_millis()
+                    ),
                     msg_type: "subscribe".to_string(),
                     topic,
                     private_channel: false,
@@ -243,7 +250,9 @@ impl KucoinService {
                     .context("Failed to send subscription message")?;
 
                 // Small delay between subscription batches
-                if batch_num + 1 < (symbols.len() + SYMBOLS_PER_SUBSCRIPTION - 1) / SYMBOLS_PER_SUBSCRIPTION {
+                if batch_num + 1
+                    < (symbols.len() + SYMBOLS_PER_SUBSCRIPTION - 1) / SYMBOLS_PER_SUBSCRIPTION
+                {
                     drop(writer); // Release lock during sleep
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     writer = write.lock().await; // Re-acquire lock
@@ -264,21 +273,28 @@ impl KucoinService {
         let ping_connection_id = connection_id;
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(ping_interval));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_millis(ping_interval));
             loop {
                 interval.tick().await;
                 let ping_msg = PingMessage {
-                    id: format!("{}", std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()),
+                    id: format!(
+                        "{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                    ),
                     msg_type: "ping".to_string(),
                 };
 
                 if let Ok(ping_str) = serde_json::to_string(&ping_msg) {
                     let mut writer = ping_write.lock().await;
                     if let Err(e) = writer.send(WsMessage::Text(ping_str.into())).await {
-                        error!("Connection {}: Failed to send ping: {}", ping_connection_id, e);
+                        error!(
+                            "Connection {}: Failed to send ping: {}",
+                            ping_connection_id, e
+                        );
                         break;
                     }
                     log::debug!("Connection {}: Sent ping", ping_connection_id);
@@ -287,7 +303,10 @@ impl KucoinService {
         });
 
         // Process incoming messages
-        log::info!("Connection {}: Starting to process messages...", connection_id);
+        log::info!(
+            "Connection {}: Starting to process messages...",
+            connection_id
+        );
 
         while let Some(msg) = read.next().await {
             match msg {
@@ -301,16 +320,31 @@ impl KucoinService {
                     );
                 }
                 Ok(WsMessage::Binary(data)) => {
-                    log::debug!("Connection {}: Received binary message ({} bytes)", connection_id, data.len());
+                    log::debug!(
+                        "Connection {}: Received binary message ({} bytes)",
+                        connection_id,
+                        data.len()
+                    );
                 }
                 Ok(WsMessage::Ping(data)) => {
-                    log::debug!("Connection {}: Received ping ({} bytes)", connection_id, data.len());
+                    log::debug!(
+                        "Connection {}: Received ping ({} bytes)",
+                        connection_id,
+                        data.len()
+                    );
                 }
                 Ok(WsMessage::Pong(data)) => {
-                    log::debug!("Connection {}: Received pong ({} bytes)", connection_id, data.len());
+                    log::debug!(
+                        "Connection {}: Received pong ({} bytes)",
+                        connection_id,
+                        data.len()
+                    );
                 }
                 Ok(WsMessage::Close(frame)) => {
-                    warn!("Connection {}: WebSocket closed by server: {:?}", connection_id, frame);
+                    warn!(
+                        "Connection {}: WebSocket closed by server: {:?}",
+                        connection_id, frame
+                    );
                     break;
                 }
                 Ok(WsMessage::Frame(_)) => {
@@ -388,10 +422,18 @@ impl KucoinService {
                             },
                         );
                     } else {
-                        log::warn!("Connection {}: Failed to parse price: {}", connection_id, ticker_msg.data.price);
+                        log::warn!(
+                            "Connection {}: Failed to parse price: {}",
+                            connection_id,
+                            ticker_msg.data.price
+                        );
                     }
                 } else {
-                    log::warn!("Connection {}: Invalid topic format: {}", connection_id, ticker_msg.topic);
+                    log::warn!(
+                        "Connection {}: Invalid topic format: {}",
+                        connection_id,
+                        ticker_msg.topic
+                    );
                 }
             } else {
                 log::debug!(
@@ -402,7 +444,10 @@ impl KucoinService {
                 );
             }
         } else {
-            log::debug!("Connection {}: Failed to parse as ticker message", connection_id);
+            log::debug!(
+                "Connection {}: Failed to parse as ticker message",
+                connection_id
+            );
         }
     }
 }
@@ -410,7 +455,9 @@ impl KucoinService {
 #[async_trait]
 impl PriceProvider for KucoinService {
     async fn get_price(&self, key: &str) -> Option<TokenPrice> {
-        self.price_cache.get(&key.to_lowercase()).map(|entry| entry.value().clone())
+        self.price_cache
+            .get(&key.to_lowercase())
+            .map(|entry| entry.value().clone())
     }
 
     async fn get_all_prices(&self) -> Vec<TokenPrice> {
@@ -442,15 +489,19 @@ impl PriceProvider for KucoinService {
 
         // Fetch contract addresses for each currency in parallel
         // Note: KuCoin's public API provides contract addresses without authentication!
-        log::info!("Fetching currency details for {} pairs in parallel...", pairs.len());
+        log::info!(
+            "Fetching currency details for {} pairs in parallel...",
+            pairs.len()
+        );
 
         // Create a set of unique base currencies to avoid duplicate API calls
-        let unique_currencies: std::collections::HashSet<String> = pairs
-            .iter()
-            .map(|p| p.base_currency.clone())
-            .collect();
+        let unique_currencies: std::collections::HashSet<String> =
+            pairs.iter().map(|p| p.base_currency.clone()).collect();
 
-        log::info!("Found {} unique currencies to query", unique_currencies.len());
+        log::info!(
+            "Found {} unique currencies to query",
+            unique_currencies.len()
+        );
 
         // Fetch all currency details concurrently in batches
         // Use smaller batch size and add delays to respect rate limits
@@ -467,7 +518,10 @@ impl PriceProvider for KucoinService {
                     let client = &self.client;
                     let currency = currency.clone();
                     async move {
-                        (currency.clone(), client.get_currency_detail(&currency).await)
+                        (
+                            currency.clone(),
+                            client.get_currency_detail(&currency).await,
+                        )
                     }
                 })
                 .collect();
@@ -525,24 +579,18 @@ impl PriceProvider for KucoinService {
                 for (chain_name, contract_address) in contracts {
                     let is_target_chain = match self.client.address_type {
                         FilterAddressType::Ethereum => {
-                            chain_name.to_lowercase().contains("eth") ||
-                            chain_name == "ERC20"
+                            chain_name.to_lowercase().contains("eth") || chain_name == "ERC20"
                         }
                         FilterAddressType::Solana => {
-                            chain_name.to_lowercase().contains("sol") ||
-                            chain_name == "SPL"
+                            chain_name.to_lowercase().contains("sol") || chain_name == "SPL"
                         }
                     };
 
                     if is_target_chain && self.client.is_valid_address(contract_address) {
-                        self.symbol_to_contract.insert(
-                            pair.symbol.clone(),
-                            contract_address.clone(),
-                        );
-                        self.contract_to_symbol.insert(
-                            contract_address.to_lowercase(),
-                            pair.symbol.clone(),
-                        );
+                        self.symbol_to_contract
+                            .insert(pair.symbol.clone(), contract_address.clone());
+                        self.contract_to_symbol
+                            .insert(contract_address.to_lowercase(), pair.symbol.clone());
                         contract_count += 1;
                         break;
                     } else if is_target_chain {
@@ -599,10 +647,7 @@ impl PriceProvider for KucoinService {
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        log::info!(
-            "Starting {} WebSocket connections",
-            connection_chunks.len()
-        );
+        log::info!("Starting {} WebSocket connections", connection_chunks.len());
 
         // Start multiple WebSocket connections concurrently
         let mut connection_handles = Vec::new();

@@ -110,8 +110,8 @@ impl KyberClient {
         );
 
         // Get client ID from environment variable
-        let client_id = std::env::var("KYBER_CLIENT_ID")
-            .unwrap_or_else(|_| "my-trade-eth".to_string());
+        let client_id =
+            std::env::var("KYBER_CLIENT_ID").unwrap_or_else(|_| "my-trade-eth".to_string());
 
         let response = self
             .client
@@ -145,8 +145,13 @@ impl KyberClient {
         token_out: &str,
         amount_in_wei: &str,
     ) -> Result<(String, String)> {
-        let route = self.get_swap_route(token_in, token_out, amount_in_wei).await?;
-        Ok((route.data.route_summary.amount_out, route.data.route_summary.gas_usd))
+        let route = self
+            .get_swap_route(token_in, token_out, amount_in_wei)
+            .await?;
+        Ok((
+            route.data.route_summary.amount_out,
+            route.data.route_summary.gas_usd,
+        ))
     }
 }
 
@@ -165,11 +170,13 @@ mod tests {
 
         // This will make a real HTTP call and print the log, then fail
         // We just want to see the log output
-        let result = client.get_swap_route(
-            "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-            "0xa0ef786bf476fe0810408caba05e536ac800ff86",
-            "1000000000"
-        ).await;
+        let result = client
+            .get_swap_route(
+                "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+                "0xa0ef786bf476fe0810408caba05e536ac800ff86",
+                "1000000000",
+            )
+            .await;
         assert!(result.is_ok());
     }
 }

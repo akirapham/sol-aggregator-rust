@@ -1,6 +1,9 @@
 use std::str::FromStr;
 
-use crate::{mexc::{ ExchangeInfo, SymbolInfo }, FilterAddressType};
+use crate::{
+    mexc::{ExchangeInfo, SymbolInfo},
+    FilterAddressType,
+};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;

@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
 
     // Test orderbook estimation
     println!("\n=== Orderbook Sell Estimation ===");
-    
+
     // You would need to know the contract address to use this
     // For now, just demonstrate the API
     println!("Note: Use contract addresses as keys when available");

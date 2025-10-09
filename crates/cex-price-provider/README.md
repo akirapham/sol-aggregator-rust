@@ -6,9 +6,10 @@ This crate provides real-time cryptocurrency price streaming from multiple centr
 
 | Exchange | Auth Required | Contract Addresses | Status |
 |----------|---------------|-------------------|--------|
-| **MEXC** | ❌ No | ✅ Public API | ✅ Ready |
+| **Bitget** | ❌ No | ✅ Public API | ✅ Ready |
 | **Bybit** | ✅ Yes | ⚠️ Requires Auth | ✅ Ready |
 | **KuCoin** | ❌ No | ✅ Public API | ✅ Ready |
+| **MEXC** | ❌ No | ✅ Public API | ✅ Ready |
 
 ## Quick Start
 

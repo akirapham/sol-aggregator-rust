@@ -1,4 +1,3 @@
-use crate::types::{PriceProvider, TokenPrice};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -6,6 +5,7 @@ use axum::{
     routing::get,
     Router,
 };
+use cex_price_provider::{PriceProvider, TokenPrice};
 use serde_json::{json, Value};
 use std::sync::Arc;
 

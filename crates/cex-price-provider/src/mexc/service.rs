@@ -1,5 +1,5 @@
 use crate::mexc::client::MexcClient;
-use crate::types::{PriceProvider, TokenPrice};
+use crate::{FilterAddressType, PriceProvider, TokenPrice};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use axum::body::Bytes;
@@ -24,113 +24,13 @@ pub struct MexcService {
 }
 
 impl MexcService {
-    pub async fn new() -> Result<Self> {
-        Ok(Self {
-            client: MexcClient::new(),
+    pub fn new(address_type: FilterAddressType) -> Self {
+        Self {
+            client: MexcClient::new(address_type),
             price_cache: Arc::new(DashMap::new()),
             market_symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_market_symbol: Arc::new(DashMap::new()),
-        })
-    }
-
-    pub async fn start(&self) -> Result<()> {
-        // Get Token USDT pairs
-        let pairs = self.client.get_token_usdt_pairs().await?;
-        log::info!("Found {} Token/USDT pairs", pairs.len());
-
-        if pairs.is_empty() {
-            return Ok(());
         }
-
-        pairs.iter().for_each(|pair| {
-            let contract = pair.contract_address.to_lowercase();
-            self.market_symbol_to_contract
-                .insert(pair.symbol.clone(), contract.clone());
-            self.contract_to_market_symbol
-                .insert(contract, pair.symbol.clone());
-        });
-
-        // Split pairs into chunks for multiple WebSocket connections
-        let market_ids = pairs
-            .iter()
-            .map(|pair| pair.symbol.clone())
-            .collect::<Vec<_>>();
-
-        const MAX_STREAMS_PER_CONNECTION: usize = 15; // Using 15 instead of 30 for safety margin
-        let connection_chunks: Vec<Vec<String>> = market_ids
-            .chunks(MAX_STREAMS_PER_CONNECTION)
-            .map(|chunk| chunk.to_vec())
-            .collect();
-
-        info!(
-            "Creating {} WebSocket connections for {} markets",
-            connection_chunks.len(),
-            market_ids.len()
-        );
-
-        // Start multiple WebSocket connections concurrently
-        let mut connection_handles = Vec::new();
-
-        for (connection_id, chunk) in connection_chunks.into_iter().enumerate() {
-            let price_cache = self.price_cache.clone();
-            let market_symbol_to_contract = self.market_symbol_to_contract.clone();
-
-            let handle = tokio::spawn(async move {
-                loop {
-                    info!(
-                        "Starting WebSocket connection {} for {} markets",
-                        connection_id,
-                        chunk.len()
-                    );
-
-                    if let Err(e) = Self::start_websocket_connection(
-                        connection_id,
-                        &chunk,
-                        &price_cache,
-                        &market_symbol_to_contract,
-                    )
-                    .await
-                    {
-                        error!("WebSocket connection {} failed: {}", connection_id, e);
-                        info!("Reconnecting connection {} in 5 seconds...", connection_id);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                        continue;
-                    }
-
-                    info!(
-                        "WebSocket connection {} ended, reconnecting in 5 seconds...",
-                        connection_id
-                    );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                }
-            });
-
-            connection_handles.push(handle);
-        }
-
-        // Start a background task to log statistics periodically
-        let stats_price_cache = self.price_cache.clone();
-        let stats_market_map = self.market_symbol_to_contract.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-            loop {
-                interval.tick().await;
-
-                let token_count = stats_price_cache.len();
-                let market_count = stats_market_map.len();
-
-                info!(
-                    "MEXC Service Stats - Tokens: {}, Markets: {}",
-                    token_count, market_count
-                );
-            }
-        });
-
-        // Wait for all connections (they should run indefinitely)
-        let results: Result<Vec<_>, _> = try_join_all(connection_handles).await;
-        results.context("One or more WebSocket connections failed")?;
-
-        Ok(())
     }
 
     async fn start_websocket_connection(
@@ -270,11 +170,10 @@ impl MexcService {
                                             .strip_suffix("USDT")
                                             .unwrap_or(&market_symbol)
                                             .to_string(),
-                                        price: f64::from_str(&deal.price).unwrap_or(0.0),
-                                        timestamp: deal.time,
+                                        price: f64::from_str(&deal.price).unwrap_or(0.0)
                                     };
                                     price_cache
-                                        .insert(contract_address.value().clone(), price.clone());
+                                        .insert(contract_address.value().clone(), price);
                                 }
                             }
                         },
@@ -338,6 +237,106 @@ impl PriceProvider for MexcService {
             .iter()
             .map(|entry| entry.value().clone())
             .collect()
+    }
+
+    async fn start(&self) -> Result<()> {
+        // Get Token USDT pairs
+        let pairs = self.client.get_token_usdt_pairs().await?;
+        log::info!("Found {} Token/USDT pairs", pairs.len());
+
+        if pairs.is_empty() {
+            return Ok(());
+        }
+
+        pairs.iter().for_each(|pair| {
+            let contract = pair.contract_address.to_lowercase();
+            self.market_symbol_to_contract
+                .insert(pair.symbol.clone(), contract.clone());
+            self.contract_to_market_symbol
+                .insert(contract, pair.symbol.clone());
+        });
+
+        // Split pairs into chunks for multiple WebSocket connections
+        let market_ids = pairs
+            .iter()
+            .map(|pair| pair.symbol.clone())
+            .collect::<Vec<_>>();
+
+        const MAX_STREAMS_PER_CONNECTION: usize = 15; // Using 15 instead of 30 for safety margin
+        let connection_chunks: Vec<Vec<String>> = market_ids
+            .chunks(MAX_STREAMS_PER_CONNECTION)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+
+        info!(
+            "Creating {} WebSocket connections for {} markets",
+            connection_chunks.len(),
+            market_ids.len()
+        );
+
+        // Start multiple WebSocket connections concurrently
+        let mut connection_handles = Vec::new();
+
+        for (connection_id, chunk) in connection_chunks.into_iter().enumerate() {
+            let price_cache = self.price_cache.clone();
+            let market_symbol_to_contract = self.market_symbol_to_contract.clone();
+
+            let handle = tokio::spawn(async move {
+                loop {
+                    info!(
+                        "Starting WebSocket connection {} for {} markets",
+                        connection_id,
+                        chunk.len()
+                    );
+
+                    if let Err(e) = Self::start_websocket_connection(
+                        connection_id,
+                        &chunk,
+                        &price_cache,
+                        &market_symbol_to_contract,
+                    )
+                    .await
+                    {
+                        error!("WebSocket connection {} failed: {}", connection_id, e);
+                        info!("Reconnecting connection {} in 5 seconds...", connection_id);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+
+                    info!(
+                        "WebSocket connection {} ended, reconnecting in 5 seconds...",
+                        connection_id
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                }
+            });
+
+            connection_handles.push(handle);
+        }
+
+        // Start a background task to log statistics periodically
+        let stats_price_cache = self.price_cache.clone();
+        let stats_market_map = self.market_symbol_to_contract.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+
+                let token_count = stats_price_cache.len();
+                let market_count = stats_market_map.len();
+
+                info!(
+                    "MEXC Service Stats - Tokens: {}, Markets: {}",
+                    token_count, market_count
+                );
+            }
+        });
+
+        // Wait for all connections (they should run indefinitely)
+        let results: Result<Vec<_>, _> = try_join_all(connection_handles).await;
+        results.context("One or more WebSocket connections failed")?;
+
+        Ok(())
     }
 }
 

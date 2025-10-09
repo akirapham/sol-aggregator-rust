@@ -1,5 +1,7 @@
 use anyhow::Result;
 use axum::Router;
+use cex_price_provider::mexc::{MexcService};
+use cex_price_provider::PriceProvider;
 use dashmap::DashMap;
 use dotenv::dotenv;
 use log::{error, info};
@@ -11,14 +13,11 @@ use tracing_subscriber;
 mod api;
 mod dex_price;
 mod kyber;
-mod mexc;
 mod types;
-
 use dex_price::{DexPriceClient, DexPriceConfig};
 use kyber::KyberClient;
-use mexc::MexcService;
 
-use crate::types::{PriceProvider, TokenPriceUpdate};
+use crate::types::TokenPriceUpdate;
 
 /// Simulate arbitrage opportunity and log results
 async fn process_arbitrage(
@@ -42,7 +41,7 @@ async fn process_arbitrage(
     // Step 1: Get real quote from KyberSwap for USDT → Token swap
     // Convert USDT amount to wei (USDT has 6 decimals)
     let usdt_amount_wei = (arb_amount_usdt * 1_000_000.0) as u64;
-    let mut gas_fee_usd: f64 = 0.0;
+    let gas_fee_usd: f64;
 
     let tokens_from_dex = match kyber_client
         .estimate_swap_output(
@@ -133,7 +132,7 @@ async fn main() -> Result<()> {
     info!("Starting CEX Pricing Service");
 
     info!("Initializing MEXC service...");
-    let mexc_service = Arc::new(MexcService::new().await?);
+    let mexc_service = Arc::new(MexcService::new(cex_price_provider::FilterAddressType::Ethereum));
     info!("MEXC service initialized successfully");
 
     info!("Initializing KyberSwap client...");

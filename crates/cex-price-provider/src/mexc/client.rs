@@ -1,7 +1,10 @@
-use crate::types::{ExchangeInfo, SymbolInfo};
+use std::str::FromStr;
+
+use crate::{mexc::{ ExchangeInfo, SymbolInfo }, FilterAddressType};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
+use solana_sdk::pubkey::Pubkey;
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -13,13 +16,15 @@ pub struct OrderbookResponse {
 pub struct MexcClient {
     client: Client,
     base_url: String,
+    address_type: FilterAddressType,
 }
 
 impl MexcClient {
-    pub fn new() -> Self {
+    pub fn new(address_type: FilterAddressType) -> Self {
         Self {
             client: Client::new(),
             base_url: "https://api.mexc.com".to_string(),
+            address_type,
         }
     }
 
@@ -65,7 +70,7 @@ impl MexcClient {
                 // Check if it's paired with USDT and is a valid ethereum contract address
                 symbol.quote_asset == "USDT"
                     && symbol.status == "1"
-                    && Self::is_valid_ethereum_address(&symbol.contract_address)
+                    && self.is_valid_address(&symbol.contract_address)
                     && symbol.permissions.contains(&"SPOT".to_string())
             })
             .collect();
@@ -76,6 +81,13 @@ impl MexcClient {
         );
 
         Ok(symbols)
+    }
+
+    fn is_valid_address(&self, address: &str) -> bool {
+        match self.address_type {
+            FilterAddressType::Solana => Pubkey::from_str(address).is_ok(),
+            FilterAddressType::Ethereum => Self::is_valid_ethereum_address(address),
+        }
     }
 
     /// Fetch orderbook for a specific symbol

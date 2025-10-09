@@ -8,6 +8,7 @@ members = [
   "amm-eth",
   "crates/binance-price-stream",
   "arbitrade-eth",
+  "crates/cex-price-provider"
 ]
 default-members = ["aggregator"]
 

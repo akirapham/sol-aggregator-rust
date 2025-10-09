@@ -1,5 +1,6 @@
 pub mod bitget;
 pub mod bybit;
+pub mod gate;
 pub mod kucoin;
 pub mod mexc;
 use anyhow::Result;

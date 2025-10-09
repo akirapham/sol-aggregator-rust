@@ -49,6 +49,10 @@ name = "bybit_auth"
 path = "examples/bybit_auth.rs"
 
 [[example]]
+name = "gate"
+path = "examples/gate.rs"
+
+[[example]]
 name = "kucoin"
 path = "examples/kucoin.rs"
 

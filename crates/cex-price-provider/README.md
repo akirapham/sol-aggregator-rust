@@ -8,6 +8,7 @@ This crate provides real-time cryptocurrency price streaming from multiple centr
 |----------|---------------|-------------------|--------|
 | **Bitget** | ❌ No | ✅ Public API | ✅ Ready |
 | **Bybit** | ✅ Yes | ⚠️ Requires Auth | ✅ Ready |
+| **Gate.io** | ❌ No | ✅ Public API | ✅ Ready |
 | **KuCoin** | ❌ No | ✅ Public API | ✅ Ready |
 | **MEXC** | ❌ No | ✅ Public API | ✅ Ready |
 

@@ -1,3 +1,4 @@
+pub mod bitget;
 pub mod bybit;
 pub mod kucoin;
 pub mod mexc;

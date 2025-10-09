@@ -37,6 +37,10 @@ dotenv = { workspace = true }
 [features]
 
 [[example]]
+name = "bitget"
+path = "examples/bitget.rs"
+
+[[example]]
 name = "bybit"
 path = "examples/bybit.rs"
 

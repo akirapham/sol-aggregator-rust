@@ -1,8 +1,7 @@
 use crate::bybit::client::BybitClient;
 use crate::{FilterAddressType, PriceProvider, TokenPrice};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{ Context, Result};
 use async_trait::async_trait;
-use axum::body::Bytes;
 use dashmap::DashMap;
 use futures_util::{future::try_join_all, SinkExt, StreamExt};
 use log::{error, info, warn};

@@ -106,7 +106,7 @@ impl GateService {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
             loop {
                 interval.tick().await;
-                
+
                 let ping_msg = serde_json::json!({
                     "time": std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

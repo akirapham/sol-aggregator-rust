@@ -23,19 +23,19 @@ use cex_price_provider::{FilterAddressType, PriceProvider};
 async fn main() -> anyhow::Result<()> {
     // Create service filtered for Ethereum tokens
     let service = GateService::new(FilterAddressType::Ethereum);
-    
+
     // Start WebSocket connections in background
     tokio::spawn(async move {
         service.start().await
     });
-    
+
     // Wait for data to populate
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    
+
     // Get all prices
     let prices = service.get_all_prices().await;
     println!("Tracking {} tokens", prices.len());
-    
+
     Ok(())
 }
 ```

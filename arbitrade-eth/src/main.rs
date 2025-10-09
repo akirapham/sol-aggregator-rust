@@ -269,17 +269,22 @@ async fn process_arbitrage(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    eprintln!("DEBUG: main() started");
+    eprintln!("DEBUG: main() started at {:?}", std::time::SystemTime::now());
+    std::io::Write::flush(&mut std::io::stderr()).ok();
 
     // Load environment variables from .env file
     dotenv().ok();
     eprintln!("DEBUG: dotenv loaded");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
 
     // Initialize logging
     tracing_subscriber::fmt::init();
     eprintln!("DEBUG: tracing initialized");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
 
     info!("Starting CEX Pricing Service with Multi-CEX Support");
+    eprintln!("INFO: Starting CEX Pricing Service with Multi-CEX Support");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
 
     // Initialize all CEX services
     info!("Initializing CEX services...");
@@ -548,17 +553,49 @@ async fn main() -> Result<()> {
 
     // Start HTTP API server
     info!("Starting HTTP API server...");
+    eprintln!("DEBUG: Starting HTTP API server...");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
+
     let app = Router::new()
         .merge(api::create_router(mexc_service))
         .layer(CorsLayer::permissive());
 
     info!("Binding to 0.0.0.0:3001...");
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await?;
-    info!("Successfully bound to 0.0.0.0:3001");
+    eprintln!("DEBUG: Binding to 0.0.0.0:3001...");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
+
+    let listener = match tokio::net::TcpListener::bind("0.0.0.0:3001").await {
+        Ok(l) => {
+            info!("Successfully bound to 0.0.0.0:3001");
+            eprintln!("DEBUG: Successfully bound to 0.0.0.0:3001");
+            std::io::Write::flush(&mut std::io::stderr()).ok();
+            l
+        }
+        Err(e) => {
+            error!("Failed to bind to 0.0.0.0:3001: {}", e);
+            eprintln!("ERROR: Failed to bind to 0.0.0.0:3001: {}", e);
+            std::io::Write::flush(&mut std::io::stderr()).ok();
+            return Err(e.into());
+        }
+    };
 
     info!("Starting axum server...");
-    axum::serve(listener, app).await?;
+    eprintln!("DEBUG: Starting axum server, entering main loop...");
+    std::io::Write::flush(&mut std::io::stderr()).ok();
 
-    info!("Server shutdown gracefully");
-    Ok(())
+    // Keep the main function alive by running the server
+    match axum::serve(listener, app).await {
+        Ok(_) => {
+            info!("Server shutdown gracefully");
+            eprintln!("DEBUG: Server shutdown gracefully");
+            std::io::Write::flush(&mut std::io::stderr()).ok();
+            Ok(())
+        }
+        Err(e) => {
+            error!("Axum server error: {}", e);
+            eprintln!("ERROR: Axum server error: {}", e);
+            std::io::Write::flush(&mut std::io::stderr()).ok();
+            Err(e.into())
+        }
+    }
 }

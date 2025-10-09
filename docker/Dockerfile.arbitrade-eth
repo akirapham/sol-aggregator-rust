@@ -48,6 +48,7 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+  curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
@@ -70,5 +71,12 @@ RUN chown -R arbitrade-eth:arbitrade-eth /app
 # Switch to non-root user
 USER arbitrade-eth
 
-# Run the application
-CMD ["./arbitrade-eth"]
+# Expose port
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:3001/health || exit 1
+
+# Run the application with explicit path and output
+CMD ["/app/arbitrade-eth"]

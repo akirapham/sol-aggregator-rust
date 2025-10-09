@@ -29,8 +29,24 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 mexc-proto = { path = "../mexc-proto" }
 solana-sdk = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+dotenv = { workspace = true }
 
 [features]
+
+[[example]]
+name = "bybit"
+path = "examples/bybit.rs"
+
+[[example]]
+name = "bybit_auth"
+path = "examples/bybit_auth.rs"
+
+[[example]]
+name = "mexc"
+path = "examples/mexc.rs"
 
 [build-dependencies]
 prost-build = { workspace = true }

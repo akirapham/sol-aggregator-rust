@@ -1,3 +1,4 @@
+pub mod bybit;
 pub mod mexc;
 use anyhow::Result;
 use async_trait::async_trait;

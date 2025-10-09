@@ -560,20 +560,27 @@ async fn main() -> Result<()> {
         .merge(api::create_router(mexc_service))
         .layer(CorsLayer::permissive());
 
-    info!("Binding to 0.0.0.0:3001...");
-    eprintln!("DEBUG: Binding to 0.0.0.0:3001...");
+    // Read port from ARBITRADE_PORT environment variable, default to 3001
+    let port = env::var("ARBITRADE_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(3001);
+    let bind_addr = format!("0.0.0.0:{}", port);
+
+    info!("Binding to {}...", bind_addr);
+    eprintln!("DEBUG: Binding to {}...", bind_addr);
     std::io::Write::flush(&mut std::io::stderr()).ok();
 
-    let listener = match tokio::net::TcpListener::bind("0.0.0.0:3001").await {
+    let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
         Ok(l) => {
-            info!("Successfully bound to 0.0.0.0:3001");
-            eprintln!("DEBUG: Successfully bound to 0.0.0.0:3001");
+            info!("Successfully bound to {}", bind_addr);
+            eprintln!("DEBUG: Successfully bound to {}", bind_addr);
             std::io::Write::flush(&mut std::io::stderr()).ok();
             l
         }
         Err(e) => {
-            error!("Failed to bind to 0.0.0.0:3001: {}", e);
-            eprintln!("ERROR: Failed to bind to 0.0.0.0:3001: {}", e);
+            error!("Failed to bind to {}: {}", bind_addr, e);
+            eprintln!("ERROR: Failed to bind to {}: {}", bind_addr, e);
             std::io::Write::flush(&mut std::io::stderr()).ok();
             return Err(e.into());
         }

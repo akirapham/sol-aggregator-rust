@@ -338,6 +338,10 @@ impl PriceProvider for MexcService {
 
         Ok(())
     }
+
+    fn get_price_provider_name(&self) -> &'static str {
+        "MEXC"
+    }
 }
 
 impl MexcService {

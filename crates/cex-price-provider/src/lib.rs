@@ -23,4 +23,5 @@ pub trait PriceProvider {
     async fn get_all_prices(&self) -> Vec<TokenPrice>;
     async fn get_prices(&self, mints: &Vec<String>) -> Vec<Option<TokenPrice>>;
     async fn start(&self) -> Result<()>;
+    fn get_price_provider_name(&self) -> &'static str;
 }

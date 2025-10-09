@@ -511,6 +511,10 @@ impl PriceProvider for BybitService {
 
         Ok(())
     }
+
+    fn get_price_provider_name(&self) -> &'static str {
+        "Bybit"
+    }
 }
 
 impl BybitService {

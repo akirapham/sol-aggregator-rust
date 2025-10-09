@@ -208,7 +208,7 @@ impl KucoinService {
         // Format: /market/ticker:SYMBOL1,SYMBOL2,SYMBOL3
         // But there's a limit, so we batch them
         const SYMBOLS_PER_SUBSCRIPTION: usize = 10;
-        
+
         {
             let mut writer = write.lock().await;
             for (batch_num, chunk) in symbols.chunks(SYMBOLS_PER_SUBSCRIPTION).enumerate() {
@@ -217,7 +217,7 @@ impl KucoinService {
                 } else {
                     format!("/market/ticker:{}", chunk.join(","))
                 };
-                
+
                 let subscription = SubscriptionRequest {
                     id: format!("{}", std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)?
@@ -341,12 +341,12 @@ impl KucoinService {
             log::info!("Connection {}: Received welcome message", connection_id);
             return;
         }
-        
+
         if text.contains("\"type\":\"ack\"") {
             log::debug!("Connection {}: Received ack message", connection_id);
             return;
         }
-        
+
         if text.contains("\"type\":\"pong\"") {
             log::debug!("Connection {}: Received pong message", connection_id);
             return;
@@ -673,6 +673,10 @@ impl PriceProvider for KucoinService {
         results.context("One or more WebSocket connections failed")?;
 
         Ok(())
+    }
+
+    fn get_price_provider_name(&self) -> &'static str {
+        "KuCoin"
     }
 }
 

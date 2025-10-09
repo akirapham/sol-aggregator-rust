@@ -31,6 +31,15 @@ abigen!(
     ]"#
 );
 
+// Uniswap V4 PoolManager ABI - Swap event with PoolId
+// V4 uses a singleton PoolManager contract for all pools
+abigen!(
+    UniswapV4PoolManager,
+    r#"[
+        event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
+    ]"#
+);
+
 // Multicall3 contract for batching calls
 abigen!(
     Multicall3,
@@ -57,6 +66,8 @@ pub struct EthSwapListener {
     price_store: PriceStore,
     // Cache for token pairs: pool_address -> (token0, token1, decimals0, decimals1)
     token_pair_cache: Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+    // Cache for V4 pool IDs: pool_id (bytes32) -> (token0, token1, decimals0, decimals1, pool_address)
+    v4_pool_id_cache: Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
     // Cache for token decimals: token_address -> decimals
     token_decimal_cache: Arc<DashMap<Address, u8>>,
     // Semaphore to limit concurrent event processing
@@ -76,6 +87,7 @@ impl EthSwapListener {
             config,
             price_store,
             token_pair_cache: Arc::new(DashMap::new()),
+            v4_pool_id_cache: Arc::new(DashMap::new()),
             token_decimal_cache: Arc::new(DashMap::new()),
             processing_semaphore,
         })
@@ -93,7 +105,7 @@ impl EthSwapListener {
 
     /// Start listening to swap events
     pub async fn start(&self) -> Result<()> {
-        info!("Starting Ethereum swap event listener");
+        info!("Starting Ethereum swap event listener (V2, V3, V4)");
 
         // Subscribe to Uniswap V2 Sync events
         let v2_handle = {
@@ -134,8 +146,30 @@ impl EthSwapListener {
             })
         };
 
-        // Wait for both listeners
-        let _ = tokio::try_join!(v2_handle, v3_handle)?;
+        // Subscribe to Uniswap V4 swap events
+        let v4_handle = {
+            let websocket_url = self.config.websocket_url.clone();
+            let price_store = self.price_store.clone();
+            let config = self.config.clone();
+            let v4_cache = self.v4_pool_id_cache.clone();
+            let semaphore = self.processing_semaphore.clone();
+            tokio::spawn(async move {
+                if let Err(e) = Self::listen_v4_swaps(
+                    websocket_url,
+                    price_store,
+                    config,
+                    v4_cache,
+                    semaphore,
+                )
+                .await
+                {
+                    error!("Uniswap V4 listener error: {}", e);
+                }
+            })
+        };
+
+        // Wait for all three listeners
+        let _ = tokio::try_join!(v2_handle, v3_handle, v4_handle)?;
 
         Ok(())
     }
@@ -963,4 +997,331 @@ impl EthSwapListener {
             }
         }
     }
+
+    /// Listen to Uniswap V4 swap events with auto-reconnection and ping
+    /// V4 uses a singleton PoolManager contract (0x000000000004444c5dc75cB358380D2e3dE08A90)
+    async fn listen_v4_swaps(
+        websocket_url: String,
+        price_store: PriceStore,
+        config: EthConfig,
+        v4_cache: Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+        semaphore: Arc<Semaphore>,
+    ) -> Result<()> {
+        info!("Starting Uniswap V4 swap listener with auto-reconnection");
+
+        let mut reconnect_delay = Duration::from_secs(5);
+        let max_reconnect_delay = Duration::from_secs(300); // 5 minutes max
+
+        loop {
+            info!(
+                "Connecting to Ethereum WebSocket for V4 events: {} (reconnect delay: {:?})",
+                websocket_url, reconnect_delay
+            );
+
+            match Ws::connect(&websocket_url).await {
+                Ok(ws) => {
+                    let provider = Arc::new(Provider::new(ws));
+                    info!("Connected to Ethereum network for V4 events");
+
+                    match Self::listen_v4_swaps_with_provider(
+                        provider,
+                        &price_store,
+                        &config,
+                        &v4_cache,
+                        &semaphore,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!("V4 swap listener completed normally");
+                            break;
+                        }
+                        Err(e) => {
+                            error!("V4 swap listener error: {}", e);
+                            // Reset reconnect delay on successful connection but error
+                            reconnect_delay = Duration::from_secs(5);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect to Ethereum WebSocket for V4: {}", e);
+                }
+            }
+
+            // Exponential backoff for reconnection
+            warn!("Reconnecting V4 swap listener in {:?}...", reconnect_delay);
+            tokio::time::sleep(reconnect_delay).await;
+
+            // Increase delay for next attempt (exponential backoff)
+            reconnect_delay = std::cmp::min(reconnect_delay * 2, max_reconnect_delay);
+        }
+
+        Ok(())
+    }
+
+    /// Listen to V4 events with a connected provider
+    async fn listen_v4_swaps_with_provider(
+        provider: Arc<Provider<Ws>>,
+        price_store: &PriceStore,
+        config: &EthConfig,
+        v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+        semaphore: &Arc<Semaphore>,
+    ) -> Result<()> {
+        // V4 PoolManager address on Ethereum mainnet
+        let v4_pool_manager: Address = "0x000000000004444c5dc75cB358380D2e3dE08A90"
+            .parse()
+            .context("Invalid V4 PoolManager address")?;
+
+        // Create a filter for V4 Swap events from the PoolManager contract
+        // event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
+        let swap_filter = Filter::new()
+            .address(v4_pool_manager)
+            .event("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)");
+
+        let mut stream = provider
+            .subscribe_logs(&swap_filter)
+            .await
+            .context("Failed to subscribe to V4 swap events")?;
+
+        info!("Subscribed to Uniswap V4 swap events from PoolManager");
+
+        // Start ping task to keep connection alive
+        let ping_provider = provider.clone();
+        let ping_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            let mut consecutive_failures = 0;
+            const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+
+            loop {
+                interval.tick().await;
+                // Send a simple ping by requesting the latest block number
+                match ping_provider.get_block_number().await {
+                    Ok(block_num) => {
+                        consecutive_failures = 0;
+                        debug!("V4 WebSocket ping successful, block: {}", block_num);
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        error!(
+                            "V4 Ping failed ({} consecutive), connection may be broken: {}",
+                            consecutive_failures, e
+                        );
+
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                            error!(
+                                "V4 Too many consecutive ping failures, triggering reconnection"
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let result = async {
+            let mut event_count = 0;
+            let mut last_event_time = std::time::Instant::now();
+            let mut timeout_check_interval = tokio::time::interval(std::time::Duration::from_secs(5));
+
+            loop {
+                tokio::select! {
+                    // Handle incoming events
+                    log = stream.next() => {
+                        match log {
+                            Some(log) => {
+                                event_count += 1;
+                                last_event_time = std::time::Instant::now();
+
+                                // Acquire semaphore permit before spawning task
+                                let permit = semaphore.clone().acquire_owned().await.unwrap();
+
+                                // Spawn processing task to not block the stream
+                                let provider_clone = provider.clone();
+                                let price_store_clone = price_store.clone();
+                                let config_clone = config.clone();
+                                let v4_cache_clone = v4_cache.clone();
+
+                                tokio::spawn(async move {
+                                    // Permit will be dropped when task completes
+                                    let _permit = permit;
+
+                                    if let Err(e) = Self::process_v4_swap_log(
+                                        log,
+                                        &provider_clone,
+                                        &price_store_clone,
+                                        &config_clone,
+                                        &v4_cache_clone,
+                                    )
+                                    .await
+                                    {
+                                        error!("Error processing V4 swap: {}", e);
+                                    }
+                                });
+                            }
+                            None => {
+                                // Stream ended
+                                warn!("V4 Event stream ended (received None)");
+                                break;
+                            }
+                        }
+                    }
+
+                    // Periodic timeout check
+                    _ = timeout_check_interval.tick() => {
+                        // Check if ping task has failed (connection issues)
+                        if ping_handle.is_finished() {
+                            match ping_handle.await {
+                                Ok(_) => {
+                                    warn!("V4 Ping task completed normally");
+                                    return Err(anyhow::anyhow!("V4 Ping task ended unexpectedly"));
+                                }
+                                Err(e) => {
+                                    error!("V4 Ping task panicked: {}", e);
+                                    return Err(anyhow::anyhow!("V4 Ping task failed: {}", e));
+                                }
+                            }
+                        }
+
+                        // Check for event timeout (no events for 13 seconds - Ethereum block time + buffer)
+                        if last_event_time.elapsed() > std::time::Duration::from_secs(13) && event_count > 0 {
+                            warn!("V4 No events received for 13 seconds, connection may be stale");
+                            return Err(anyhow::anyhow!("V4 Event timeout - no events received for 13 seconds"));
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        }
+        .await;
+
+        result
+    }
+
+    /// Process a Uniswap V4 swap log
+    /// V4 emits: Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
+    async fn process_v4_swap_log(
+        log: Log,
+        provider: &Arc<Provider<Ws>>,
+        price_store: &PriceStore,
+        config: &EthConfig,
+        v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+    ) -> Result<()> {
+        // Try to parse as V4 Swap event
+        let swap_event: uniswap_v4_pool_manager::SwapFilter =
+            match <uniswap_v4_pool_manager::SwapFilter as ethers::contract::EthEvent>::decode_log(
+                &RawLog {
+                    topics: log.topics.clone(),
+                    data: log.data.to_vec(),
+                },
+            ) {
+                Ok(event) => event,
+                Err(_) => return Ok(()), // Skip if not a swap event
+            };
+
+        // Extract pool ID (bytes32) from the event
+        let pool_id: [u8; 32] = swap_event.id.into();
+
+        // Get or fetch token information for this pool ID
+        let (token0, token1, decimals0, decimals1, pool_address) =
+            match Self::get_or_fetch_v4_pool_info(pool_id, v4_cache, config, provider).await {
+                Ok(info) => info,
+                Err(e) => {
+                    // V4 pool info not cached and couldn't be fetched
+                    // This might happen for new pools or if we don't have a way to derive tokens from pool ID
+                    debug!(
+                        "Failed to get V4 pool info for pool ID {:?}: {}",
+                        pool_id, e
+                    );
+                    return Ok(());
+                }
+            };
+
+        // Extract sqrtPriceX96 from the event
+        let sqrt_price_x96 = swap_event.sqrt_price_x96;
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        debug!(
+            "V4 Swap: Pool ID {:?} - sqrtPriceX96: {}, token0: {:?}, token1: {:?}",
+            pool_id, sqrt_price_x96, token0, token1
+        );
+
+        // Calculate price from sqrtPriceX96 (same as V3)
+        let price_token0_in_token1 =
+            Self::sqrt_price_x96_to_price(sqrt_price_x96, decimals0, decimals1);
+
+        let price_token1_in_token0 = if price_token0_in_token1 > 0.0 {
+            1.0 / price_token0_in_token1
+        } else {
+            0.0
+        };
+
+        // Update prices using the derived pool address
+        Self::update_token_price(
+            token0,
+            token1,
+            price_token0_in_token1,
+            pool_address,
+            timestamp,
+            DexVersion::UniswapV4,
+            decimals0,
+            price_store,
+            config,
+        );
+
+        Self::update_token_price(
+            token1,
+            token0,
+            price_token1_in_token0,
+            pool_address,
+            timestamp,
+            DexVersion::UniswapV4,
+            decimals1,
+            price_store,
+            config,
+        );
+
+        Ok(())
+    }
+
+    /// Get or fetch V4 pool information from pool ID
+    /// For V4, we need a different approach since pools don't have individual contracts
+    /// We'll need to derive or cache the token information based on pool ID
+    async fn get_or_fetch_v4_pool_info(
+        pool_id: [u8; 32],
+        v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+        config: &EthConfig,
+        _provider: &Arc<Provider<Ws>>,
+    ) -> Result<(Address, Address, u8, u8, Address)> {
+        // Check cache first
+        if let Some(info) = v4_cache.get(&pool_id) {
+            return Ok(*info.value());
+        }
+
+        // For V4, the pool ID is derived from PoolKey which contains:
+        // - currency0 (token0 address)
+        // - currency1 (token1 address)
+        // - fee
+        // - tickSpacing
+        // - hooks (address)
+        //
+        // Since we can't reverse-engineer the pool ID back to tokens without additional data,
+        // we have a few options:
+        // 1. Use an indexer/subgraph to look up pool info
+        // 2. Listen to pool initialization events to build the mapping
+        // 3. Pre-populate cache with known pools
+        //
+        // For now, we'll return an error and rely on cache population from other sources
+        // Future enhancement: implement pool ID -> token resolution via StateView contract or subgraph
+
+        Err(anyhow::anyhow!(
+            "V4 pool info not found in cache for pool ID {:?}. Need to implement pool ID resolution via StateView or indexer.",
+            pool_id
+        ))
+    }
 }
+

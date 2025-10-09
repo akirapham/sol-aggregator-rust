@@ -25,6 +25,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.arbitrade-eth
+    tty: true
     container_name: arbitrade-eth-service
     restart: unless-stopped
     ports:

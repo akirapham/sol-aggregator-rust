@@ -269,13 +269,6 @@ impl PriceProvider for GateService {
         let mut all_currency_chains = Vec::new();
 
         for (batch_num, chunk) in currencies.chunks(BATCH_SIZE).enumerate() {
-            log::info!(
-                "Fetching batch {}/{} ({} currencies)...",
-                batch_num + 1,
-                (currencies.len() + BATCH_SIZE - 1) / BATCH_SIZE,
-                chunk.len()
-            );
-
             let futures: Vec<_> = chunk
                 .iter()
                 .map(|currency| {
@@ -288,12 +281,15 @@ impl PriceProvider for GateService {
             let results = futures_util::future::join_all(futures).await;
             all_currency_chains.extend(results);
 
-            log::info!(
-                "Batch {} complete ({}/{})",
-                batch_num + 1,
-                ((batch_num + 1) * BATCH_SIZE).min(currencies.len()),
-                currencies.len()
-            );
+            // Log progress every 100 currencies
+            let currencies_processed = ((batch_num + 1) * BATCH_SIZE).min(currencies.len());
+            if currencies_processed % 100 < BATCH_SIZE || currencies_processed == currencies.len() {
+                log::info!(
+                    "Progress: {}/{} currencies processed",
+                    currencies_processed,
+                    currencies.len()
+                );
+            }
 
             if batch_num + 1 < (currencies.len() + BATCH_SIZE - 1) / BATCH_SIZE {
                 tokio::time::sleep(tokio::time::Duration::from_millis(BATCH_DELAY_MS)).await;

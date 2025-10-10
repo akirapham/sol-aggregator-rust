@@ -14,9 +14,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber;
 mod api;
+mod arbitrage_api;
+mod db;
 mod dex_price;
 mod kyber;
 mod types;
+use db::{ArbitrageDb, ArbitrageOpportunity};
 use dex_price::{DexPriceClient, DexPriceConfig};
 use kyber::KyberClient;
 use std::env;
@@ -103,6 +106,7 @@ async fn process_arbitrage(
     cex_providers: &[CexProvider],
     update: &TokenPriceUpdate,
     arb_amount_usdt: f64,
+    db: &Arc<ArbitrageDb>,
 ) {
     log::info!("Processing arbitrage for token: {}", update.token_address);
     // USDT contract address on Ethereum
@@ -229,7 +233,7 @@ async fn process_arbitrage(
             }
         });
 
-    // Log the best opportunity
+    // Log and save the best opportunity
     if let Some(best) = best_opportunity {
         log::info!(
             "🎯 BEST ARBITRAGE OPPORTUNITY - Token: {}, CEX: {} (Deepest Liquidity), Symbol: {}",
@@ -259,6 +263,33 @@ async fn process_arbitrage(
             best.profit,
             best.profit_percent
         );
+
+        // Save to database
+        let opportunity = ArbitrageOpportunity {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            token_address: update.token_address.clone(),
+            token_symbol: update.token_address.clone(), // TODO: Get actual symbol
+            dex_price: update.price_in_usd,
+            cex_name: best.cex_name.clone(),
+            cex_price: best.cex_price,
+            cex_symbol: best.cex_symbol.clone(),
+            price_diff_percent: best.price_diff_percent,
+            liquidity_usdt: best.liquidity_usdt,
+            profit_usdt: best.profit,
+            profit_percent: best.profit_percent,
+            arb_amount_usdt,
+            tokens_from_dex,
+            gas_fee_usd,
+        };
+
+        if let Err(e) = db.save_opportunity(&opportunity) {
+            log::error!("Failed to save opportunity to database: {}", e);
+        } else {
+            log::debug!("Saved opportunity to database");
+        }
     } else {
         log::info!(
             "No profitable arbitrage opportunity found across all CEXes for token: {}",
@@ -320,6 +351,12 @@ async fn main() -> Result<()> {
         cex_price_provider::FilterAddressType::Ethereum,
     ));
     info!("All CEX services initialized successfully");
+
+    // Initialize RocksDB for storing arbitrage opportunities
+    info!("Initializing arbitrage database...");
+    let db_path = "rocksdb_data/arbitrade-eth";
+    let arb_db = Arc::new(ArbitrageDb::open(db_path)?);
+    info!("Arbitrage database initialized at {}", db_path);
 
     info!("Initializing KyberSwap client...");
     let kyber_client = Arc::new(KyberClient::new());
@@ -452,6 +489,7 @@ async fn main() -> Result<()> {
         // Handle DEX price updates in background
         let cex_providers_clone = cex_providers.clone();
         let kyber_client_clone = kyber_client.clone();
+        let arb_db = arb_db.clone();
         tokio::spawn(async move {
             // Read minimum percentage difference threshold from environment
             let min_percent_diff: f64 = std::env::var("MIN_PERCENT_DIFF")
@@ -522,6 +560,7 @@ async fn main() -> Result<()> {
                             let kyber_client = kyber_client_clone.clone();
                             let cex_providers = cex_providers_clone.clone();
                             let update = update.clone();
+                            let db = arb_db.clone();
 
                             tokio::spawn(async move {
                                 process_arbitrage(
@@ -529,6 +568,7 @@ async fn main() -> Result<()> {
                                     &cex_providers,
                                     &update,
                                     arb_amount_usdt,
+                                    &db,
                                 )
                                 .await;
                             });
@@ -558,6 +598,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .merge(api::create_router(mexc_service))
+        .merge(arbitrage_api::create_router(arb_db.clone()))
         .layer(CorsLayer::permissive());
 
     // Read port from ARBITRADE_PORT environment variable, default to 3001

@@ -1,0 +1,201 @@
+use anyhow::{Context, Result};
+use rocksdb::{DB, Options, IteratorMode};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArbitrageOpportunity {
+    pub timestamp: i64,
+    pub token_address: String,
+    pub token_symbol: String,
+    pub dex_price: f64,
+    pub cex_name: String,
+    pub cex_price: f64,
+    pub cex_symbol: String,
+    pub price_diff_percent: f64,
+    pub liquidity_usdt: f64,
+    pub profit_usdt: f64,
+    pub profit_percent: f64,
+    pub arb_amount_usdt: f64,
+    pub tokens_from_dex: f64,
+    pub gas_fee_usd: f64,
+}
+
+pub struct ArbitrageDb {
+    db: DB,
+}
+
+impl ArbitrageDb {
+    /// Open or create a RocksDB database at the specified path
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+
+        let db = DB::open(&opts, path).context("Failed to open RocksDB")?;
+
+        log::info!("Opened ArbitrageDb at {:?}", db.path());
+
+        Ok(Self { db })
+    }
+
+    /// Save an arbitrage opportunity to the database
+    /// Key format: timestamp_token_address
+    pub fn save_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<()> {
+        let key = format!("{}_{}", opp.timestamp, opp.token_address);
+        let value = serde_json::to_vec(opp).context("Failed to serialize opportunity")?;
+
+        self.db
+            .put(key.as_bytes(), value)
+            .context("Failed to save opportunity to RocksDB")?;
+
+        Ok(())
+    }
+
+    /// Get all opportunities, optionally filtered by token address
+    pub fn get_opportunities(
+        &self,
+        token_address: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<ArbitrageOpportunity>> {
+        let mut opportunities = Vec::new();
+        let iter = self.db.iterator(IteratorMode::End);
+
+        for item in iter {
+            let (key, value) = item.context("Failed to read from RocksDB")?;
+
+            // Parse the key to check token address filter
+            let key_str = String::from_utf8_lossy(&key);
+            if let Some(filter_addr) = token_address {
+                if !key_str.contains(filter_addr) {
+                    continue;
+                }
+            }
+
+            let opp: ArbitrageOpportunity =
+                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+
+            opportunities.push(opp);
+
+            if let Some(max) = limit {
+                if opportunities.len() >= max {
+                    break;
+                }
+            }
+        }
+
+        Ok(opportunities)
+    }
+
+    /// Get opportunities within a time range
+    pub fn get_opportunities_by_time_range(
+        &self,
+        start_timestamp: i64,
+        end_timestamp: i64,
+        limit: Option<usize>,
+    ) -> Result<Vec<ArbitrageOpportunity>> {
+        let mut opportunities = Vec::new();
+        let iter = self.db.iterator(IteratorMode::End);
+
+        for item in iter {
+            let (_, value) = item.context("Failed to read from RocksDB")?;
+            let opp: ArbitrageOpportunity =
+                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+
+            if opp.timestamp >= start_timestamp && opp.timestamp <= end_timestamp {
+                opportunities.push(opp);
+
+                if let Some(max) = limit {
+                    if opportunities.len() >= max {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(opportunities)
+    }
+
+    /// Get the most profitable opportunities
+    pub fn get_top_opportunities(&self, limit: usize) -> Result<Vec<ArbitrageOpportunity>> {
+        let mut opportunities = self.get_opportunities(None, None)?;
+
+        // Sort by profit in descending order
+        opportunities.sort_by(|a, b| {
+            b.profit_usdt
+                .partial_cmp(&a.profit_usdt)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        opportunities.truncate(limit);
+
+        Ok(opportunities)
+    }
+
+    /// Get statistics about stored opportunities
+    pub fn get_stats(&self) -> Result<DbStats> {
+        let iter = self.db.iterator(IteratorMode::Start);
+        let mut total_count = 0;
+        let mut total_profit = 0.0;
+        let mut max_profit: f64 = 0.0;
+        let mut unique_tokens = std::collections::HashSet::new();
+
+        for item in iter {
+            let (_, value) = item.context("Failed to read from RocksDB")?;
+            let opp: ArbitrageOpportunity =
+                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+
+            total_count += 1;
+            total_profit += opp.profit_usdt;
+            max_profit = max_profit.max(opp.profit_usdt);
+            unique_tokens.insert(opp.token_address.clone());
+        }
+
+        Ok(DbStats {
+            total_opportunities: total_count,
+            unique_tokens: unique_tokens.len(),
+            total_profit_usdt: total_profit,
+            average_profit_usdt: if total_count > 0 {
+                total_profit / total_count as f64
+            } else {
+                0.0
+            },
+            max_profit_usdt: max_profit,
+        })
+    }
+
+    /// Delete old opportunities (cleanup)
+    pub fn delete_old_opportunities(&self, before_timestamp: i64) -> Result<usize> {
+        let mut count = 0;
+        let iter = self.db.iterator(IteratorMode::Start);
+        let mut keys_to_delete = Vec::new();
+
+        for item in iter {
+            let (key, value) = item.context("Failed to read from RocksDB")?;
+            let opp: ArbitrageOpportunity =
+                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+
+            if opp.timestamp < before_timestamp {
+                keys_to_delete.push(key.to_vec());
+            }
+        }
+
+        for key in keys_to_delete {
+            self.db.delete(key).context("Failed to delete from RocksDB")?;
+            count += 1;
+        }
+
+        log::info!("Deleted {} old opportunities from database", count);
+
+        Ok(count)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DbStats {
+    pub total_opportunities: usize,
+    pub unique_tokens: usize,
+    pub total_profit_usdt: f64,
+    pub average_profit_usdt: f64,
+    pub max_profit_usdt: f64,
+}

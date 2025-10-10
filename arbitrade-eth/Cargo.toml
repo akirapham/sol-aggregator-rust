@@ -33,4 +33,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 solana-sdk = { workspace = true }
 dotenv = { workspace = true }
+rocksdb = { workspace = true }
 cex-price-provider = { path = "../crates/cex-price-provider" }

@@ -26,12 +26,13 @@ services:
       context: .
       dockerfile: docker/Dockerfile.arbitrade-eth
     tty: true
+    stdin_open: true
     container_name: arbitrade-eth-service
-    restart: unless-stopped
+    restart: "no"
     ports:
       - "${ARBITRADE_PORT:-3001}:${ARBITRADE_PORT:-3001}"
     environment:
-      - RUST_LOG=${RUST_LOG:-info}
+      - RUST_LOG=info
       - DEX_PRICE_STREAM=ws://amm-eth:${ETH_PRICE_WS_PORT:-8080}
     env_file:
       - .env
@@ -49,6 +50,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+      disable: true
 
 networks:
   eth-network:

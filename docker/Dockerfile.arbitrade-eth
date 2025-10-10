@@ -59,8 +59,8 @@ RUN useradd -r -u 1003 -m -c "arbitrade-eth user" -s /bin/bash arbitrade-eth && 
 # Set working directory
 WORKDIR /app
 
-# Copy the binary from builder stage
-COPY --from=builder /usr/src/app/target/release/arbitrade-eth /app/arbitrade-eth
+# Copy the binary from builder stage and rename it to avoid conflict with directory
+COPY --from=builder /usr/src/app/target/release/arbitrade-eth /app/arbitrade-eth-bin
 
 # Copy environment template
 COPY .env.example /app/.env.example
@@ -78,5 +78,5 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD sh -c 'curl -f http://localhost:${ARBITRADE_PORT:-3001}/health || exit 1'
 
-# Run the application with explicit path and output
-CMD ["/app/arbitrade-eth"]
+# Run the application with renamed binary
+CMD ["/app/arbitrade-eth-bin"]

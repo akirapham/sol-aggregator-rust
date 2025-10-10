@@ -275,8 +275,9 @@ impl PriceProvider for GateService {
         );
 
         // Fetch all currency chains concurrently in batches
-        const BATCH_SIZE: usize = 20;
-        const BATCH_DELAY_MS: u64 = 500;
+        // Gate.io has strict rate limits, so use smaller batches with longer delays
+        const BATCH_SIZE: usize = 5;
+        const BATCH_DELAY_MS: u64 = 1000;
 
         let currencies: Vec<String> = unique_currencies.into_iter().collect();
         let mut all_currency_chains = Vec::new();
@@ -288,10 +289,8 @@ impl PriceProvider for GateService {
                     let client = &self.client;
                     let currency = currency.clone();
                     async move {
-                        (
-                            currency.clone(),
-                            client.get_currency_chains(&currency).await,
-                        )
+                        let result = client.get_currency_chains(&currency).await;
+                        (currency.clone(), result)
                     }
                 })
                 .collect();
@@ -322,24 +321,55 @@ impl PriceProvider for GateService {
         // Build a map of currency -> contract addresses
         let mut currency_contracts: std::collections::HashMap<String, Vec<(String, String)>> =
             std::collections::HashMap::new();
+        let mut error_count = 0;
+        let mut disabled_count = 0;
+        let mut no_contract_count = 0;
 
         for (currency, result) in all_currency_chains {
-            if let Ok(chains) = result {
-                let mut contracts = Vec::new();
-                for chain_info in chains {
-                    if chain_info.is_disabled == 0 {
-                        if let Some(contract) = chain_info.contract_address {
-                            if !contract.is_empty() {
-                                contracts.push((chain_info.chain.clone(), contract));
+            match result {
+                Ok(chains) => {
+                    let mut contracts = Vec::new();
+                    for chain_info in chains {
+                        if chain_info.is_disabled == 0 {
+                            if let Some(contract) = chain_info.contract_address {
+                                if !contract.is_empty() {
+                                    log::debug!(
+                                        "Currency {}: found contract {} on chain {}",
+                                        currency,
+                                        contract,
+                                        chain_info.chain
+                                    );
+                                    contracts.push((chain_info.chain.clone(), contract));
+                                } else {
+                                    no_contract_count += 1;
+                                }
+                            } else {
+                                no_contract_count += 1;
                             }
+                        } else {
+                            disabled_count += 1;
                         }
                     }
+                    if !contracts.is_empty() {
+                        currency_contracts.insert(currency.clone(), contracts);
+                    }
                 }
-                if !contracts.is_empty() {
-                    currency_contracts.insert(currency.clone(), contracts);
+                Err(e) => {
+                    error_count += 1;
+                    if error_count <= 5 {
+                        log::warn!("Failed to fetch chains for currency {}: {}", currency, e);
+                    }
                 }
             }
         }
+
+        log::info!(
+            "Currency chain processing: {} successful, {} errors, {} disabled chains, {} without contracts",
+            currency_contracts.len(),
+            error_count,
+            disabled_count,
+            no_contract_count
+        );
 
         log::info!(
             "Found contract addresses for {} currencies",

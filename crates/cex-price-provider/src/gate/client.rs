@@ -15,7 +15,6 @@ pub struct CurrencyPair {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CurrencyInfo {
-    pub currency: String,
     pub chain: String,
     #[serde(rename = "is_disabled")]
     pub is_disabled: i32,
@@ -123,8 +122,6 @@ impl GateClient {
             .text()
             .await
             .context("Failed to read currency chains response text")?;
-
-        log::debug!("Currency chains raw response: {}", response_text);
 
         let chains: Vec<CurrencyInfo> = serde_json::from_str(&response_text).context(format!(
             "Failed to parse currency chains response for {}: {}",

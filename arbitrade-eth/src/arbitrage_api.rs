@@ -3,8 +3,8 @@ use axum::{
     http::StatusCode,
     middleware,
     response::IntoResponse,
+    routing::{delete, get, post},
     Json, Router,
-    routing::{get, post, delete},
 };
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -220,7 +220,11 @@ async fn get_blacklist(
 ) -> Result<Json<BlacklistResponse>, (StatusCode, Json<ErrorResponse>)> {
     log::debug!("Querying blacklist");
 
-    let addresses: Vec<String> = state.blacklist.iter().map(|entry| entry.key().clone()).collect();
+    let addresses: Vec<String> = state
+        .blacklist
+        .iter()
+        .map(|entry| entry.key().clone())
+        .collect();
     let count = addresses.len();
 
     Ok(Json(BlacklistResponse { addresses, count }))

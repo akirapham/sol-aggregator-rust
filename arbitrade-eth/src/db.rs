@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rocksdb::{DB, Options, IteratorMode};
+use rocksdb::{IteratorMode, Options, DB};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -235,7 +235,9 @@ impl ArbitrageDb {
         }
 
         for key in keys_to_delete {
-            self.db.delete(key).context("Failed to delete from RocksDB")?;
+            self.db
+                .delete(key)
+                .context("Failed to delete from RocksDB")?;
             count += 1;
         }
 

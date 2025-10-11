@@ -43,6 +43,7 @@ pub struct EthConfig {
     pub weth_address: Address,
     pub usdc_address: Address,
     pub usdt_address: Address,
+    pub native_address: Address,
     /// Shared ETH price updated from Binance WebSocket
     pub eth_price_usd: Arc<RwLock<Option<f64>>>,
 }
@@ -69,6 +70,9 @@ impl Default for EthConfig {
             usdt_address: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                 .parse()
                 .unwrap(),
+            native_address: "0x0000000000000000000000000000000000000000"
+                .parse()
+                .unwrap(),
             // ETH price will be updated from Binance WebSocket
             eth_price_usd: Arc::new(RwLock::new(None)),
         }
@@ -78,7 +82,7 @@ impl Default for EthConfig {
 impl EthConfig {
     /// Get known decimals for well-known tokens to avoid RPC calls
     pub fn get_known_decimals(&self, token_address: Address) -> Option<u8> {
-        if token_address == self.weth_address {
+        if token_address == self.weth_address || token_address == self.native_address {
             Some(18)
         } else if token_address == self.usdc_address {
             Some(6)

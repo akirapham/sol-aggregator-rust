@@ -302,7 +302,10 @@ async fn process_arbitrage(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    eprintln!("DEBUG: main() started at {:?}", std::time::SystemTime::now());
+    eprintln!(
+        "DEBUG: main() started at {:?}",
+        std::time::SystemTime::now()
+    );
     std::io::Write::flush(&mut std::io::stderr()).ok();
 
     // Load environment variables from .env file
@@ -502,7 +505,10 @@ async fn main() -> Result<()> {
             for addr in addresses {
                 blacklist.insert(addr.to_lowercase(), ());
             }
-            info!("Loaded {} blacklisted addresses from database", blacklist.len());
+            info!(
+                "Loaded {} blacklisted addresses from database",
+                blacklist.len()
+            );
         }
         Err(e) => {
             error!("Failed to load blacklist from database: {}", e);
@@ -616,11 +622,15 @@ async fn main() -> Result<()> {
                             let db = arb_db.clone();
 
                             tokio::spawn(async move {
-                                const USDT_ADDRESS: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
+                                const USDT_ADDRESS: &str =
+                                    "0xdAC17F958D2ee523a2206206994597C13D831ec7";
                                 let usdt_amount_wei = (arb_amount_usdt * 1_000_000.0) as u64;
 
                                 // Step 1: Get price differences across all CEXes
-                                log::debug!("Step 1: Checking price differences for {}", update.token_address);
+                                log::debug!(
+                                    "Step 1: Checking price differences for {}",
+                                    update.token_address
+                                );
                                 let mut has_price_opportunity = false;
                                 for cex in cex_providers.iter() {
                                     if let Some(price) = cex
@@ -629,7 +639,8 @@ async fn main() -> Result<()> {
                                         .await
                                     {
                                         let price_diff_percent =
-                                            ((update.price_in_usd - price.price) / price.price) * 100.0;
+                                            ((update.price_in_usd - price.price) / price.price)
+                                                * 100.0;
                                         if price_diff_percent < 0.0 {
                                             has_price_opportunity = true;
                                             log::debug!(
@@ -643,12 +654,17 @@ async fn main() -> Result<()> {
                                 }
 
                                 if !has_price_opportunity {
-                                    log::debug!("No favorable price differences found, skipping arbitrage");
+                                    log::debug!(
+                                        "No favorable price differences found, skipping arbitrage"
+                                    );
                                     return;
                                 }
 
                                 // Step 2: Get estimated output from Kyber aggregator for DEX swap
-                                log::debug!("Step 2: Getting Kyber swap estimate for {} USDT", arb_amount_usdt);
+                                log::debug!(
+                                    "Step 2: Getting Kyber swap estimate for {} USDT",
+                                    arb_amount_usdt
+                                );
                                 let (tokens_from_dex, gas_fee_usd) = match kyber_client
                                     .estimate_swap_output(
                                         USDT_ADDRESS,
@@ -672,7 +688,10 @@ async fn main() -> Result<()> {
                                                 (tokens, gas_usd)
                                             }
                                             Err(e) => {
-                                                log::warn!("Failed to parse Kyber output amount: {}", e);
+                                                log::warn!(
+                                                    "Failed to parse Kyber output amount: {}",
+                                                    e
+                                                );
                                                 return;
                                             }
                                         }
@@ -684,13 +703,19 @@ async fn main() -> Result<()> {
                                 };
 
                                 // Step 3: Estimate output USDT from each CEX using their orderbook
-                                log::debug!("Step 3: Estimating CEX outputs for {:.6} tokens", tokens_from_dex);
+                                log::debug!(
+                                    "Step 3: Estimating CEX outputs for {:.6} tokens",
+                                    tokens_from_dex
+                                );
                                 let mut best_profit: Option<f64> = None;
                                 let mut best_cex_name: Option<String> = None;
 
                                 for cex in cex_providers.iter() {
                                     if let Some(usdt_output) = cex
-                                        .get_orderbook_liquidity(&update.token_address.to_lowercase(), tokens_from_dex)
+                                        .get_orderbook_liquidity(
+                                            &update.token_address.to_lowercase(),
+                                            tokens_from_dex,
+                                        )
                                         .await
                                     {
                                         let profit = usdt_output - arb_amount_usdt - gas_fee_usd;
@@ -737,7 +762,10 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                 } else {
-                                    log::debug!("❌ No CEX liquidity found for {}, skipping", update.token_address);
+                                    log::debug!(
+                                        "❌ No CEX liquidity found for {}, skipping",
+                                        update.token_address
+                                    );
                                 }
                             });
                         } else {
@@ -766,7 +794,10 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .merge(api::create_router(mexc_service))
-        .merge(arbitrage_api::create_router(arb_db.clone(), blacklist.clone()))
+        .merge(arbitrage_api::create_router(
+            arb_db.clone(),
+            blacklist.clone(),
+        ))
         .layer(CorsLayer::permissive());
 
     // Read port from ARBITRADE_PORT environment variable, default to 3001

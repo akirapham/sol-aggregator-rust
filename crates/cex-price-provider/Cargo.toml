@@ -45,10 +45,6 @@ name = "bybit"
 path = "examples/bybit.rs"
 
 [[example]]
-name = "bybit_auth"
-path = "examples/bybit_auth.rs"
-
-[[example]]
 name = "gate"
 path = "examples/gate.rs"
 

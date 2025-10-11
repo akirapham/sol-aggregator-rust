@@ -278,18 +278,19 @@ impl PriceProvider for MexcService {
         };
 
         // Build a map of base_asset -> deposit_enabled
-        let mut deposit_status: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        let mut deposit_status: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
         for coin_info in &coin_infos {
             for network in &coin_info.network_list {
                 // Check if this network matches the target chain and has deposits enabled
                 let network_name = network.network.as_ref().map(|s| s.to_uppercase());
                 let is_target_network = match self.client.address_type {
-                    crate::FilterAddressType::Ethereum => {
-                        network_name.as_ref().map_or(false, |n| n.contains("ETH") || n.contains("ERC20"))
-                    }
-                    crate::FilterAddressType::Solana => {
-                        network_name.as_ref().map_or(false, |n| n.contains("SOL") || n == "SOL")
-                    }
+                    crate::FilterAddressType::Ethereum => network_name
+                        .as_ref()
+                        .map_or(false, |n| n.contains("ETH") || n.contains("ERC20")),
+                    crate::FilterAddressType::Solana => network_name
+                        .as_ref()
+                        .map_or(false, |n| n.contains("SOL") || n == "SOL"),
                 };
 
                 if is_target_network {

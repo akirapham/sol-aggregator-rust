@@ -231,7 +231,11 @@ impl MexcClient {
             self.base_url, query_string, signature
         );
 
-        log::debug!("MEXC coin info request URL (without signature): {}/api/v3/capital/config/getall?{}", self.base_url, query_string);
+        log::debug!(
+            "MEXC coin info request URL (without signature): {}/api/v3/capital/config/getall?{}",
+            self.base_url,
+            query_string
+        );
 
         let response = self
             .client
@@ -259,7 +263,10 @@ impl MexcClient {
         let coin_info: Vec<CoinInfo> = serde_json::from_str(&response_text)
             .context("Failed to parse MEXC coin info response")?;
 
-        log::info!("Successfully fetched coin info for {} coins", coin_info.len());
+        log::info!(
+            "Successfully fetched coin info for {} coins",
+            coin_info.len()
+        );
 
         Ok(coin_info)
     }

@@ -31,12 +31,24 @@ abigen!(
     ]"#
 );
 
-// Uniswap V4 PoolManager ABI - Swap event with PoolId
+// Uniswap V4 PoolManager ABI - Swap event with PoolId and Initialize event
 // V4 uses a singleton PoolManager contract for all pools
 abigen!(
     UniswapV4PoolManager,
     r#"[
         event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
+        event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks)
+        function getPool(bytes32 id) external view returns (tuple(uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee))
+    ]"#
+);
+
+// Uniswap V4 StateView contract for querying pool information
+// This contract provides helper functions to extract pool details from pool IDs
+abigen!(
+    UniswapV4StateView,
+    r#"[
+        function getPoolKey(bytes32 id) external pure returns (tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks))
+        function getPoolState(bytes32 id) external view returns (tuple(uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee))
     ]"#
 );
 
@@ -154,14 +166,9 @@ impl EthSwapListener {
             let v4_cache = self.v4_pool_id_cache.clone();
             let semaphore = self.processing_semaphore.clone();
             tokio::spawn(async move {
-                if let Err(e) = Self::listen_v4_swaps(
-                    websocket_url,
-                    price_store,
-                    config,
-                    v4_cache,
-                    semaphore,
-                )
-                .await
+                if let Err(e) =
+                    Self::listen_v4_swaps(websocket_url, price_store, config, v4_cache, semaphore)
+                        .await
                 {
                     error!("Uniswap V4 listener error: {}", e);
                 }
@@ -351,9 +358,9 @@ impl EthSwapListener {
                         }
 
                         // Check for event timeout (no events for 13 seconds - Ethereum block time + buffer)
-                        if last_event_time.elapsed() > std::time::Duration::from_secs(13) && event_count > 0 {
-                            warn!("V2 No events received for 13 seconds, connection may be stale");
-                            return Err(anyhow::anyhow!("V2 Event timeout - no events received for 13 seconds"));
+                        if last_event_time.elapsed() > std::time::Duration::from_secs(20) && event_count > 0 {
+                            warn!("V2 No events received for 20 seconds, connection may be stale");
+                            return Err(anyhow::anyhow!("V2 Event timeout - no events received for 20 seconds"));
                         }
                     }
                 }
@@ -655,9 +662,9 @@ impl EthSwapListener {
                         }
 
                         // Check for event timeout (no events for 13 seconds - Ethereum block time + buffer)
-                        if last_event_time.elapsed() > std::time::Duration::from_secs(13) && event_count > 0 {
-                            warn!("V3 No events received for 13 seconds, connection may be stale");
-                            return Err(anyhow::anyhow!("V3 Event timeout - no events received for 13 seconds"));
+                        if last_event_time.elapsed() > std::time::Duration::from_secs(20) && event_count > 0 {
+                            warn!("V3 No events received for 20 seconds, connection may be stale");
+                            return Err(anyhow::anyhow!("V3 Event timeout - no events received for 20 seconds"));
                         }
                     }
                 }
@@ -895,6 +902,7 @@ impl EthSwapListener {
         if token_address == config.weth_address
             || token_address == config.usdc_address
             || token_address == config.usdt_address
+            || token_address == config.native_address
         {
             return;
         }
@@ -903,7 +911,7 @@ impl EthSwapListener {
         let mut price_in_usd = None;
 
         // Determine price based on what token it's paired with
-        if paired_with == config.weth_address {
+        if paired_with == config.weth_address || paired_with == config.native_address {
             // Paired with WETH: we have the ETH price directly
             price_in_eth = price_in_paired_token;
 
@@ -1072,6 +1080,11 @@ impl EthSwapListener {
             .parse()
             .context("Invalid V4 PoolManager address")?;
 
+        info!(
+            "🚀 Setting up V4 listener for PoolManager: {:?}",
+            v4_pool_manager
+        );
+
         // Create a filter for V4 Swap events from the PoolManager contract
         // event Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
         let swap_filter = Filter::new()
@@ -1083,7 +1096,7 @@ impl EthSwapListener {
             .await
             .context("Failed to subscribe to V4 swap events")?;
 
-        info!("Subscribed to Uniswap V4 swap events from PoolManager");
+        info!("✅ Subscribed to Uniswap V4 swap events from PoolManager - waiting for events...");
 
         // Start ping task to keep connection alive
         let ping_provider = provider.clone();
@@ -1154,7 +1167,7 @@ impl EthSwapListener {
                                     )
                                     .await
                                     {
-                                        error!("Error processing V4 swap: {}", e);
+                                        error!("❌ Error processing V4 swap: {}", e);
                                     }
                                 });
                             }
@@ -1183,9 +1196,9 @@ impl EthSwapListener {
                         }
 
                         // Check for event timeout (no events for 13 seconds - Ethereum block time + buffer)
-                        if last_event_time.elapsed() > std::time::Duration::from_secs(13) && event_count > 0 {
-                            warn!("V4 No events received for 13 seconds, connection may be stale");
-                            return Err(anyhow::anyhow!("V4 Event timeout - no events received for 13 seconds"));
+                        if last_event_time.elapsed() > std::time::Duration::from_secs(20) && event_count > 0 {
+                            warn!("V4 No events received for 20 seconds, connection may be stale");
+                            return Err(anyhow::anyhow!("V4 Event timeout - no events received for 20 seconds"));
                         }
                     }
                 }
@@ -1202,11 +1215,13 @@ impl EthSwapListener {
     /// V4 emits: Swap(bytes32 indexed id, address indexed sender, int128 amount0, int128 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
     async fn process_v4_swap_log(
         log: Log,
-        provider: &Arc<Provider<Ws>>,
+        _provider: &Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
         v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
     ) -> Result<()> {
+        info!("📥 Received V4 swap event from {:?}", log.address);
+
         // Try to parse as V4 Swap event
         let swap_event: uniswap_v4_pool_manager::SwapFilter =
             match <uniswap_v4_pool_manager::SwapFilter as ethers::contract::EthEvent>::decode_log(
@@ -1215,23 +1230,31 @@ impl EthSwapListener {
                     data: log.data.to_vec(),
                 },
             ) {
-                Ok(event) => event,
-                Err(_) => return Ok(()), // Skip if not a swap event
+                Ok(event) => {
+                    event
+                }
+                Err(e) => {
+                    warn!("Failed to decode V4 swap event: {}", e);
+                    return Ok(()); // Skip if not a swap event
+                }
             };
 
         // Extract pool ID (bytes32) from the event
         let pool_id: [u8; 32] = swap_event.id.into();
+        let pool_id_hex = format!("0x{}", hex::encode(pool_id));
 
         // Get or fetch token information for this pool ID
         let (token0, token1, decimals0, decimals1, pool_address) =
-            match Self::get_or_fetch_v4_pool_info(pool_id, v4_cache, config, provider).await {
-                Ok(info) => info,
+            match Self::get_or_fetch_v4_pool_info(pool_id, v4_cache, config).await {
+                Ok(info) => {
+                    info
+                }
                 Err(e) => {
                     // V4 pool info not cached and couldn't be fetched
                     // This might happen for new pools or if we don't have a way to derive tokens from pool ID
-                    debug!(
-                        "Failed to get V4 pool info for pool ID {:?}: {}",
-                        pool_id, e
+                    error!(
+                        "❌ Failed to get V4 pool info for pool ID {}: {}",
+                        pool_id_hex, e
                     );
                     return Ok(());
                 }
@@ -1288,40 +1311,156 @@ impl EthSwapListener {
         Ok(())
     }
 
-    /// Get or fetch V4 pool information from pool ID
-    /// For V4, we need a different approach since pools don't have individual contracts
-    /// We'll need to derive or cache the token information based on pool ID
+    /// Get or fetch V4 pool information from pool ID using StateView contract or subgraph
+    /// The pool ID in V4 is derived from: keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks))
+    /// We use The Graph subgraph or event lookups to get pool details
     async fn get_or_fetch_v4_pool_info(
         pool_id: [u8; 32],
         v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
-        config: &EthConfig,
-        _provider: &Arc<Provider<Ws>>,
+        _config: &EthConfig,
     ) -> Result<(Address, Address, u8, u8, Address)> {
+        let pool_id_hex = format!("0x{}", hex::encode(pool_id));
+
         // Check cache first
         if let Some(info) = v4_cache.get(&pool_id) {
+            debug!("✓ V4 pool {} found in cache", pool_id_hex);
             return Ok(*info.value());
         }
 
-        // For V4, the pool ID is derived from PoolKey which contains:
-        // - currency0 (token0 address)
-        // - currency1 (token1 address)
-        // - fee
-        // - tickSpacing
-        // - hooks (address)
-        //
-        // Since we can't reverse-engineer the pool ID back to tokens without additional data,
-        // we have a few options:
-        // 1. Use an indexer/subgraph to look up pool info
-        // 2. Listen to pool initialization events to build the mapping
-        // 3. Pre-populate cache with known pools
-        //
-        // For now, we'll return an error and rely on cache population from other sources
-        // Future enhancement: implement pool ID -> token resolution via StateView contract or subgraph
+        // V4 PoolManager address (mainnet)
+        let v4_pool_manager: Address = "0x000000000004444c5dc75cB358380D2e3dE08A90"
+            .parse()
+            .context("Invalid V4 PoolManager address")?;
 
-        Err(anyhow::anyhow!(
-            "V4 pool info not found in cache for pool ID {:?}. Need to implement pool ID resolution via StateView or indexer.",
-            pool_id
-        ))
+        // Try to fetch from subgraph if configured
+        let subgraph_url = std::env::var("UNISWAP_V4_SUBGRAPH_URL")
+            .context("UNISWAP_V4_SUBGRAPH_URL environment variable not set. V4 requires a subgraph for pool lookups.")?;
+
+        // V4 subgraph structure: Let's query all available fields to understand the schema
+        // The official V4 subgraph might use different field names
+        let query = format!(
+            r#"{{
+                pool(id: "{}")
+                    {{
+                        id
+                        token0 {{
+                        id
+                        decimals
+                        }}
+                        token1 {{
+                        id
+                        decimals
+                        }}
+                        feeTier
+                        tickSpacing
+                        hooks
+                    }}
+        }}"#,
+            pool_id_hex.to_lowercase()
+        );
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()?;
+
+        let response = client
+            .post(&subgraph_url)
+            .json(&serde_json::json!({ "query": query }))
+            .send()
+            .await
+            .context("Failed to query V4 subgraph")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read error body".to_string());
+            return Err(anyhow::anyhow!(
+                "Subgraph returned error status {}: {}",
+                status,
+                error_body
+            ));
+        }
+
+        let result = response
+            .json::<serde_json::Value>()
+            .await
+            .context("Failed to parse subgraph response")?;
+
+        // Check for GraphQL errors
+        if let Some(errors) = result.get("errors") {
+            return Err(anyhow::anyhow!(
+                "Subgraph query returned errors: {}",
+                serde_json::to_string_pretty(errors).unwrap_or_else(|_| format!("{:?}", errors))
+            ));
+        }
+
+        // Check if pool exists (might be null for new/unindexed pools)
+        let pool_value = &result["data"]["pool"];
+        if pool_value.is_null() {
+            return Err(anyhow::anyhow!(
+                "Pool {} not found in subgraph (pool is null - might be too new or not indexed yet)",
+                pool_id_hex
+            ));
+        }
+
+        let pool = pool_value.as_object().context(format!(
+            "Pool {} has invalid format in subgraph. Response: {}",
+            pool_id_hex,
+            serde_json::to_string_pretty(&result).unwrap_or_else(|_| format!("{:?}", result))
+        ))?;
+
+        // In V4 subgraph, token0 and token1 are nested objects with id and decimals
+        let token0_obj = pool
+            .get("token0")
+            .and_then(|v| v.as_object())
+            .context(format!(
+                "Missing or invalid token0 in pool. Pool data: {}",
+                serde_json::to_string_pretty(pool).unwrap_or_else(|_| format!("{:?}", pool))
+            ))?;
+
+        let token1_obj = pool
+            .get("token1")
+            .and_then(|v| v.as_object())
+            .context("Missing or invalid token1 in pool")?;
+
+        // Extract token addresses (id field)
+        let token0_str = token0_obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .context("Missing token0.id")?;
+
+        let token1_str = token1_obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .context("Missing token1.id")?;
+
+        // Extract decimals directly from the nested objects
+        let dec0 = token0_obj
+            .get("decimals")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .or_else(|| token0_obj.get("decimals").and_then(|v| v.as_u64()))
+            .context("Missing or invalid token0.decimals")?;
+
+        let dec1 = token1_obj
+            .get("decimals")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .or_else(|| token1_obj.get("decimals").and_then(|v| v.as_u64()))
+            .context("Missing or invalid token1.decimals")?;
+
+        let token0 = token0_str
+            .parse::<Address>()
+            .context("Invalid token0 address")?;
+        let token1 = token1_str
+            .parse::<Address>()
+            .context("Invalid token1 address")?;
+
+        let pool_info = (token0, token1, dec0 as u8, dec1 as u8, v4_pool_manager);
+        v4_cache.insert(pool_id, pool_info);
+
+        Ok(pool_info)
     }
 }
-

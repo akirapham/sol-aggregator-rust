@@ -45,7 +45,12 @@ pub async fn dashboard_page(
         .map(|entry| entry.key().clone())
         .collect();
 
-    let html = generate_dashboard_html(&stats, &top_opportunities, &recent_opportunities, &blacklist);
+    let html = generate_dashboard_html(
+        &stats,
+        &top_opportunities,
+        &recent_opportunities,
+        &blacklist,
+    );
 
     Ok(Html(html))
 }
@@ -120,12 +125,7 @@ fn generate_dashboard_html(
     } else {
         blacklist
             .iter()
-            .map(|addr| {
-                format!(
-                    r#"<li><code class="token-address">{}</code></li>"#,
-                    addr
-                )
-            })
+            .map(|addr| format!(r#"<li><code class="token-address">{}</code></li>"#, addr))
             .collect()
     };
 
@@ -415,7 +415,7 @@ fn generate_dashboard_html(
 }
 
 fn format_timestamp(timestamp: i64) -> String {
-    use std::time::{Duration, UNIX_EPOCH, SystemTime};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     let d = UNIX_EPOCH + Duration::from_secs(timestamp as u64);
     let datetime = SystemTime::from(d);

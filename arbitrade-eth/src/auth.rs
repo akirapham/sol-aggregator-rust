@@ -4,7 +4,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -15,10 +15,9 @@ pub struct AuthConfig {
 
 impl AuthConfig {
     pub fn from_env() -> Self {
-        let username = std::env::var("DASHBOARD_USERNAME")
-            .unwrap_or_else(|_| "admin".to_string());
-        let password = std::env::var("DASHBOARD_PASSWORD")
-            .unwrap_or_else(|_| "password".to_string());
+        let username = std::env::var("DASHBOARD_USERNAME").unwrap_or_else(|_| "admin".to_string());
+        let password =
+            std::env::var("DASHBOARD_PASSWORD").unwrap_or_else(|_| "password".to_string());
 
         log::info!("Dashboard auth configured for user: {}", username);
 

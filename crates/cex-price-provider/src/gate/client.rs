@@ -17,11 +17,11 @@ pub struct CurrencyPair {
 pub struct CurrencyInfo {
     pub chain: String,
     #[serde(rename = "is_disabled")]
-    pub is_disabled: i32,  // 0 = enabled, 1 = disabled
+    pub is_disabled: i32, // 0 = enabled, 1 = disabled
     #[serde(rename = "is_deposit_disabled", default)]
-    pub is_deposit_disabled: i32,  // 0 = enabled, 1 = disabled
+    pub is_deposit_disabled: i32, // 0 = enabled, 1 = disabled
     #[serde(rename = "is_withdraw_disabled", default)]
-    pub is_withdraw_disabled: i32,  // 0 = enabled, 1 = disabled
+    pub is_withdraw_disabled: i32, // 0 = enabled, 1 = disabled
     #[serde(rename = "contract_address")]
     pub contract_address: Option<String>,
 }

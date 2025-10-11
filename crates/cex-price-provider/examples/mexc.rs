@@ -14,7 +14,10 @@ async fn main() -> Result<()> {
     println!("📊 Filtering for Ethereum tokens with deposits enabled\n");
 
     // Create MEXC service with credentials if available
-    let mexc = match (std::env::var("MEXC_API_KEY"), std::env::var("MEXC_API_SECRET")) {
+    let mexc = match (
+        std::env::var("MEXC_API_KEY"),
+        std::env::var("MEXC_API_SECRET"),
+    ) {
         (Ok(api_key), Ok(api_secret)) => {
             println!("✅ MEXC API credentials found - deposit filtering ENABLED");
             Arc::new(MexcService::with_credentials(

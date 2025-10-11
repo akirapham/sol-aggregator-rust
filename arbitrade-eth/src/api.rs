@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 pub fn create_router<T: PriceProvider + Send + Sync + 'static>(price_provider: Arc<T>) -> Router {
     Router::new()
-        .route("/health", get(health_check))
         .route("/prices", get(get_all_prices))
         .route("/price/:symbol", get(get_price))
         .with_state(price_provider)

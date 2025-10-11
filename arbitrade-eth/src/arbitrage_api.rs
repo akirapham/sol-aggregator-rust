@@ -1,6 +1,7 @@
 use axum::{
     extract::{Query, State},
     http::StatusCode,
+    middleware,
     response::IntoResponse,
     Json, Router,
     routing::{get, post, delete},
@@ -9,6 +10,8 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::auth::{auth_middleware, AuthConfig};
+use crate::dashboard::dashboard_page;
 use crate::db::{ArbitrageDb, ArbitrageOpportunity, DbStats};
 
 pub struct AppState {
@@ -225,13 +228,25 @@ async fn get_blacklist(
 
 pub fn create_router(db: Arc<ArbitrageDb>, blacklist: Arc<DashMap<String, ()>>) -> Router {
     let state = Arc::new(AppState { db, blacklist });
+    let auth_config = Arc::new(AuthConfig::from_env());
 
-    Router::new()
+    // Create protected routes that require authentication
+    let protected_routes = Router::new()
+        .route("/dashboard", get(dashboard_page))
         .route("/api/opportunities", get(get_opportunities))
         .route("/api/opportunities/top", get(get_top_opportunities))
         .route("/api/stats", get(get_stats))
         .route("/api/blacklist", get(get_blacklist))
         .route("/api/blacklist", post(add_to_blacklist))
         .route("/api/blacklist", delete(remove_from_blacklist))
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            auth_config.clone(),
+            auth_middleware,
+        ));
+
+    // Combine with public routes (health check doesn't need auth)
+    Router::new()
+        .route("/health", get(health_check))
+        .merge(protected_routes)
 }

@@ -15,6 +15,8 @@ use tower_http::cors::CorsLayer;
 use tracing_subscriber;
 mod api;
 mod arbitrage_api;
+mod auth;
+mod dashboard;
 mod db;
 mod dex_price;
 mod kyber;

@@ -10,10 +10,19 @@ pub struct SymbolInfo {
     pub base_asset: String,
     #[serde(rename = "quoteAsset")]
     pub quote_asset: String,
-    pub status: String,
+    pub status: String, // "1" = enabled, "0" = disabled
     #[serde(rename = "contractAddress")]
     pub contract_address: String,
     pub permissions: Vec<String>,
+    #[serde(rename = "isSpotTradingAllowed", default)]
+    pub is_spot_trading_allowed: bool,
+}
+
+impl SymbolInfo {
+    /// Check if trading is enabled for this symbol
+    pub fn is_trading_enabled(&self) -> bool {
+        self.status == "1" && self.is_spot_trading_allowed
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

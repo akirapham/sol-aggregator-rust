@@ -62,9 +62,21 @@ pub struct ChainInfo {
     #[serde(rename = "contractAddress")]
     pub contract_address: String,
     #[serde(rename = "chainDeposit")]
-    pub chain_deposit: String,
+    pub chain_deposit: String,  // "0" = disabled, "1" = enabled
     #[serde(rename = "chainWithdraw")]
-    pub chain_withdraw: String,
+    pub chain_withdraw: String,  // "0" = disabled, "1" = enabled
+}
+
+impl ChainInfo {
+    /// Check if deposits are enabled for this chain
+    pub fn is_deposit_enabled(&self) -> bool {
+        self.chain_deposit == "1"
+    }
+
+    /// Check if withdrawals are enabled for this chain
+    pub fn is_withdraw_enabled(&self) -> bool {
+        self.chain_withdraw == "1"
+    }
 }
 
 pub struct BybitClient {

@@ -319,9 +319,24 @@ async fn main() -> Result<()> {
 
     // Initialize all CEX services
     info!("Initializing CEX services...");
-    let mexc_service = Arc::new(MexcService::new(
-        cex_price_provider::FilterAddressType::Ethereum,
-    ));
+
+    // Initialize MEXC with or without credentials
+    let mexc_service = match (env::var("MEXC_API_KEY"), env::var("MEXC_API_SECRET")) {
+        (Ok(api_key), Ok(api_secret)) => {
+            info!("MEXC API credentials found, initializing with authentication");
+            Arc::new(MexcService::with_credentials(
+                cex_price_provider::FilterAddressType::Ethereum,
+                api_key,
+                api_secret,
+            ))
+        }
+        _ => {
+            info!("MEXC API credentials not found, initializing without authentication (deposit filtering disabled)");
+            Arc::new(MexcService::new(
+                cex_price_provider::FilterAddressType::Ethereum,
+            ))
+        }
+    };
 
     // Initialize Bybit with or without credentials
     let bybit_service = match (env::var("BYBIT_API_KEY"), env::var("BYBIT_API_SECRET")) {
@@ -413,6 +428,17 @@ async fn main() -> Result<()> {
     let cex_providers = Arc::new(cex_providers);
 
     // Start all WebSocket services in background
+    // Note: Each CEX service will only subscribe to tokens that:
+    // 1. Have valid contract addresses for the target chain (Ethereum)
+    // 2. Have deposits ENABLED on the exchange
+    //    - Bybit: Full deposit status filtering (requires API credentials)
+    //    - Bitget: Full deposit status filtering (public API)
+    //    - Gate.io: Full deposit status filtering (public API)
+    //    - KuCoin: Full deposit status filtering (public API)
+    //    - MEXC: Full deposit status filtering (requires API credentials)
+    // Set MEXC_API_KEY and MEXC_API_SECRET environment variables to enable MEXC deposit filtering
+    // This filtering happens during service initialization to avoid
+    // wasting resources on tokens that cannot be deposited for arbitrage
     info!("Starting CEX WebSocket services in background...");
 
     let mexc_clone = mexc_service.clone();

@@ -17,9 +17,25 @@ pub struct CurrencyPair {
 pub struct CurrencyInfo {
     pub chain: String,
     #[serde(rename = "is_disabled")]
-    pub is_disabled: i32,
+    pub is_disabled: i32,  // 0 = enabled, 1 = disabled
+    #[serde(rename = "is_deposit_disabled", default)]
+    pub is_deposit_disabled: i32,  // 0 = enabled, 1 = disabled
+    #[serde(rename = "is_withdraw_disabled", default)]
+    pub is_withdraw_disabled: i32,  // 0 = enabled, 1 = disabled
     #[serde(rename = "contract_address")]
     pub contract_address: Option<String>,
+}
+
+impl CurrencyInfo {
+    /// Check if deposits are enabled for this chain
+    pub fn is_deposit_enabled(&self) -> bool {
+        self.is_disabled == 0 && self.is_deposit_disabled == 0
+    }
+
+    /// Check if withdrawals are enabled for this chain
+    pub fn is_withdraw_enabled(&self) -> bool {
+        self.is_disabled == 0 && self.is_withdraw_disabled == 0
+    }
 }
 
 #[derive(Debug, Deserialize)]

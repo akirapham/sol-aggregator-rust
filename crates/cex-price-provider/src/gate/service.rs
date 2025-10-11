@@ -330,11 +330,12 @@ impl PriceProvider for GateService {
                 Ok(chains) => {
                     let mut contracts = Vec::new();
                     for chain_info in chains {
-                        if chain_info.is_disabled == 0 {
+                        // Check if chain is enabled AND deposits are enabled
+                        if chain_info.is_disabled == 0 && chain_info.is_deposit_enabled() {
                             if let Some(contract) = chain_info.contract_address {
                                 if !contract.is_empty() {
                                     log::debug!(
-                                        "Currency {}: found contract {} on chain {}",
+                                        "Currency {}: found contract {} on chain {} (deposits enabled)",
                                         currency,
                                         contract,
                                         chain_info.chain
@@ -346,8 +347,15 @@ impl PriceProvider for GateService {
                             } else {
                                 no_contract_count += 1;
                             }
-                        } else {
+                        } else if chain_info.is_disabled != 0 {
                             disabled_count += 1;
+                        } else if !chain_info.is_deposit_enabled() {
+                            disabled_count += 1;
+                            log::debug!(
+                                "Currency {} on chain {} - deposits disabled",
+                                currency,
+                                chain_info.chain
+                            );
                         }
                     }
                     if !contracts.is_empty() {

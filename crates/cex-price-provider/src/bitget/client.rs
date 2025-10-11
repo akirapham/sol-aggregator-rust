@@ -35,6 +35,22 @@ pub struct ChainInfo {
     pub contract_address: String,
     #[serde(rename = "needTag")]
     pub need_tag: String,
+    #[serde(rename = "depositEnabled", default)]
+    pub deposit_enabled: String, // "true" or "false"
+    #[serde(rename = "withdrawEnabled", default)]
+    pub withdraw_enabled: String, // "true" or "false"
+}
+
+impl ChainInfo {
+    /// Check if deposits are enabled for this chain
+    pub fn is_deposit_enabled(&self) -> bool {
+        self.deposit_enabled == "true"
+    }
+
+    /// Check if withdrawals are enabled for this chain
+    pub fn is_withdraw_enabled(&self) -> bool {
+        self.withdraw_enabled == "true"
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -317,7 +317,18 @@ impl PriceProvider for BybitService {
                         // 1. It's the target chain type (Ethereum or Solana)
                         // 2. Contract address is not empty
                         // 3. Contract address is valid for the chain type
+                        // 4. Deposits are enabled (for arbitrage purposes)
                         if is_target_chain && !chain.contract_address.is_empty() {
+                            // Check if deposits are enabled
+                            if !chain.is_deposit_enabled() {
+                                log::debug!(
+                                    "Skipping {} - deposits disabled on chain {}",
+                                    coin.coin,
+                                    chain.chain
+                                );
+                                continue;
+                            }
+
                             // Validate the contract address format
                             if !self
                                 .client

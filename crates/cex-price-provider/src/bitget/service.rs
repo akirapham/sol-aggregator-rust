@@ -319,7 +319,7 @@ impl PriceProvider for BitgetService {
 
         log::info!("Fetched {} currency details", all_currency_details.len());
 
-        // Build a map of currency -> contract addresses
+        // Build a map of currency -> contract addresses (only if deposits are enabled)
         let mut currency_contracts: std::collections::HashMap<String, Vec<(String, String)>> =
             std::collections::HashMap::new();
 
@@ -328,8 +328,15 @@ impl PriceProvider for BitgetService {
                 for currency_info in currency_infos {
                     let mut contracts = Vec::new();
                     for chain in &currency_info.chains {
-                        if !chain.contract_address.is_empty() {
+                        // Only include chains with deposits enabled and non-empty contract address
+                        if !chain.contract_address.is_empty() && chain.is_deposit_enabled() {
                             contracts.push((chain.chain.clone(), chain.contract_address.clone()));
+                        } else if !chain.contract_address.is_empty() {
+                            log::debug!(
+                                "Skipping {} on chain {} - deposits disabled",
+                                currency,
+                                chain.chain
+                            );
                         }
                     }
                     if !contracts.is_empty() {

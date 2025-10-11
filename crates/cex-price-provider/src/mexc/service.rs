@@ -33,6 +33,19 @@ impl MexcService {
         }
     }
 
+    pub fn with_credentials(
+        address_type: FilterAddressType,
+        api_key: String,
+        api_secret: String,
+    ) -> Self {
+        Self {
+            client: MexcClient::with_credentials(address_type, api_key, api_secret),
+            price_cache: Arc::new(DashMap::new()),
+            market_symbol_to_contract: Arc::new(DashMap::new()),
+            contract_to_market_symbol: Arc::new(DashMap::new()),
+        }
+    }
+
     async fn start_websocket_connection(
         connection_id: usize,
         pairs: &[String],
@@ -240,11 +253,74 @@ impl PriceProvider for MexcService {
 
     async fn start(&self) -> Result<()> {
         // Get Token USDT pairs
-        let pairs = self.client.get_token_usdt_pairs().await?;
+        let mut pairs = self.client.get_token_usdt_pairs().await?;
         log::info!("Found {} Token/USDT pairs", pairs.len());
 
         if pairs.is_empty() {
             return Ok(());
+        }
+
+        // Fetch coin info to check deposit/withdrawal status (requires authentication)
+        log::info!("Fetching deposit/withdrawal status for all coins...");
+        let coin_infos = match self.client.get_coin_info(None).await {
+            Ok(infos) => {
+                log::info!("Successfully fetched coin info for {} coins", infos.len());
+                infos
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to fetch coin deposit status (will proceed without filtering): {}",
+                    e
+                );
+                log::warn!("Tip: Configure MEXC_API_KEY and MEXC_API_SECRET environment variables to enable deposit filtering");
+                Vec::new()
+            }
+        };
+
+        // Build a map of base_asset -> deposit_enabled
+        let mut deposit_status: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        for coin_info in &coin_infos {
+            for network in &coin_info.network_list {
+                // Check if this network matches the target chain and has deposits enabled
+                let network_name = network.network.as_ref().map(|s| s.to_uppercase());
+                let is_target_network = match self.client.address_type {
+                    crate::FilterAddressType::Ethereum => {
+                        network_name.as_ref().map_or(false, |n| n.contains("ETH") || n.contains("ERC20"))
+                    }
+                    crate::FilterAddressType::Solana => {
+                        network_name.as_ref().map_or(false, |n| n.contains("SOL") || n == "SOL")
+                    }
+                };
+
+                if is_target_network {
+                    deposit_status.insert(coin_info.coin.clone(), network.is_deposit_enabled());
+                    break;
+                }
+            }
+        }
+
+        // Filter pairs to only include those with deposits enabled
+        let initial_count = pairs.len();
+        pairs.retain(|pair| {
+            if let Some(&is_enabled) = deposit_status.get(&pair.base_asset) {
+                if !is_enabled {
+                    log::debug!(
+                        "Skipping {} - deposits disabled for {}",
+                        pair.symbol,
+                        pair.base_asset
+                    );
+                    return false;
+                }
+            }
+            true
+        });
+
+        if initial_count > pairs.len() {
+            log::info!(
+                "Filtered out {} pairs with deposits disabled ({} remaining)",
+                initial_count - pairs.len(),
+                pairs.len()
+            );
         }
 
         pairs.iter().for_each(|pair| {

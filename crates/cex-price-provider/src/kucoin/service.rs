@@ -547,7 +547,7 @@ impl PriceProvider for KucoinService {
 
         log::info!("Fetched {} currency details", all_currency_details.len());
 
-        // Build a map of currency -> contract addresses
+        // Build a map of currency -> contract addresses (only if deposits are enabled)
         let mut currency_contracts: std::collections::HashMap<String, Vec<(String, String)>> =
             std::collections::HashMap::new();
 
@@ -555,8 +555,15 @@ impl PriceProvider for KucoinService {
             if let Ok(currency_detail) = result {
                 let mut contracts = Vec::new();
                 for chain in &currency_detail.chains {
-                    if !chain.contract_address.is_empty() {
+                    // Only include chains with deposits enabled and non-empty contract address
+                    if !chain.contract_address.is_empty() && chain.is_deposit_enabled {
                         contracts.push((chain.chain_name.clone(), chain.contract_address.clone()));
+                    } else if !chain.contract_address.is_empty() && !chain.is_deposit_enabled {
+                        log::debug!(
+                            "Skipping {} on chain {} - deposits disabled",
+                            currency,
+                            chain.chain_name
+                        );
                     }
                 }
                 if !contracts.is_empty() {

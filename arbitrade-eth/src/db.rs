@@ -118,22 +118,33 @@ impl ArbitrageDb {
         for item in iter {
             let (key, value) = item.context("Failed to read from RocksDB")?;
 
-            // Parse the key to check token address filter
+            // Skip blacklist entries
             let key_str = String::from_utf8_lossy(&key);
+            if key_str.starts_with("blacklist_") {
+                continue;
+            }
+
+            // Parse the key to check token address filter
             if let Some(filter_addr) = token_address {
                 if !key_str.contains(filter_addr) {
                     continue;
                 }
             }
 
-            let opp: ArbitrageOpportunity =
-                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+            // Try to deserialize, skip if it fails (corrupted data)
+            match serde_json::from_slice::<ArbitrageOpportunity>(&value) {
+                Ok(opp) => {
+                    opportunities.push(opp);
 
-            opportunities.push(opp);
-
-            if let Some(max) = limit {
-                if opportunities.len() >= max {
-                    break;
+                    if let Some(max) = limit {
+                        if opportunities.len() >= max {
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    continue;
                 }
             }
         }
@@ -152,17 +163,30 @@ impl ArbitrageDb {
         let iter = self.db.iterator(IteratorMode::End);
 
         for item in iter {
-            let (_, value) = item.context("Failed to read from RocksDB")?;
-            let opp: ArbitrageOpportunity =
-                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+            let (key, value) = item.context("Failed to read from RocksDB")?;
 
-            if opp.timestamp >= start_timestamp && opp.timestamp <= end_timestamp {
-                opportunities.push(opp);
+            // Skip blacklist entries
+            let key_str = String::from_utf8_lossy(&key);
+            if key_str.starts_with("blacklist_") {
+                continue;
+            }
 
-                if let Some(max) = limit {
-                    if opportunities.len() >= max {
-                        break;
+            // Try to deserialize, skip if it fails (corrupted data)
+            match serde_json::from_slice::<ArbitrageOpportunity>(&value) {
+                Ok(opp) => {
+                    if opp.timestamp >= start_timestamp && opp.timestamp <= end_timestamp {
+                        opportunities.push(opp);
+
+                        if let Some(max) = limit {
+                            if opportunities.len() >= max {
+                                break;
+                            }
+                        }
                     }
+                }
+                Err(e) => {
+                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    continue;
                 }
             }
         }
@@ -195,14 +219,27 @@ impl ArbitrageDb {
         let mut unique_tokens = std::collections::HashSet::new();
 
         for item in iter {
-            let (_, value) = item.context("Failed to read from RocksDB")?;
-            let opp: ArbitrageOpportunity =
-                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+            let (key, value) = item.context("Failed to read from RocksDB")?;
 
-            total_count += 1;
-            total_profit += opp.profit_usdt;
-            max_profit = max_profit.max(opp.profit_usdt);
-            unique_tokens.insert(opp.token_address.clone());
+            // Skip blacklist entries
+            let key_str = String::from_utf8_lossy(&key);
+            if key_str.starts_with("blacklist_") {
+                continue;
+            }
+
+            // Try to deserialize, skip if it fails (corrupted data)
+            match serde_json::from_slice::<ArbitrageOpportunity>(&value) {
+                Ok(opp) => {
+                    total_count += 1;
+                    total_profit += opp.profit_usdt;
+                    max_profit = max_profit.max(opp.profit_usdt);
+                    unique_tokens.insert(opp.token_address.clone());
+                }
+                Err(e) => {
+                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    continue;
+                }
+            }
         }
 
         Ok(DbStats {
@@ -226,11 +263,24 @@ impl ArbitrageDb {
 
         for item in iter {
             let (key, value) = item.context("Failed to read from RocksDB")?;
-            let opp: ArbitrageOpportunity =
-                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
 
-            if opp.timestamp < before_timestamp {
-                keys_to_delete.push(key.to_vec());
+            // Skip blacklist entries
+            let key_str = String::from_utf8_lossy(&key);
+            if key_str.starts_with("blacklist_") {
+                continue;
+            }
+
+            // Try to deserialize, skip if it fails (corrupted data)
+            match serde_json::from_slice::<ArbitrageOpportunity>(&value) {
+                Ok(opp) => {
+                    if opp.timestamp < before_timestamp {
+                        keys_to_delete.push(key.to_vec());
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    continue;
+                }
             }
         }
 

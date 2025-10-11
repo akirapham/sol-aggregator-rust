@@ -32,24 +32,24 @@ pub struct CurrencyInfo {
 pub struct ChainInfo {
     pub chain: String,
     #[serde(rename = "contractAddress")]
-    pub contract_address: String,
+    pub contract_address: Option<String>, // null for native tokens like ETH, BNB, SOL
     #[serde(rename = "needTag")]
     pub need_tag: String,
-    #[serde(rename = "depositEnabled", default)]
-    pub deposit_enabled: String, // "true" or "false"
-    #[serde(rename = "withdrawEnabled", default)]
-    pub withdraw_enabled: String, // "true" or "false"
+    #[serde(rename = "rechargeable", default)]
+    pub rechargeable: String, // "true" or "false" - deposits enabled
+    #[serde(rename = "withdrawable", default)]
+    pub withdrawable: String, // "true" or "false" - withdrawals enabled
 }
 
 impl ChainInfo {
     /// Check if deposits are enabled for this chain
     pub fn is_deposit_enabled(&self) -> bool {
-        self.deposit_enabled == "true"
+        self.rechargeable == "true"
     }
 
     /// Check if withdrawals are enabled for this chain
     pub fn is_withdraw_enabled(&self) -> bool {
-        self.withdraw_enabled == "true"
+        self.withdrawable == "true"
     }
 }
 

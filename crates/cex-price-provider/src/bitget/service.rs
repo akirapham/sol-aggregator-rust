@@ -325,25 +325,56 @@ impl PriceProvider for BitgetService {
 
         for (currency, result) in all_currency_details {
             if let Ok(currency_infos) = result {
+                if currency_infos.is_empty() {
+                    log::debug!("No currency info returned for {}", currency);
+                    continue;
+                }
+
                 for currency_info in currency_infos {
+                    log::debug!(
+                        "Processing {} - found {} chains",
+                        currency_info.coin,
+                        currency_info.chains.len()
+                    );
+
                     let mut contracts = Vec::new();
                     for chain in &currency_info.chains {
-                        // Only include chains with deposits enabled and non-empty contract address
-                        if !chain.contract_address.is_empty() && chain.is_deposit_enabled() {
-                            contracts.push((chain.chain.clone(), chain.contract_address.clone()));
-                        } else if !chain.contract_address.is_empty() {
+                        log::debug!(
+                            "  Chain: {}, Contract: {:?}, Deposit: {}, Withdraw: {}",
+                            chain.chain,
+                            chain.contract_address,
+                            chain.rechargeable,
+                            chain.withdrawable
+                        );
+
+                        // Only include chains with deposits enabled and valid contract address
+                        if let Some(contract_addr) = &chain.contract_address {
+                            if !contract_addr.is_empty() && chain.is_deposit_enabled() {
+                                contracts.push((chain.chain.clone(), contract_addr.clone()));
+                            } else if !contract_addr.is_empty() {
+                                log::debug!(
+                                    "Skipping {} on chain {} - deposits disabled",
+                                    currency,
+                                    chain.chain
+                                );
+                            }
+                        } else {
                             log::debug!(
-                                "Skipping {} on chain {} - deposits disabled",
+                                "Skipping {} on chain {} - native token (no contract address)",
                                 currency,
                                 chain.chain
                             );
                         }
                     }
                     if !contracts.is_empty() {
+                        let contract_count = contracts.len();
                         currency_contracts.insert(currency.clone(), contracts);
+                        log::debug!("Added {} contracts for {}", contract_count, currency);
                         break;
                     }
                 }
+            } else if let Err(e) = result {
+                log::debug!("Failed to fetch coin info for {}: {}", currency, e);
             }
         }
 

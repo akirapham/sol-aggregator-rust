@@ -3,8 +3,9 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     Json, Router,
-    routing::get,
+    routing::{get, post, delete},
 };
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use crate::db::{ArbitrageDb, ArbitrageOpportunity, DbStats};
 
 pub struct AppState {
     pub db: Arc<ArbitrageDb>,
+    pub blacklist: Arc<DashMap<String, ()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,12 +139,99 @@ async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-pub fn create_router(db: Arc<ArbitrageDb>) -> Router {
-    let state = Arc::new(AppState { db });
+#[derive(Debug, Deserialize)]
+pub struct BlacklistRequest {
+    pub address: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BlacklistResponse {
+    pub addresses: Vec<String>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SuccessResponse {
+    pub message: String,
+}
+
+/// POST /api/blacklist - Add an address to the blacklist
+async fn add_to_blacklist(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BlacklistRequest>,
+) -> Result<Json<SuccessResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let address = req.address.to_lowercase();
+
+    log::info!("Adding address {} to blacklist", address);
+
+    // Add to database
+    state.db.add_to_blacklist(&address).map_err(|e| {
+        log::error!("Failed to add address to blacklist: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Database error: {}", e),
+            }),
+        )
+    })?;
+
+    // Add to in-memory cache
+    state.blacklist.insert(address.clone(), ());
+
+    Ok(Json(SuccessResponse {
+        message: format!("Address {} added to blacklist", address),
+    }))
+}
+
+/// DELETE /api/blacklist - Remove an address from the blacklist
+async fn remove_from_blacklist(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BlacklistRequest>,
+) -> Result<Json<SuccessResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let address = req.address.to_lowercase();
+
+    log::info!("Removing address {} from blacklist", address);
+
+    // Remove from database
+    state.db.remove_from_blacklist(&address).map_err(|e| {
+        log::error!("Failed to remove address from blacklist: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Database error: {}", e),
+            }),
+        )
+    })?;
+
+    // Remove from in-memory cache
+    state.blacklist.remove(&address);
+
+    Ok(Json(SuccessResponse {
+        message: format!("Address {} removed from blacklist", address),
+    }))
+}
+
+/// GET /api/blacklist - Get all blacklisted addresses
+async fn get_blacklist(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<BlacklistResponse>, (StatusCode, Json<ErrorResponse>)> {
+    log::debug!("Querying blacklist");
+
+    let addresses: Vec<String> = state.blacklist.iter().map(|entry| entry.key().clone()).collect();
+    let count = addresses.len();
+
+    Ok(Json(BlacklistResponse { addresses, count }))
+}
+
+pub fn create_router(db: Arc<ArbitrageDb>, blacklist: Arc<DashMap<String, ()>>) -> Router {
+    let state = Arc::new(AppState { db, blacklist });
 
     Router::new()
         .route("/api/opportunities", get(get_opportunities))
         .route("/api/opportunities/top", get(get_top_opportunities))
         .route("/api/stats", get(get_stats))
+        .route("/api/blacklist", get(get_blacklist))
+        .route("/api/blacklist", post(add_to_blacklist))
+        .route("/api/blacklist", delete(remove_from_blacklist))
         .with_state(state)
 }

@@ -39,6 +39,60 @@ impl ArbitrageDb {
         Ok(Self { db })
     }
 
+    /// Add an address to the blacklist
+    /// Key format: blacklist_address
+    pub fn add_to_blacklist(&self, address: &str) -> Result<()> {
+        let key = format!("blacklist_{}", address.to_lowercase());
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let value = timestamp.to_string();
+
+        self.db
+            .put(key.as_bytes(), value.as_bytes())
+            .context("Failed to add address to blacklist")?;
+
+        log::info!("Added address {} to blacklist", address);
+        Ok(())
+    }
+
+    /// Remove an address from the blacklist
+    pub fn remove_from_blacklist(&self, address: &str) -> Result<()> {
+        let key = format!("blacklist_{}", address.to_lowercase());
+
+        self.db
+            .delete(key.as_bytes())
+            .context("Failed to remove address from blacklist")?;
+
+        log::info!("Removed address {} from blacklist", address);
+        Ok(())
+    }
+
+    /// Check if an address is blacklisted
+    pub fn is_blacklisted(&self, address: &str) -> Result<bool> {
+        let key = format!("blacklist_{}", address.to_lowercase());
+
+        Ok(self.db.get(key.as_bytes())?.is_some())
+    }
+
+    /// Get all blacklisted addresses
+    pub fn get_blacklist(&self) -> Result<Vec<String>> {
+        let mut addresses = Vec::new();
+        let iter = self.db.iterator(IteratorMode::Start);
+
+        for item in iter {
+            let (key, _) = item.context("Failed to read from RocksDB")?;
+            let key_str = String::from_utf8_lossy(&key);
+
+            if let Some(address) = key_str.strip_prefix("blacklist_") {
+                addresses.push(address.to_string());
+            }
+        }
+
+        Ok(addresses)
+    }
+
     /// Save an arbitrage opportunity to the database
     /// Key format: timestamp_token_address
     pub fn save_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<()> {

@@ -491,7 +491,23 @@ async fn main() -> Result<()> {
     // Give CEX services time to initialize their connections
     info!("Waiting 10 seconds for CEX services to initialize...");
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    info!("CEX initialization period complete"); // Example: Start DEX price client (if DEX_PRICE_STREAM environment variable is set)
+    info!("CEX initialization period complete");
+
+    // Load blacklist from database into memory (outside spawn so it's accessible by API)
+    let blacklist: Arc<DashMap<String, ()>> = Arc::new(DashMap::new());
+    match arb_db.get_blacklist() {
+        Ok(addresses) => {
+            for addr in addresses {
+                blacklist.insert(addr.to_lowercase(), ());
+            }
+            info!("Loaded {} blacklisted addresses from database", blacklist.len());
+        }
+        Err(e) => {
+            error!("Failed to load blacklist from database: {}", e);
+        }
+    }
+
+    // Example: Start DEX price client (if DEX_PRICE_STREAM environment variable is set)
     if std::env::var("DEX_PRICE_STREAM").is_ok() {
         let dex_config = DexPriceConfig::from_env();
         info!(
@@ -516,6 +532,7 @@ async fn main() -> Result<()> {
         let cex_providers_clone = cex_providers.clone();
         let kyber_client_clone = kyber_client.clone();
         let arb_db = arb_db.clone();
+        let blacklist_clone = blacklist.clone();
         tokio::spawn(async move {
             // Read minimum percentage difference threshold from environment
             let min_percent_diff: f64 = std::env::var("MIN_PERCENT_DIFF")
@@ -546,6 +563,13 @@ async fn main() -> Result<()> {
                 info!("Received {} DEX price updates", price_updates.len());
 
                 for update in &price_updates {
+                    // Skip blacklisted tokens
+                    let token_address_lower = update.token_address.to_lowercase();
+                    if blacklist_clone.contains_key(&token_address_lower) {
+                        log::debug!("Skipping blacklisted token: {}", update.token_address);
+                        continue;
+                    }
+
                     // Check if any CEX has this token at a better price
                     let mut has_opportunity = false;
                     for cex in cex_providers_clone.iter() {
@@ -588,7 +612,6 @@ async fn main() -> Result<()> {
                             let cex_providers = cex_providers_clone.clone();
                             let update = update.clone();
                             let db = arb_db.clone();
-                            let token_address_clone = token_address.clone();
 
                             tokio::spawn(async move {
                                 const USDT_ADDRESS: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
@@ -741,7 +764,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .merge(api::create_router(mexc_service))
-        .merge(arbitrage_api::create_router(arb_db.clone()))
+        .merge(arbitrage_api::create_router(arb_db.clone(), blacklist.clone()))
         .layer(CorsLayer::permissive());
 
     // Read port from ARBITRADE_PORT environment variable, default to 3001

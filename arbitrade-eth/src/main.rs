@@ -553,24 +553,141 @@ async fn main() -> Result<()> {
                             };
 
                         if can_process {
-                            // Mark token as being processed
-                            arb_processing_cache.insert(token_address.clone(), current_time);
-
-                            // Spawn task to process arbitrage across all CEXes
+                            // Step 1: Quick profit estimation before full simulation
+                            // Get estimated DEX output and check if any CEX offers positive profit
                             let kyber_client = kyber_client_clone.clone();
                             let cex_providers = cex_providers_clone.clone();
                             let update = update.clone();
                             let db = arb_db.clone();
+                            let token_address_clone = token_address.clone();
+                            let arb_cache = arb_processing_cache.clone();
 
                             tokio::spawn(async move {
-                                process_arbitrage(
-                                    &kyber_client,
-                                    &cex_providers,
-                                    &update,
-                                    arb_amount_usdt,
-                                    &db,
-                                )
-                                .await;
+                                const USDT_ADDRESS: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
+                                let usdt_amount_wei = (arb_amount_usdt * 1_000_000.0) as u64;
+
+                                // Step 1: Get price differences across all CEXes
+                                log::debug!("Step 1: Checking price differences for {}", update.token_address);
+                                let mut has_price_opportunity = false;
+                                for cex in cex_providers.iter() {
+                                    if let Some(price) = cex
+                                        .service
+                                        .get_price(&update.token_address.to_lowercase())
+                                        .await
+                                    {
+                                        let price_diff_percent =
+                                            ((update.price_in_usd - price.price) / price.price) * 100.0;
+                                        if price_diff_percent < 0.0 {
+                                            has_price_opportunity = true;
+                                            log::debug!(
+                                                "  {} has favorable price: ${:.6} (diff: {:.2}%)",
+                                                cex.name,
+                                                price.price,
+                                                price_diff_percent
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if !has_price_opportunity {
+                                    log::debug!("No favorable price differences found, skipping arbitrage");
+                                    return;
+                                }
+
+                                // Step 2: Get estimated output from Kyber aggregator for DEX swap
+                                log::debug!("Step 2: Getting Kyber swap estimate for {} USDT", arb_amount_usdt);
+                                let (tokens_from_dex, gas_fee_usd) = match kyber_client
+                                    .estimate_swap_output(
+                                        USDT_ADDRESS,
+                                        &update.token_address,
+                                        &usdt_amount_wei.to_string(),
+                                    )
+                                    .await
+                                {
+                                    Ok((amount_out_wei, gas_usd_str)) => {
+                                        let gas_usd = gas_usd_str.parse::<f64>().unwrap_or(0.0);
+                                        match amount_out_wei.parse::<u128>() {
+                                            Ok(wei) => {
+                                                let divisor = 10_u128.pow(update.decimals as u32);
+                                                let tokens = wei as f64 / divisor as f64;
+                                                log::debug!(
+                                                    "  Kyber estimate: {} USDT → {:.6} tokens (gas: ${:.2})",
+                                                    arb_amount_usdt,
+                                                    tokens,
+                                                    gas_usd
+                                                );
+                                                (tokens, gas_usd)
+                                            }
+                                            Err(e) => {
+                                                log::warn!("Failed to parse Kyber output amount: {}", e);
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to get Kyber quote: {}", e);
+                                        return;
+                                    }
+                                };
+
+                                // Step 3: Estimate output USDT from each CEX using their orderbook
+                                log::debug!("Step 3: Estimating CEX outputs for {:.6} tokens", tokens_from_dex);
+                                let mut best_profit: Option<f64> = None;
+                                let mut best_cex_name: Option<String> = None;
+
+                                for cex in cex_providers.iter() {
+                                    if let Some(usdt_output) = cex
+                                        .get_orderbook_liquidity(&update.token_address.to_lowercase(), tokens_from_dex)
+                                        .await
+                                    {
+                                        let profit = usdt_output - arb_amount_usdt - gas_fee_usd;
+                                        log::debug!(
+                                            "  {} estimated output: ${:.2} USDT → Profit: ${:.2}",
+                                            cex.name,
+                                            usdt_output,
+                                            profit
+                                        );
+
+                                        if profit > best_profit.unwrap_or(0.0) {
+                                            best_profit = Some(profit);
+                                            best_cex_name = Some(cex.name.to_string());
+                                        }
+                                    }
+                                }
+
+                                // Step 4: Only proceed with full arbitrage simulation if we have positive profit
+                                if let Some(profit) = best_profit {
+                                    if profit > 0.0 {
+                                        log::info!(
+                                            "✅ Positive profit potential detected for {}: ${:.2} on {}",
+                                            update.token_address,
+                                            profit,
+                                            best_cex_name.unwrap_or_default()
+                                        );
+                                        log::info!("Proceeding with full arbitrage simulation...");
+
+                                        // Mark token as being processed
+                                        arb_cache.insert(token_address_clone, current_time);
+
+                                        // Run full arbitrage simulation with delays
+                                        process_arbitrage(
+                                            &kyber_client,
+                                            &cex_providers,
+                                            &update,
+                                            arb_amount_usdt,
+                                            &db,
+                                        )
+                                        .await;
+                                    } else {
+                                        log::debug!(
+                                            "❌ No positive profit for {}: best profit ${:.2}, skipping",
+                                            update.token_address,
+                                            profit
+                                        );
+                                    }
+                                } else {
+                                    log::debug!("❌ No CEX liquidity found for {}, skipping", update.token_address);
+                                }
                             });
                         } else {
                             let last_time = arb_processing_cache.get(&token_address).unwrap();

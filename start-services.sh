@@ -57,9 +57,24 @@ check_port() {
     fi
 }
 
+# Function to extract port from websocket URL
+get_port_from_ws_url() {
+    local url=$1
+    # Extract port from ws://localhost:PORT format
+    echo "$url" | sed -n 's|.*:\([0-9]*\).*|\1|p'
+}
+
 # Check if required ports are available
 echo "🔍 Checking port availability..."
-check_port 8080 || echo "⚠️  Warning: DEX price stream port 8080 may be in use"
+
+# Extract port from DEX_PRICE_STREAM URL (default: 8080)
+DEX_WS_PORT=$(get_port_from_ws_url "$DEX_PRICE_STREAM")
+if [ -n "$DEX_WS_PORT" ]; then
+    check_port "$DEX_WS_PORT" || echo "⚠️  Warning: DEX price stream port $DEX_WS_PORT may be in use"
+else
+    echo "⚠️  Warning: Could not extract port from DEX_PRICE_STREAM=$DEX_PRICE_STREAM"
+fi
+
 check_port $ARBITRADE_PORT || exit 1
 
 # Build the Rust binaries if they don't exist

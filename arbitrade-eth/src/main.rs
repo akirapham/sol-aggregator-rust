@@ -553,6 +553,9 @@ async fn main() -> Result<()> {
                             };
 
                         if can_process {
+                            // Mark token as being processed BEFORE spawning task to prevent duplicate processing
+                            arb_processing_cache.insert(token_address.clone(), current_time);
+
                             // Step 1: Quick profit estimation before full simulation
                             // Get estimated DEX output and check if any CEX offers positive profit
                             let kyber_client = kyber_client_clone.clone();
@@ -560,7 +563,6 @@ async fn main() -> Result<()> {
                             let update = update.clone();
                             let db = arb_db.clone();
                             let token_address_clone = token_address.clone();
-                            let arb_cache = arb_processing_cache.clone();
 
                             tokio::spawn(async move {
                                 const USDT_ADDRESS: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
@@ -666,10 +668,8 @@ async fn main() -> Result<()> {
                                         );
                                         log::info!("Proceeding with full arbitrage simulation...");
 
-                                        // Mark token as being processed
-                                        arb_cache.insert(token_address_clone, current_time);
-
                                         // Run full arbitrage simulation with delays
+                                        // (Token already marked as processed before spawning this task)
                                         process_arbitrage(
                                             &kyber_client,
                                             &cex_providers,

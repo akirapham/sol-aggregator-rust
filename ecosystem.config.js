@@ -1,0 +1,43 @@
+module.exports = {
+  apps: [
+    {
+      name: 'amm-eth',
+      script: 'target/release/amm-eth',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      env: {
+        DEX_PRICE_STREAM: process.env.DEX_PRICE_STREAM || 'ws://localhost:8080',
+      },
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      merge_logs: true,
+      log_file: 'logs/amm-eth.log',
+      out_file: 'logs/amm-eth-out.log',
+      error_file: 'logs/amm-eth-error.log',
+      restart_delay: 4000,
+      max_restarts: 10,
+    },
+    {
+      name: 'arbitrade-eth',
+      script: 'target/release/arbitrade-eth',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '1G',
+      env: {
+        ARBITRADE_PORT: process.env.ARBITRADE_PORT || '3001',
+        MIN_PERCENT_DIFF: process.env.MIN_PERCENT_DIFF || '2.0',
+        ARB_SIMULATION_USDT: process.env.ARB_SIMULATION_USDT || '400.0',
+        ARB_COOLDOWN_SECS: process.env.ARB_COOLDOWN_SECS || '3600',
+      },
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      merge_logs: true,
+      log_file: 'logs/arbitrade-eth.log',
+      out_file: 'logs/arbitrade-eth-out.log',
+      error_file: 'logs/arbitrade-eth-error.log',
+      restart_delay: 4000,
+      max_restarts: 10,
+    },
+  ],
+};

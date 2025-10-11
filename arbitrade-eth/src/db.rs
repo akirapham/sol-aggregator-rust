@@ -245,6 +245,46 @@ impl ArbitrageDb {
 
         Ok(count)
     }
+
+    /// Delete all opportunities for a specific token address
+    pub fn delete_opportunities_by_token(&self, token_address: &str) -> Result<usize> {
+        let mut count = 0;
+        let iter = self.db.iterator(IteratorMode::Start);
+        let mut keys_to_delete = Vec::new();
+        let token_address_lower = token_address.to_lowercase();
+
+        for item in iter {
+            let (key, value) = item.context("Failed to read from RocksDB")?;
+
+            // Skip blacklist entries
+            let key_str = String::from_utf8_lossy(&key);
+            if key_str.starts_with("blacklist_") {
+                continue;
+            }
+
+            let opp: ArbitrageOpportunity =
+                serde_json::from_slice(&value).context("Failed to deserialize opportunity")?;
+
+            if opp.token_address.to_lowercase() == token_address_lower {
+                keys_to_delete.push(key.to_vec());
+            }
+        }
+
+        for key in keys_to_delete {
+            self.db
+                .delete(key)
+                .context("Failed to delete from RocksDB")?;
+            count += 1;
+        }
+
+        log::info!(
+            "Deleted {} opportunities for token {} from database",
+            count,
+            token_address
+        );
+
+        Ok(count)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

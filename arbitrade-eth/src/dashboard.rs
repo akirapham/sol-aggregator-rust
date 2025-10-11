@@ -75,6 +75,10 @@ fn generate_dashboard_html(
                     <td class="profit-positive">${:.6}</td>
                     <td>{:.4}%</td>
                     <td>Buy DEX @ ${:.6} → Sell CEX @ ${:.6}</td>
+                    <td>
+                        <button class="action-btn blacklist-btn" onclick="blacklistToken('{}')">🚫 Blacklist</button>
+                        <button class="action-btn delete-btn" onclick="deleteTrades('{}')">🗑️ Delete</button>
+                    </td>
                 </tr>
                 "#,
                 i + 1,
@@ -84,7 +88,9 @@ fn generate_dashboard_html(
                 opp.profit_usdt,
                 opp.profit_percent,
                 opp.dex_price,
-                opp.cex_price
+                opp.cex_price,
+                opp.token_address,
+                opp.token_address
             )
         })
         .collect();
@@ -106,6 +112,10 @@ fn generate_dashboard_html(
                     <td class="{}">${:.6}</td>
                     <td>{:.4}%</td>
                     <td>Buy DEX @ ${:.6} → Sell CEX @ ${:.6}</td>
+                    <td>
+                        <button class="action-btn blacklist-btn" onclick="blacklistToken('{}')">🚫 Blacklist</button>
+                        <button class="action-btn delete-btn" onclick="deleteTrades('{}')">🗑️ Delete</button>
+                    </td>
                 </tr>
                 "#,
                 format_timestamp(opp.timestamp),
@@ -115,7 +125,9 @@ fn generate_dashboard_html(
                 opp.profit_usdt,
                 opp.profit_percent,
                 opp.dex_price,
-                opp.cex_price
+                opp.cex_price,
+                opp.token_address,
+                opp.token_address
             )
         })
         .collect();
@@ -125,7 +137,15 @@ fn generate_dashboard_html(
     } else {
         blacklist
             .iter()
-            .map(|addr| format!(r#"<li><code class="token-address">{}</code></li>"#, addr))
+            .map(|addr| {
+                format!(
+                    r#"<li>
+                        <code class="token-address">{}</code>
+                        <button class="action-btn remove-btn" onclick="removeFromBlacklist('{}')">✖️ Remove</button>
+                    </li>"#,
+                    addr, addr
+                )
+            })
             .collect()
     };
 
@@ -271,6 +291,10 @@ fn generate_dashboard_html(
             padding: 10px;
             border-radius: 6px;
             border-left: 4px solid #dc3545;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
         }}
 
         .empty-message {{
@@ -279,6 +303,121 @@ fn generate_dashboard_html(
             text-align: center;
             padding: 20px;
             border-left: none !important;
+        }}
+
+        .action-btn {{
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }}
+
+        .blacklist-btn {{
+            background: #ffc107;
+            color: #000;
+        }}
+
+        .blacklist-btn:hover {{
+            background: #e0a800;
+        }}
+
+        .delete-btn {{
+            background: #dc3545;
+            color: white;
+        }}
+
+        .delete-btn:hover {{
+            background: #c82333;
+        }}
+
+        .remove-btn {{
+            background: #6c757d;
+            color: white;
+        }}
+
+        .remove-btn:hover {{
+            background: #5a6268;
+        }}
+
+        .manual-form {{
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }}
+
+        .manual-form h3 {{
+            margin-bottom: 15px;
+            color: #333;
+        }}
+
+        .form-group {{
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }}
+
+        .form-group input {{
+            flex: 1;
+            min-width: 300px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }}
+
+        .form-group button {{
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }}
+
+        .add-btn {{
+            background: #28a745;
+            color: white;
+        }}
+
+        .add-btn:hover {{
+            background: #218838;
+        }}
+
+        .notification {{
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+        }}
+
+        .notification.success {{
+            background: #28a745;
+        }}
+
+        .notification.error {{
+            background: #dc3545;
+        }}
+
+        @keyframes slideIn {{
+            from {{
+                transform: translateX(400px);
+                opacity: 0;
+            }}
+            to {{
+                transform: translateX(0);
+                opacity: 1;
+            }}
         }}
 
         .refresh-btn {{
@@ -366,6 +505,7 @@ fn generate_dashboard_html(
                         <th>Profit (USD)</th>
                         <th>Profit %</th>
                         <th>Route</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -385,6 +525,7 @@ fn generate_dashboard_html(
                         <th>Profit (USD)</th>
                         <th>Profit %</th>
                         <th>Route</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -395,11 +536,156 @@ fn generate_dashboard_html(
 
         <div class="section">
             <h2>🚫 Blacklisted Addresses</h2>
+            <div class="manual-form">
+                <h3>Add Address to Blacklist</h3>
+                <div class="form-group">
+                    <input type="text" id="blacklistInput" placeholder="Enter token address (0x...)" />
+                    <button class="add-btn" onclick="addToBlacklistManual()">➕ Add to Blacklist</button>
+                </div>
+            </div>
             <ul class="blacklist-list">
                 {}
             </ul>
         </div>
     </div>
+
+    <script>
+        // Get auth token from cookie or localStorage
+        function getAuthToken() {{
+            // Try to get from cookie first
+            const cookies = document.cookie.split(';');
+            for (let cookie of cookies) {{
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'auth_token') {{
+                    return value;
+                }}
+            }}
+            // Fallback to localStorage
+            return localStorage.getItem('auth_token');
+        }}
+
+        // Show notification
+        function showNotification(message, type = 'success') {{
+            const notification = document.createElement('div');
+            notification.className = `notification ${{type}}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {{
+                notification.remove();
+            }}, 3000);
+        }}
+
+        // Blacklist a token
+        async function blacklistToken(address) {{
+            if (!confirm(`Are you sure you want to blacklist token ${{address}}?`)) {{
+                return;
+            }}
+
+            try {{
+                const response = await fetch('/api/blacklist', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                    }},
+                    body: JSON.stringify({{ address: address }})
+                }});
+
+                const data = await response.json();
+
+                if (response.ok) {{
+                    showNotification(data.message || 'Token blacklisted successfully!', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                }} else {{
+                    showNotification(data.error || 'Failed to blacklist token', 'error');
+                }}
+            }} catch (error) {{
+                showNotification('Error: ' + error.message, 'error');
+            }}
+        }}
+
+        // Delete all trades for a token
+        async function deleteTrades(address) {{
+            if (!confirm(`Are you sure you want to delete ALL trades for token ${{address}}? This cannot be undone!`)) {{
+                return;
+            }}
+
+            try {{
+                const response = await fetch('/api/opportunities/token', {{
+                    method: 'DELETE',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                    }},
+                    body: JSON.stringify({{ token_address: address }})
+                }});
+
+                const data = await response.json();
+
+                if (response.ok) {{
+                    showNotification(data.message || `Deleted ${{data.deleted_count}} trade(s)`, 'success');
+                    setTimeout(() => location.reload(), 1000);
+                }} else {{
+                    showNotification(data.error || 'Failed to delete trades', 'error');
+                }}
+            }} catch (error) {{
+                showNotification('Error: ' + error.message, 'error');
+            }}
+        }}
+
+        // Remove from blacklist
+        async function removeFromBlacklist(address) {{
+            if (!confirm(`Remove ${{address}} from blacklist?`)) {{
+                return;
+            }}
+
+            try {{
+                const response = await fetch('/api/blacklist', {{
+                    method: 'DELETE',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                    }},
+                    body: JSON.stringify({{ address: address }})
+                }});
+
+                const data = await response.json();
+
+                if (response.ok) {{
+                    showNotification(data.message || 'Removed from blacklist', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                }} else {{
+                    showNotification(data.error || 'Failed to remove from blacklist', 'error');
+                }}
+            }} catch (error) {{
+                showNotification('Error: ' + error.message, 'error');
+            }}
+        }}
+
+        // Add to blacklist manually
+        async function addToBlacklistManual() {{
+            const input = document.getElementById('blacklistInput');
+            const address = input.value.trim();
+
+            if (!address) {{
+                showNotification('Please enter a token address', 'error');
+                return;
+            }}
+
+            if (!address.startsWith('0x') || address.length !== 42) {{
+                showNotification('Invalid Ethereum address format', 'error');
+                return;
+            }}
+
+            await blacklistToken(address);
+            input.value = '';
+        }}
+
+        // Allow Enter key to submit
+        document.getElementById('blacklistInput').addEventListener('keypress', function(e) {{
+            if (e.key === 'Enter') {{
+                addToBlacklistManual();
+            }}
+        }});
+    </script>
 </body>
 </html>"#,
         stats.total_opportunities,

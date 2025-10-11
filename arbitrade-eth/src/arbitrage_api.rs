@@ -230,6 +230,48 @@ async fn get_blacklist(
     Ok(Json(BlacklistResponse { addresses, count }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeleteTradesRequest {
+    pub token_address: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteTradesResponse {
+    pub message: String,
+    pub deleted_count: usize,
+}
+
+/// DELETE /api/opportunities/token - Delete all trades for a specific token address
+async fn delete_trades_by_token(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DeleteTradesRequest>,
+) -> Result<Json<DeleteTradesResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let token_address = req.token_address.to_lowercase();
+
+    log::info!("Deleting all trades for token: {}", token_address);
+
+    let deleted_count = state
+        .db
+        .delete_opportunities_by_token(&token_address)
+        .map_err(|e| {
+            log::error!("Failed to delete trades for token {}: {}", token_address, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Database error: {}", e),
+                }),
+            )
+        })?;
+
+    Ok(Json(DeleteTradesResponse {
+        message: format!(
+            "Deleted {} trade(s) for token {}",
+            deleted_count, token_address
+        ),
+        deleted_count,
+    }))
+}
+
 pub fn create_router(db: Arc<ArbitrageDb>, blacklist: Arc<DashMap<String, ()>>) -> Router {
     let state = Arc::new(AppState { db, blacklist });
     let auth_config = Arc::new(AuthConfig::from_env());
@@ -239,6 +281,7 @@ pub fn create_router(db: Arc<ArbitrageDb>, blacklist: Arc<DashMap<String, ()>>) 
         .route("/dashboard", get(dashboard_page))
         .route("/api/opportunities", get(get_opportunities))
         .route("/api/opportunities/top", get(get_top_opportunities))
+        .route("/api/opportunities/token", delete(delete_trades_by_token))
         .route("/api/stats", get(get_stats))
         .route("/api/blacklist", get(get_blacklist))
         .route("/api/blacklist", post(add_to_blacklist))

@@ -56,5 +56,9 @@ path = "examples/kucoin.rs"
 name = "mexc"
 path = "examples/mexc.rs"
 
+[[example]]
+name = "test_token_safety"
+path = "examples/test_token_safety.rs"
+
 [build-dependencies]
 prost-build = { workspace = true }

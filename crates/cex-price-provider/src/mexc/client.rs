@@ -74,6 +74,7 @@ impl NetworkInfo {
     }
 }
 
+#[derive(Clone)]
 pub struct MexcClient {
     client: Client,
     base_url: String,

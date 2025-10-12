@@ -47,6 +47,7 @@ pub struct OrderbookResponse {
     pub bids: Vec<Vec<String>>,
 }
 
+#[derive(Clone)]
 pub struct GateClient {
     client: Client,
     base_url: String,

@@ -60,6 +60,7 @@ pub struct OrderbookData {
     pub ts: String,
 }
 
+#[derive(Clone)]
 pub struct BitgetClient {
     client: Client,
     base_url: String,

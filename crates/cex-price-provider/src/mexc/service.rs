@@ -21,6 +21,7 @@ pub struct MexcService {
     price_cache: Arc<DashMap<String, TokenPrice>>,
     market_symbol_to_contract: Arc<DashMap<String, String>>,
     contract_to_market_symbol: Arc<DashMap<String, String>>,
+    token_status_cache: Arc<DashMap<String, crate::TokenStatus>>, // symbol -> status
 }
 
 impl MexcService {
@@ -30,6 +31,7 @@ impl MexcService {
             price_cache: Arc::new(DashMap::new()),
             market_symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_market_symbol: Arc::new(DashMap::new()),
+            token_status_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -43,6 +45,7 @@ impl MexcService {
             price_cache: Arc::new(DashMap::new()),
             market_symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_market_symbol: Arc::new(DashMap::new()),
+            token_status_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -252,102 +255,38 @@ impl PriceProvider for MexcService {
     }
 
     async fn start(&self) -> Result<()> {
-        // Get Token USDT pairs
-        let mut pairs = self.client.get_token_usdt_pairs().await?;
-        log::info!("Found {} Token/USDT pairs", pairs.len());
-
-        if pairs.is_empty() {
-            return Ok(());
-        }
-
-        // Fetch coin info to check deposit/withdrawal status (requires authentication)
-        log::info!("Fetching deposit/withdrawal status for all coins...");
-        let coin_infos = match self.client.get_coin_info(None).await {
-            Ok(infos) => {
-                log::info!("Successfully fetched coin info for {} coins", infos.len());
-                infos
+        // Initial token status refresh (with network and deposit verification)
+        info!("MEXC: Performing initial token status verification...");
+        let safe_market_symbols = match self.refresh_token_status().await {
+            Ok(symbols) => {
+                info!("MEXC: Successfully verified {} safe tokens", symbols.len());
+                symbols
             }
             Err(e) => {
-                log::warn!(
-                    "Failed to fetch coin deposit status (will proceed without filtering): {}",
-                    e
-                );
-                log::warn!("Tip: Configure MEXC_API_KEY and MEXC_API_SECRET environment variables to enable deposit filtering");
-                Vec::new()
+                warn!("MEXC: Initial token status refresh failed: {}", e);
+                warn!("Tip: Configure MEXC_API_KEY and MEXC_API_SECRET environment variables to enable deposit/network filtering");
+                return Ok(());
             }
         };
 
-        // Build a map of base_asset -> deposit_enabled
-        let mut deposit_status: std::collections::HashMap<String, bool> =
-            std::collections::HashMap::new();
-        for coin_info in &coin_infos {
-            for network in &coin_info.network_list {
-                // Check if this network matches the target chain and has deposits enabled
-                let network_name = network.network.as_ref().map(|s| s.to_uppercase());
-                let is_target_network = match self.client.address_type {
-                    crate::FilterAddressType::Ethereum => network_name
-                        .as_ref()
-                        .map_or(false, |n| n.contains("ETH") || n.contains("ERC20")),
-                    crate::FilterAddressType::Solana => network_name
-                        .as_ref()
-                        .map_or(false, |n| n.contains("SOL") || n == "SOL"),
-                };
-
-                if is_target_network {
-                    deposit_status.insert(coin_info.coin.clone(), network.is_deposit_enabled());
-                    break;
-                }
-            }
+        if safe_market_symbols.is_empty() {
+            warn!("MEXC: No safe tokens to subscribe to after filtering");
+            return Ok(());
         }
 
-        // Filter pairs to only include those with deposits enabled
-        let initial_count = pairs.len();
-        pairs.retain(|pair| {
-            if let Some(&is_enabled) = deposit_status.get(&pair.base_asset) {
-                if !is_enabled {
-                    log::debug!(
-                        "Skipping {} - deposits disabled for {}",
-                        pair.symbol,
-                        pair.base_asset
-                    );
-                    return false;
-                }
-            }
-            true
-        });
+        info!("MEXC: Subscribing to {} verified safe tokens", safe_market_symbols.len());
 
-        if initial_count > pairs.len() {
-            log::info!(
-                "Filtered out {} pairs with deposits disabled ({} remaining)",
-                initial_count - pairs.len(),
-                pairs.len()
-            );
-        }
-
-        pairs.iter().for_each(|pair| {
-            let contract = pair.contract_address.to_lowercase();
-            self.market_symbol_to_contract
-                .insert(pair.symbol.clone(), contract.clone());
-            self.contract_to_market_symbol
-                .insert(contract, pair.symbol.clone());
-        });
-
-        // Split pairs into chunks for multiple WebSocket connections
-        let market_ids = pairs
-            .iter()
-            .map(|pair| pair.symbol.clone())
-            .collect::<Vec<_>>();
-
+        // Split symbols into chunks for multiple WebSocket connections
         const MAX_STREAMS_PER_CONNECTION: usize = 15; // Using 15 instead of 30 for safety margin
-        let connection_chunks: Vec<Vec<String>> = market_ids
+        let connection_chunks: Vec<Vec<String>> = safe_market_symbols
             .chunks(MAX_STREAMS_PER_CONNECTION)
             .map(|chunk| chunk.to_vec())
             .collect();
 
         info!(
-            "Creating {} WebSocket connections for {} markets",
+            "MEXC: Creating {} WebSocket connections for {} markets",
             connection_chunks.len(),
-            market_ids.len()
+            safe_market_symbols.len()
         );
 
         // Start multiple WebSocket connections concurrently
@@ -390,6 +329,27 @@ impl PriceProvider for MexcService {
             connection_handles.push(handle);
         }
 
+        // Start a background task to refresh token status every 12 hours
+        let refresh_service = Arc::new(Self {
+            client: self.client.clone(),
+            price_cache: self.price_cache.clone(),
+            market_symbol_to_contract: self.market_symbol_to_contract.clone(),
+            contract_to_market_symbol: self.contract_to_market_symbol.clone(),
+            token_status_cache: self.token_status_cache.clone(),
+        });
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
+            interval.tick().await; // Skip first immediate tick
+
+            loop {
+                interval.tick().await;
+                info!("MEXC: Starting scheduled token status refresh (every 12 hours)...");
+                if let Err(e) = refresh_service.refresh_token_status().await {
+                    warn!("MEXC: Scheduled token status refresh failed: {}", e);
+                }
+            }
+        });
+
         // Start a background task to log statistics periodically
         let stats_price_cache = self.price_cache.clone();
         let stats_market_map = self.market_symbol_to_contract.clone();
@@ -417,6 +377,194 @@ impl PriceProvider for MexcService {
 
     fn get_price_provider_name(&self) -> &'static str {
         "MEXC"
+    }
+
+    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+        let status = self.get_token_status(symbol, contract_address).await;
+        match status {
+            Some(status) => {
+                status.is_trading && status.is_deposit_enabled && status.network_verified
+            }
+            None => false,
+        }
+    }
+
+    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+        // Try to get from cache first
+        if let Some(status) = self.token_status_cache.get(symbol) {
+            return Some(status.clone());
+        }
+
+        // If not in cache and we have a contract address, try to verify it
+        if let Some(contract_addr) = contract_address {
+            // Normalize to lowercase for lookup (contract addresses are case-insensitive)
+            let normalized_addr = contract_addr.to_lowercase();
+            if let Some(market_symbol) = self.contract_to_market_symbol.get(&normalized_addr) {
+                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+            }
+        }
+
+        None
+    }
+
+    async fn refresh_token_status(&self) -> Result<Vec<String>> {
+        info!("MEXC: Refreshing token status cache...");
+
+        // Get all trading pairs
+        let symbols = self.client.get_token_usdt_pairs().await?;
+        let mut safe_symbols = Vec::new();
+
+        // Get coin information with network details (requires auth)
+        let coin_info_result = self.client.get_coin_info(None).await;
+
+        match &coin_info_result {
+            Ok(infos) => {
+                info!("MEXC: Successfully fetched coin info for {} coins", infos.len());
+            }
+            Err(e) => {
+                warn!("MEXC: Failed to fetch coin info (auth required): {}", e);
+                warn!("MEXC: Without coin info, cannot verify deposit networks - all tokens will be marked as unsafe");
+            }
+        }
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut verified_count = 0;
+        let mut failed_count = 0;
+
+        for symbol_info in symbols {
+            let market_symbol = format!("{}{}", symbol_info.base_asset, symbol_info.quote_asset);
+            let base_asset = symbol_info.base_asset.clone();
+
+            // Default status: trading enabled (from exchange info), but need to verify deposits
+            // Normalize contract address to lowercase for consistency
+            let normalized_contract = symbol_info.contract_address.to_lowercase();
+            let mut status = crate::TokenStatus {
+                symbol: market_symbol.clone(),
+                base_asset: base_asset.clone(),
+                contract_address: Some(normalized_contract.clone()),
+                is_trading: symbol_info.status == "1",
+                is_deposit_enabled: false,
+                network_verified: false,
+                last_updated: current_time,
+            };
+
+            // If we have coin info, verify deposit status and network
+            if let Ok(ref coin_infos) = coin_info_result {
+                log::debug!("MEXC: Checking token {} (contract: {})", base_asset, symbol_info.contract_address);
+
+                if let Some(coin_info) = coin_infos.iter().find(|c| c.coin == base_asset) {
+                    log::debug!("MEXC: Found coin_info for {} with {} networks", base_asset, coin_info.network_list.len());
+
+                    // Check if there's a network that matches our requirements
+                    for network in &coin_info.network_list {
+                        let network_name = network.network.as_deref().or(network.net_work.as_deref()).unwrap_or("");
+                        log::debug!(
+                            "MEXC: {} - checking network '{}', deposit_enable={}, contract={:?}",
+                            base_asset,
+                            network_name,
+                            network.is_deposit_enabled(),
+                            network.contract
+                        );
+
+                        let is_correct_network = match self.client.address_type {
+                            FilterAddressType::Ethereum => {
+                                // MEXC returns network names like "Ethereum(ERC20)", "ERC20", "ETH", etc.
+                                // Accept any network that contains "Ethereum" or "ERC20" (but not BEP20, TRC20, etc.)
+                                let name_lower = network_name.to_lowercase();
+                                (name_lower.contains("ethereum") || name_lower.contains("erc20")) &&
+                                !name_lower.contains("bep") &&
+                                !name_lower.contains("trc") &&
+                                !name_lower.contains("arbitrum") &&
+                                !name_lower.contains("polygon") &&
+                                !name_lower.contains("optimism") &&
+                                !name_lower.contains("base") &&
+                                !name_lower.contains("linea")
+                            }
+                            FilterAddressType::Solana => {
+                                // Only accept Solana network
+                                let name_lower = network_name.to_lowercase();
+                                name_lower.contains("solana") || name_lower == "sol"
+                            }
+                        };
+
+                        if is_correct_network {
+                            // Verify the contract address matches
+                            if let Some(ref contract) = network.contract {
+                                if contract.eq_ignore_ascii_case(&symbol_info.contract_address) {
+                                    status.is_deposit_enabled = network.is_deposit_enabled();
+                                    status.network_verified = true;
+
+                                    if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                                        verified_count += 1;
+                                        log::debug!(
+                                            "MEXC: ✓ Verified {} - trading:{} deposit:{} network:{}",
+                                            base_asset,
+                                            status.is_trading,
+                                            status.is_deposit_enabled,
+                                            status.network_verified
+                                        );
+                                    }
+                                    break;
+                                } else {
+                                    log::debug!(
+                                        "MEXC: Contract mismatch for {} on {}: API={} vs Exchange={}",
+                                        base_asset,
+                                        network_name,
+                                        contract,
+                                        symbol_info.contract_address
+                                    );
+                                }
+                            } else {
+                                log::debug!(
+                                    "MEXC: {} on {} has no contract address in coin info",
+                                    base_asset,
+                                    network_name
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    log::debug!("MEXC: No coin info found for {}", base_asset);
+                }
+            } else {
+                // No coin_info available (not authenticated)
+                log::debug!("MEXC: Coin info API not available (authentication required)");
+            }
+
+            if !status.network_verified {
+                failed_count += 1;
+                log::debug!(
+                    "MEXC: Token {} ({}) - network verification failed or deposits disabled",
+                    base_asset,
+                    symbol_info.contract_address
+                );
+            }
+
+            // Store in cache
+            self.token_status_cache.insert(market_symbol.clone(), status.clone());
+
+            // Also store the contract-to-symbol mapping (using normalized lowercase address)
+            self.contract_to_market_symbol.insert(normalized_contract.clone(), market_symbol.clone());
+            self.market_symbol_to_contract.insert(market_symbol.clone(), normalized_contract.clone());
+
+            // Add to safe symbols list if verified
+            if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                safe_symbols.push(market_symbol);
+            }
+        }
+
+        info!(
+            "MEXC: Token status refresh complete. Verified: {}, Failed: {}, Total: {}",
+            verified_count,
+            failed_count,
+            verified_count + failed_count
+        );
+
+        Ok(safe_symbols)
     }
 }
 

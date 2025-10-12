@@ -44,6 +44,7 @@ pub struct BybitService {
     price_cache: Arc<DashMap<String, TokenPrice>>, // Maps contract_address -> TokenPrice
     symbol_to_contract: Arc<DashMap<String, String>>, // Maps symbol -> contract_address
     contract_to_symbol: Arc<DashMap<String, String>>, // Maps contract_address -> symbol
+    token_status_cache: Arc<DashMap<String, crate::TokenStatus>>, // symbol -> status
 }
 
 impl BybitService {
@@ -54,6 +55,7 @@ impl BybitService {
             price_cache: Arc::new(DashMap::new()),
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
+            token_status_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -68,6 +70,7 @@ impl BybitService {
             price_cache: Arc::new(DashMap::new()),
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
+            token_status_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -289,174 +292,38 @@ impl PriceProvider for BybitService {
     }
 
     async fn start(&self) -> Result<()> {
-        // Get Token/USDT pairs
-        let pairs = self.client.get_token_usdt_pairs().await?;
-
-        if pairs.is_empty() {
-            return Ok(());
-        }
-
-        // Try to get contract addresses if authenticated
-        // This will build the contract address mappings
-        let has_contract_mapping = match self.client.get_coin_info(None).await {
-            Ok(coin_info) => {
-                log::info!("Successfully fetched coin info with contract addresses");
-
-                // Build mappings: symbol -> contract_address and contract_address -> symbol
-                for coin in &coin_info.result {
-                    // Find Ethereum chain (or Solana if that's the filter type)
-                    for chain in &coin.chains {
-                        let is_target_chain = match self.client.address_type {
-                            FilterAddressType::Ethereum => chain.chain_type == "Ethereum",
-                            FilterAddressType::Solana => {
-                                chain.chain_type == "Solana" || chain.chain == "SOL"
-                            }
-                        };
-
-                        // Only include if:
-                        // 1. It's the target chain type (Ethereum or Solana)
-                        // 2. Contract address is not empty
-                        // 3. Contract address is valid for the chain type
-                        // 4. Deposits are enabled (for arbitrage purposes)
-                        if is_target_chain && !chain.contract_address.is_empty() {
-                            // Check if deposits are enabled
-                            if !chain.is_deposit_enabled() {
-                                log::debug!(
-                                    "Skipping {} - deposits disabled on chain {}",
-                                    coin.coin,
-                                    chain.chain
-                                );
-                                continue;
-                            }
-
-                            // Validate the contract address format
-                            if !self
-                                .client
-                                .is_valid_contract_address(&chain.contract_address)
-                            {
-                                log::debug!(
-                                    "Skipping invalid contract address for {}: {}",
-                                    coin.coin,
-                                    chain.contract_address
-                                );
-                                continue;
-                            }
-
-                            // Map all trading symbols for this coin to its contract
-                            for pair in &pairs {
-                                if pair.base_coin == coin.coin {
-                                    self.symbol_to_contract.insert(
-                                        pair.symbol.clone(),
-                                        chain.contract_address.clone(),
-                                    );
-                                    self.contract_to_symbol.insert(
-                                        chain.contract_address.to_lowercase(),
-                                        pair.symbol.clone(),
-                                    );
-
-                                    log::debug!(
-                                        "Mapped {} ({}) to contract address: {}",
-                                        pair.symbol,
-                                        coin.coin,
-                                        chain.contract_address
-                                    );
-                                }
-                            }
-                            break; // Found target chain, no need to check others
-                        }
-                    }
-                }
-
-                let mapped_count = self.symbol_to_contract.len();
-                log::info!(
-                    "Successfully mapped {} trading pairs to valid {} contract addresses",
-                    mapped_count,
-                    match self.client.address_type {
-                        FilterAddressType::Ethereum => "Ethereum",
-                        FilterAddressType::Solana => "Solana",
-                    }
-                );
-
-                if mapped_count == 0 {
-                    log::warn!(
-                        "No trading pairs found with valid {} contract addresses. Will not subscribe to any symbols.",
-                        match self.client.address_type {
-                            FilterAddressType::Ethereum => "Ethereum",
-                            FilterAddressType::Solana => "Solana",
-                        }
-                    );
-                }
-
-                mapped_count > 0
+        // Initial token status refresh (with network and deposit verification)
+        info!("Bybit: Performing initial token status verification...");
+        let safe_market_symbols = match self.refresh_token_status().await {
+            Ok(symbols) => {
+                info!("Bybit: Successfully verified {} safe tokens", symbols.len());
+                symbols
             }
             Err(e) => {
-                log::warn!(
-                    "Could not fetch coin info (API auth required): {}. Running without contract address filtering.",
-                    e
-                );
-                log::warn!(
-                    "Price cache will use symbol names as keys instead of contract addresses."
-                );
-                false
+                warn!("Bybit: Initial token status refresh failed: {}", e);
+                warn!("Bybit: Tip: Configure BYBIT_API_KEY and BYBIT_API_SECRET environment variables to enable deposit/network filtering");
+                return Ok(());
             }
         };
 
-        // Filter pairs based on whether we have contract mappings
-        let symbols: Vec<String> = if has_contract_mapping {
-            // WITH AUTH: Only subscribe to coins with valid contract addresses
-            let filtered: Vec<String> = pairs
-                .iter()
-                .filter(|pair| self.symbol_to_contract.contains_key(&pair.symbol))
-                .map(|pair| pair.symbol.clone())
-                .collect();
-
-            log::info!(
-                "Filtered to {} symbols (out of {} total) that have valid {} contract addresses",
-                filtered.len(),
-                pairs.len(),
-                match self.client.address_type {
-                    FilterAddressType::Ethereum => "Ethereum",
-                    FilterAddressType::Solana => "Solana",
-                }
-            );
-
-            filtered
-        } else {
-            // WITHOUT AUTH: Subscribe to all pairs (no contract address filtering)
-            log::warn!(
-                "Running without authentication - subscribing to all {} USDT pairs without contract address filtering",
-                pairs.len()
-            );
-            log::warn!("Prices will be cached by symbol name instead of contract address");
-
-            pairs.iter().map(|pair| pair.symbol.clone()).collect()
-        };
-
-        if symbols.is_empty() {
-            log::error!("No symbols to subscribe to after filtering. This means:");
-            log::error!(
-                "  - No coins have valid {} contract addresses on Bybit",
-                match self.client.address_type {
-                    FilterAddressType::Ethereum => "Ethereum",
-                    FilterAddressType::Solana => "Solana",
-                }
-            );
-            log::error!("  - Or API authentication failed");
+        if safe_market_symbols.is_empty() {
+            warn!("Bybit: No safe tokens to subscribe to after filtering");
             return Ok(());
         }
 
-        // Split symbols into chunks for multiple WebSocket connections
-        // Bybit allows max 10 args per subscription, but we can have multiple connections
-        const MAX_SYMBOLS_PER_CONNECTION: usize = 100; // Conservative limit
-        let connection_chunks: Vec<Vec<String>> = symbols
+        info!("Bybit: Subscribing to {} verified safe tokens", safe_market_symbols.len());
+
+        // Split symbols into chunks for multiple connections
+        const MAX_SYMBOLS_PER_CONNECTION: usize = 50;
+        let connection_chunks: Vec<Vec<String>> = safe_market_symbols
             .chunks(MAX_SYMBOLS_PER_CONNECTION)
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        log::info!(
-            "Subscribing to {} symbols across {} WebSocket connections",
-            symbols.len(),
-            connection_chunks.len()
+        info!(
+            "Bybit: Creating {} WebSocket connections for {} markets",
+            connection_chunks.len(),
+            safe_market_symbols.len()
         );
 
         // Start multiple WebSocket connections concurrently
@@ -469,7 +336,7 @@ impl PriceProvider for BybitService {
             let handle = tokio::spawn(async move {
                 loop {
                     info!(
-                        "Starting WebSocket connection {} for {} symbols",
+                        "Bybit: Starting WebSocket connection {} for {} markets",
                         connection_id,
                         chunk.len()
                     );
@@ -482,14 +349,14 @@ impl PriceProvider for BybitService {
                     )
                     .await
                     {
-                        error!("WebSocket connection {} failed: {}", connection_id, e);
-                        info!("Reconnecting connection {} in 5 seconds...", connection_id);
+                        error!("Bybit: WebSocket connection {} failed: {}", connection_id, e);
+                        info!("Bybit: Reconnecting connection {} in 5 seconds...", connection_id);
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
 
                     info!(
-                        "WebSocket connection {} ended, reconnecting in 5 seconds...",
+                        "Bybit: WebSocket connection {} ended, reconnecting in 5 seconds...",
                         connection_id
                     );
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -499,7 +366,28 @@ impl PriceProvider for BybitService {
             connection_handles.push(handle);
         }
 
-        // Start a background task to log statistics periodically
+        // Start a background task to refresh token status every 12 hours
+        let refresh_service = Arc::new(Self {
+            client: self.client.clone(),
+            price_cache: self.price_cache.clone(),
+            symbol_to_contract: self.symbol_to_contract.clone(),
+            contract_to_symbol: self.contract_to_symbol.clone(),
+            token_status_cache: self.token_status_cache.clone(),
+        });
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
+            interval.tick().await; // Skip first immediate tick
+
+            loop {
+                interval.tick().await;
+                info!("Bybit: Starting scheduled token status refresh (every 12 hours)...");
+                if let Err(e) = refresh_service.refresh_token_status().await {
+                    warn!("Bybit: Scheduled token status refresh failed: {}", e);
+                }
+            }
+        });
+
+        // Start statistics logging task
         let stats_price_cache = self.price_cache.clone();
         let stats_symbol_map = self.symbol_to_contract.clone();
         tokio::spawn(async move {
@@ -517,7 +405,7 @@ impl PriceProvider for BybitService {
             }
         });
 
-        // Wait for all connections (they should run indefinitely)
+        // Wait for all connections
         let results: Result<Vec<_>, _> = try_join_all(connection_handles).await;
         results.context("One or more WebSocket connections failed")?;
 
@@ -526,6 +414,145 @@ impl PriceProvider for BybitService {
 
     fn get_price_provider_name(&self) -> &'static str {
         "Bybit"
+    }
+
+    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+        let status = self.get_token_status(symbol, contract_address).await;
+        match status {
+            Some(status) => {
+                status.is_trading && status.is_deposit_enabled && status.network_verified
+            }
+            None => false,
+        }
+    }
+
+    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+        // Try to get from cache first
+        if let Some(status) = self.token_status_cache.get(symbol) {
+            return Some(status.clone());
+        }
+
+        // If not in cache and we have a contract address, try to verify it
+        if let Some(contract_addr) = contract_address {
+            // Normalize to lowercase for lookup (contract addresses are case-insensitive)
+            let normalized_addr = contract_addr.to_lowercase();
+            if let Some(market_symbol) = self.contract_to_symbol.get(&normalized_addr) {
+                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+            }
+        }
+
+        None
+    }
+
+    async fn refresh_token_status(&self) -> Result<Vec<String>> {
+        info!("Bybit: Refreshing token status cache...");
+
+        // Get all trading pairs
+        let instruments = self.client.get_token_usdt_pairs().await?;
+
+        // Get coin information with network details (requires auth)
+        let coin_info_result = self.client.get_coin_info(None).await;
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut verified_count = 0;
+        let mut failed_count = 0;
+
+        for instrument in instruments {
+            let symbol = instrument.symbol.clone();
+            let base_asset = instrument.base_coin.clone();
+
+            // Default status: trading enabled (from instrument info)
+            let mut status = crate::TokenStatus {
+                symbol: symbol.clone(),
+                base_asset: base_asset.clone(),
+                contract_address: None,
+                is_trading: instrument.status == "Trading",
+                is_deposit_enabled: false,
+                network_verified: false,
+                last_updated: current_time,
+            };
+
+            // If we have coin info, verify deposit status and network
+            if let Ok(ref coin_info_response) = coin_info_result {
+                if let Some(coin_info) = coin_info_response.result.iter().find(|c| c.coin == base_asset) {
+                    // Check if there's a chain that matches our requirements
+                    for chain in &coin_info.chains {
+                        let chain_name = chain.chain.to_uppercase();
+                        let is_correct_chain = match self.client.address_type {
+                            FilterAddressType::Ethereum => {
+                                // Only accept ETH/ERC20 on Ethereum mainnet
+                                chain_name == "ETH" ||
+                                chain_name.contains("ETHEREUM") ||
+                                (chain_name.contains("ERC20") && !chain_name.contains("ARB") && !chain_name.contains("POLYGON"))
+                            }
+                            FilterAddressType::Solana => {
+                                // Only accept Solana network
+                                chain_name == "SOL" || chain_name.contains("SOLANA")
+                            }
+                        };
+
+                        if is_correct_chain && !chain.contract_address.is_empty() {
+                            status.contract_address = Some(chain.contract_address.clone());
+                            status.is_deposit_enabled = chain.is_deposit_enabled();
+                            status.network_verified = true;
+
+                            if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                                verified_count += 1;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if !status.network_verified {
+                failed_count += 1;
+                log::debug!(
+                    "Bybit: Token {} ({}) - network verification failed or deposits disabled",
+                    base_asset,
+                    symbol
+                );
+            }
+
+            // Store in cache
+            self.token_status_cache.insert(symbol.clone(), status.clone());
+
+            // If we have a verified contract address, populate the bidirectional mappings
+            if let Some(ref contract_addr) = status.contract_address {
+                if status.network_verified {
+                    let normalized_contract = contract_addr.to_lowercase();
+                    self.contract_to_symbol.insert(normalized_contract.clone(), symbol.clone());
+                    self.symbol_to_contract.insert(symbol.clone(), normalized_contract);
+                }
+            }
+        }
+
+        info!(
+            "Bybit: Token status refresh complete. Verified: {}, Failed: {}, Total: {}",
+            verified_count,
+            failed_count,
+            verified_count + failed_count
+        );
+
+        // Return list of verified safe market symbols
+        let safe_symbols: Vec<String> = self.token_status_cache
+            .iter()
+            .filter_map(|entry| {
+                let status = entry.value();
+                if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                    Some(status.symbol.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        info!("Bybit: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
+        Ok(safe_symbols)
     }
 }
 

@@ -59,6 +59,7 @@ pub struct CurrencyInfo {
     pub precision: u8,
 }
 
+#[derive(Clone)]
 pub struct KucoinClient {
     client: Client,
     base_url: String,

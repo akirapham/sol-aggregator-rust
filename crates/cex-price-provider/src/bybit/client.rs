@@ -79,6 +79,7 @@ impl ChainInfo {
     }
 }
 
+#[derive(Clone)]
 pub struct BybitClient {
     client: Client,
     base_url: String,

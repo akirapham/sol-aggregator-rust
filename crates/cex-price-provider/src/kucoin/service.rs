@@ -81,6 +81,7 @@ pub struct KucoinService {
     price_cache: Arc<DashMap<String, TokenPrice>>,
     symbol_to_contract: Arc<DashMap<String, String>>,
     contract_to_symbol: Arc<DashMap<String, String>>,
+    token_status_cache: Arc<DashMap<String, crate::TokenStatus>>,
 }
 
 impl KucoinService {
@@ -90,6 +91,7 @@ impl KucoinService {
             price_cache: Arc::new(DashMap::new()),
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
+            token_status_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -476,171 +478,25 @@ impl PriceProvider for KucoinService {
     }
 
     async fn start(&self) -> Result<()> {
-        info!("Starting KuCoin Service");
-
-        // Get all USDT trading pairs
-        let pairs = self
-            .client
-            .get_token_usdt_pairs()
-            .await
-            .context("Failed to fetch KuCoin trading pairs")?;
-
-        info!("Found {} USDT trading pairs", pairs.len());
-
-        // Fetch contract addresses for each currency in parallel
-        // Note: KuCoin's public API provides contract addresses without authentication!
-        log::info!(
-            "Fetching currency details for {} pairs in parallel...",
-            pairs.len()
-        );
-
-        // Create a set of unique base currencies to avoid duplicate API calls
-        let unique_currencies: std::collections::HashSet<String> =
-            pairs.iter().map(|p| p.base_currency.clone()).collect();
-
-        log::info!(
-            "Found {} unique currencies to query",
-            unique_currencies.len()
-        );
-
-        // Fetch all currency details concurrently in batches
-        // Use smaller batch size and add delays to respect rate limits
-        const BATCH_SIZE: usize = 10;
-        const BATCH_DELAY_MS: u64 = 1000; // 1 second between batches
-
-        let currencies: Vec<String> = unique_currencies.into_iter().collect();
-        let mut all_currency_details = Vec::new();
-
-        for (batch_num, chunk) in currencies.chunks(BATCH_SIZE).enumerate() {
-            let futures: Vec<_> = chunk
-                .iter()
-                .map(|currency| {
-                    let client = &self.client;
-                    let currency = currency.clone();
-                    async move {
-                        (
-                            currency.clone(),
-                            client.get_currency_detail(&currency).await,
-                        )
-                    }
-                })
-                .collect();
-
-            let results = futures_util::future::join_all(futures).await;
-            all_currency_details.extend(results);
-
-            // Log progress every 100 currencies
-            let currencies_processed = ((batch_num + 1) * BATCH_SIZE).min(currencies.len());
-            if currencies_processed % 100 < BATCH_SIZE || currencies_processed == currencies.len() {
-                log::info!(
-                    "Progress: {}/{} currencies processed",
-                    currencies_processed,
-                    currencies.len()
-                );
+        // Initial token status refresh (with network and deposit verification)
+        info!("KuCoin: Performing initial token status verification...");
+        let safe_market_symbols = match self.refresh_token_status().await {
+            Ok(symbols) => {
+                info!("KuCoin: Successfully verified {} safe tokens", symbols.len());
+                symbols
             }
-
-            // Add delay between batches to avoid rate limiting
-            if batch_num + 1 < (currencies.len() + BATCH_SIZE - 1) / BATCH_SIZE {
-                tokio::time::sleep(tokio::time::Duration::from_millis(BATCH_DELAY_MS)).await;
+            Err(e) => {
+                warn!("KuCoin: Initial token status refresh failed: {}", e);
+                return Ok(());
             }
-        }
-
-        log::info!("Fetched {} currency details", all_currency_details.len());
-
-        // Build a map of currency -> contract addresses (only if deposits are enabled)
-        let mut currency_contracts: std::collections::HashMap<String, Vec<(String, String)>> =
-            std::collections::HashMap::new();
-
-        for (currency, result) in all_currency_details {
-            if let Ok(currency_detail) = result {
-                let mut contracts = Vec::new();
-                for chain in &currency_detail.chains {
-                    // Only include chains with deposits enabled and non-empty contract address
-                    if !chain.contract_address.is_empty() && chain.is_deposit_enabled {
-                        contracts.push((chain.chain_name.clone(), chain.contract_address.clone()));
-                    } else if !chain.contract_address.is_empty() && !chain.is_deposit_enabled {
-                        log::debug!(
-                            "Skipping {} on chain {} - deposits disabled",
-                            currency,
-                            chain.chain_name
-                        );
-                    }
-                }
-                if !contracts.is_empty() {
-                    currency_contracts.insert(currency, contracts);
-                }
-            }
-        }
-
-        log::info!(
-            "Found contract addresses for {} currencies",
-            currency_contracts.len()
-        );
-
-        // Now map trading pairs to contract addresses
-        let mut contract_count = 0;
-        let mut filtered_count = 0;
-
-        for pair in &pairs {
-            if let Some(contracts) = currency_contracts.get(&pair.base_currency) {
-                for (chain_name, contract_address) in contracts {
-                    let is_target_chain = match self.client.address_type {
-                        FilterAddressType::Ethereum => {
-                            chain_name.to_lowercase().contains("eth") || chain_name == "ERC20"
-                        }
-                        FilterAddressType::Solana => {
-                            chain_name.to_lowercase().contains("sol") || chain_name == "SPL"
-                        }
-                    };
-
-                    if is_target_chain && self.client.is_valid_address(contract_address) {
-                        self.symbol_to_contract
-                            .insert(pair.symbol.clone(), contract_address.clone());
-                        self.contract_to_symbol
-                            .insert(contract_address.to_lowercase(), pair.symbol.clone());
-                        contract_count += 1;
-                        break;
-                    } else if is_target_chain {
-                        filtered_count += 1;
-                        log::debug!(
-                            "Filtered out {} with invalid contract address: {}",
-                            pair.symbol,
-                            contract_address
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-
-        log::info!(
-            "Mapped {} trading pairs to contract addresses ({} filtered out as invalid)",
-            contract_count,
-            filtered_count
-        );
-
-        // Filter pairs: only subscribe to those with valid contract addresses
-        let symbols: Vec<String> = if contract_count > 0 {
-            pairs
-                .iter()
-                .filter(|pair| self.symbol_to_contract.contains_key(&pair.symbol))
-                .map(|pair| pair.symbol.clone())
-                .collect()
-        } else {
-            log::warn!("No contract addresses found, subscribing to all USDT pairs");
-            pairs.iter().map(|pair| pair.symbol.clone()).collect()
         };
 
-        if symbols.is_empty() {
-            log::warn!("No symbols to subscribe to after filtering");
+        if safe_market_symbols.is_empty() {
+            warn!("KuCoin: No safe tokens to subscribe to after filtering");
             return Ok(());
         }
 
-        log::info!(
-            "Subscribing to {} symbols (filtered from {} total)",
-            symbols.len(),
-            pairs.len()
-        );
+        info!("KuCoin: Subscribing to {} verified safe tokens", safe_market_symbols.len());
 
         // Get WebSocket connection info
         let bullet = self.get_bullet().await?;
@@ -649,7 +505,7 @@ impl PriceProvider for KucoinService {
         // Since we're batching 10 symbols per subscription, 100 symbols = 10 subscription requests
         // This is conservative to avoid overwhelming the connection
         const MAX_SYMBOLS_PER_CONNECTION: usize = 50;
-        let connection_chunks: Vec<Vec<String>> = symbols
+        let connection_chunks: Vec<Vec<String>> = safe_market_symbols
             .chunks(MAX_SYMBOLS_PER_CONNECTION)
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -698,6 +554,27 @@ impl PriceProvider for KucoinService {
             connection_handles.push(handle);
         }
 
+        // Start a background task to refresh token status every 12 hours
+        let refresh_service = Arc::new(Self {
+            client: self.client.clone(),
+            price_cache: self.price_cache.clone(),
+            symbol_to_contract: self.symbol_to_contract.clone(),
+            contract_to_symbol: self.contract_to_symbol.clone(),
+            token_status_cache: self.token_status_cache.clone(),
+        });
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
+            interval.tick().await; // Skip first immediate tick
+
+            loop {
+                interval.tick().await;
+                info!("KuCoin: Starting scheduled token status refresh (every 12 hours)...");
+                if let Err(e) = refresh_service.refresh_token_status().await {
+                    warn!("KuCoin: Scheduled token status refresh failed: {}", e);
+                }
+            }
+        });
+
         // Start statistics logging task
         let stats_price_cache = self.price_cache.clone();
         let stats_symbol_map = self.symbol_to_contract.clone();
@@ -725,6 +602,155 @@ impl PriceProvider for KucoinService {
 
     fn get_price_provider_name(&self) -> &'static str {
         "KuCoin"
+    }
+
+    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+        let status = self.get_token_status(symbol, contract_address).await;
+        match status {
+            Some(status) => {
+                status.is_trading && status.is_deposit_enabled && status.network_verified
+            }
+            None => false,
+        }
+    }
+
+    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+        // Try to get from cache first using market symbol (e.g., "LINK-USDT")
+        if let Some(status) = self.token_status_cache.get(symbol) {
+            return Some(status.clone());
+        }
+
+        // If not in cache and we have a contract address, try to find by contract
+        if let Some(contract_addr) = contract_address {
+            let normalized_addr = contract_addr.to_lowercase();
+            if let Some(market_symbol) = self.contract_to_symbol.get(&normalized_addr) {
+                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+            }
+        }
+
+        None
+    }
+
+    async fn refresh_token_status(&self) -> Result<Vec<String>> {
+        info!("KuCoin: Refreshing token status cache...");
+
+        // Get all trading pairs
+        let pairs = self.client.get_token_usdt_pairs().await?;
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut verified_count = 0;
+        let mut failed_count = 0;
+
+        for pair in pairs {
+            let market_symbol = pair.symbol.clone(); // e.g., "LINK-USDT"
+            let base_asset = pair.base_currency.clone();
+
+            // Default status: trading enabled (from exchange info), but need to verify deposits
+            let mut status = crate::TokenStatus {
+                symbol: market_symbol.clone(),
+                base_asset: base_asset.clone(),
+                contract_address: None,
+                is_trading: pair.enable_trading,
+                is_deposit_enabled: false,
+                network_verified: false,
+                last_updated: current_time,
+            };
+
+            // Get currency detail to check chain information
+            match self.client.get_currency_detail(&base_asset).await {
+                Ok(currency_detail) => {
+                    log::debug!("KuCoin: Checking token {} with {} chains", base_asset, currency_detail.chains.len());
+
+                    // Check if there's a network that matches our requirements
+                    for chain_detail in &currency_detail.chains {
+                        let chain_name = chain_detail.chain_name.as_str();
+
+                        let is_correct_network = match self.client.address_type {
+                            FilterAddressType::Ethereum => {
+                                // KuCoin uses chain names like "ETH", "ERC20", or "Ethereum"
+                                let chain_lower = chain_name.to_lowercase();
+                                (chain_lower.contains("eth") || chain_lower.contains("erc20")) &&
+                                !chain_lower.contains("bsc") &&
+                                !chain_lower.contains("arb") &&
+                                !chain_lower.contains("polygon") &&
+                                !chain_lower.contains("optimism")
+                            }
+                            FilterAddressType::Solana => {
+                                let chain_lower = chain_name.to_lowercase();
+                                chain_lower.contains("sol") && !chain_lower.contains("bsc")
+                            }
+                        };
+
+                        if is_correct_network && chain_detail.is_deposit_enabled {
+                            let contract = &chain_detail.contract_address;
+                            if !contract.is_empty() && self.client.is_valid_address(contract) {
+                                let normalized_contract = contract.to_lowercase();
+                                status.contract_address = Some(normalized_contract.clone());
+                                status.is_deposit_enabled = true;
+                                status.network_verified = true;
+
+                                if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                                    verified_count += 1;
+                                    log::debug!(
+                                        "KuCoin: ✓ Verified {} - trading:{} deposit:{} network:{}",
+                                        base_asset,
+                                        status.is_trading,
+                                        status.is_deposit_enabled,
+                                        status.network_verified
+                                    );
+                                }
+
+                                // Store contract mapping
+                                self.contract_to_symbol.insert(normalized_contract.clone(), market_symbol.clone());
+                                self.symbol_to_contract.insert(market_symbol.clone(), normalized_contract);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::debug!("KuCoin: Failed to get currency detail for {}: {}", base_asset, e);
+                }
+            }
+
+            if !status.network_verified {
+                failed_count += 1;
+                log::debug!(
+                    "KuCoin: Token {} - network verification failed or deposits disabled",
+                    base_asset
+                );
+            }
+
+            // Store in cache
+            self.token_status_cache.insert(market_symbol, status);
+        }
+
+        info!(
+            "KuCoin: Token status refresh complete. Verified: {}, Failed: {}, Total: {}",
+            verified_count,
+            failed_count,
+            verified_count + failed_count
+        );
+
+        // Return list of verified safe market symbols
+        let safe_symbols: Vec<String> = self.token_status_cache
+            .iter()
+            .filter_map(|entry| {
+                let status = entry.value();
+                if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                    Some(status.symbol.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        info!("KuCoin: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
+        Ok(safe_symbols)
     }
 }
 

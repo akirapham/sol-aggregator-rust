@@ -168,6 +168,34 @@ async fn process_arbitrage(
 
     log::info!("Checking prices across all CEXes...");
     for cex in cex_providers {
+        // CRITICAL SAFETY CHECK: Verify token is safe for arbitrage on this CEX
+        // This ensures:
+        // 1. Token is tradeable on the CEX
+        // 2. Deposits are enabled for the correct network (ERC20 for Ethereum)
+        // 3. Network is verified to match our requirements
+        let is_safe = cex
+            .service
+            .is_token_safe_for_arbitrage(
+                &update.token_address.to_lowercase(),
+                Some(&update.token_address),
+            )
+            .await;
+
+        if !is_safe {
+            log::warn!(
+                "⚠️  {} - Token {} is NOT SAFE for arbitrage (trading disabled, deposits disabled, or wrong network). SKIPPING.",
+                cex.name,
+                update.token_address
+            );
+            continue;
+        }
+
+        log::debug!(
+            "✅ {} - Token {} verified safe for arbitrage",
+            cex.name,
+            update.token_address
+        );
+
         // Get price from CEX
         if let Some(price_info) = cex
             .service

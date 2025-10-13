@@ -35,4 +35,6 @@ solana-sdk = { workspace = true }
 dotenv = { workspace = true }
 rocksdb = { workspace = true }
 base64 = { workspace = true }
+ethers = { workspace = true }
+hex = { workspace = true }
 cex-price-provider = { path = "../crates/cex-price-provider" }

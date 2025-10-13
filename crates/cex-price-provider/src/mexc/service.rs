@@ -566,6 +566,22 @@ impl PriceProvider for MexcService {
 
         Ok(safe_symbols)
     }
+
+    async fn get_deposit_address(&self, symbol: &str, address_type: FilterAddressType) -> Result<String> {
+        self.get_deposit_address_impl(symbol, address_type).await
+    }
+
+    async fn sell_token_for_usdt(&self, symbol: &str, amount: f64) -> Result<(String, f64, f64)> {
+        self.sell_token_for_usdt_impl(symbol, amount).await
+    }
+
+    async fn withdraw_usdt(&self, address: &str, amount: f64, address_type: FilterAddressType) -> Result<String> {
+        self.withdraw_usdt_impl(address, amount, address_type).await
+    }
+
+    async fn get_portfolio(&self) -> Result<crate::Portfolio> {
+        self.get_portfolio_impl().await
+    }
 }
 
 impl MexcService {
@@ -611,5 +627,137 @@ impl MexcService {
         }
 
         Ok(total_usdt)
+    }
+
+    /// Get deposit address for a token on MEXC
+    pub async fn get_deposit_address_impl(
+        &self,
+        symbol: &str,
+        address_type: FilterAddressType,
+    ) -> Result<String> {
+        // Map FilterAddressType to MEXC network names
+        let network = match address_type {
+            FilterAddressType::Ethereum => "ERC20",
+            FilterAddressType::Solana => "SOL",
+        };
+
+        let deposit_address = self.client.get_deposit_address(symbol, network).await?;
+        Ok(deposit_address)
+    }
+
+    /// Sell tokens for USDT using market order
+    pub async fn sell_token_for_usdt_impl(
+        &self,
+        symbol: &str,
+        amount: f64,
+    ) -> Result<(String, f64, f64)> {
+        // Place market sell order
+        let order_result = self.client.place_market_order(symbol, "SELL", amount).await?;
+
+        // Extract order details
+        let order_id = order_result.get("orderId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let executed_qty = order_result.get("executedQty")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        let cumulative_quote_qty = order_result.get("cummulativeQuoteQty")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        Ok((order_id, executed_qty, cumulative_quote_qty))
+    }
+
+    /// Withdraw USDT to external wallet
+    pub async fn withdraw_usdt_impl(
+        &self,
+        address: &str,
+        amount: f64,
+        address_type: FilterAddressType,
+    ) -> Result<String> {
+        // Map FilterAddressType to MEXC network names
+        let network = match address_type {
+            FilterAddressType::Ethereum => "ERC20",
+            FilterAddressType::Solana => "SOL",
+        };
+
+        let withdrawal_id = self.client.withdraw("USDT", address, amount, network).await?;
+        Ok(withdrawal_id)
+    }
+
+    /// Get portfolio balances from MEXC
+    pub async fn get_portfolio_impl(&self) -> Result<crate::Portfolio> {
+        let account_info = self.client.get_account_info().await?;
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut balances = Vec::new();
+        let mut total_usdt_value = 0.0;
+
+        // Extract balances from account info
+        if let Some(balance_array) = account_info.get("balances").and_then(|v| v.as_array()) {
+            for balance_item in balance_array {
+                let asset = balance_item.get("asset")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let free = balance_item.get("free")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+
+                let locked = balance_item.get("locked")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+
+                let total = free + locked;
+
+                // Only include non-zero balances
+                if total > 0.0 {
+                    // Calculate USDT value
+                    let usdt_value = if asset == "USDT" {
+                        total
+                    } else {
+                        // Try to get price from cache
+                        let market_symbol = format!("{}USDT", asset);
+                        if let Some(contract) = self.market_symbol_to_contract.get(&market_symbol) {
+                            if let Some(price_info) = self.price_cache.get(contract.value()) {
+                                total * price_info.price
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        }
+                    };
+
+                    total_usdt_value += usdt_value;
+
+                    balances.push(crate::Balance {
+                        asset,
+                        free,
+                        locked,
+                        total,
+                    });
+                }
+            }
+        }
+
+        Ok(crate::Portfolio {
+            exchange: "MEXC".to_string(),
+            balances,
+            total_usdt_value,
+            timestamp,
+        })
     }
 }

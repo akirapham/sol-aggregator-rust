@@ -95,6 +95,21 @@ impl KucoinService {
         }
     }
 
+    pub fn with_credentials(
+        address_type: FilterAddressType,
+        api_key: String,
+        api_secret: String,
+        passphrase: String,
+    ) -> Self {
+        Self {
+            client: KucoinClient::with_credentials(address_type, api_key, api_secret, passphrase),
+            price_cache: Arc::new(DashMap::new()),
+            symbol_to_contract: Arc::new(DashMap::new()),
+            contract_to_symbol: Arc::new(DashMap::new()),
+            token_status_cache: Arc::new(DashMap::new()),
+        }
+    }
+
     /// Get WebSocket connection info (bullet) from KuCoin
     async fn get_bullet(&self) -> Result<BulletData> {
         let url = format!("{}/api/v1/bullet-public", "https://api.kucoin.com");
@@ -752,6 +767,22 @@ impl PriceProvider for KucoinService {
         info!("KuCoin: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
         Ok(safe_symbols)
     }
+
+    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("KuCoin: get_deposit_address not yet implemented"))
+    }
+
+    async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
+        Err(anyhow::anyhow!("KuCoin: sell_token_for_usdt not yet implemented"))
+    }
+
+    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("KuCoin: withdraw_usdt not yet implemented"))
+    }
+
+    async fn get_portfolio(&self) -> Result<crate::Portfolio> {
+        self.get_portfolio_impl().await
+    }
 }
 
 impl KucoinService {
@@ -793,5 +824,80 @@ impl KucoinService {
         }
 
         Ok(total_usdt)
+    }
+
+    async fn get_portfolio_impl(&self) -> Result<crate::Portfolio> {
+        let account_data = self.client.get_account_balance().await?;
+
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut balances: Vec<crate::Balance> = Vec::new();
+        let mut total_usdt_value = 0.0;
+
+        // Parse KuCoin response structure
+        if let Some(data) = account_data.get("data").and_then(|v| v.as_array()) {
+            for account in data {
+                let asset = account
+                    .get("currency")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let available: f64 = account
+                    .get("available")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
+
+                let holds: f64 = account
+                    .get("holds")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
+
+                let total = available + holds;
+
+                // Only include non-zero balances
+                if total > 0.0 {
+                    // Calculate USDT value
+                    let usdt_value = if asset == "USDT" {
+                        total
+                    } else {
+                        // Try to get the current price for this asset
+                        let symbol = format!("{}-USDT", asset);
+                        if let Some(price_info) = self.get_price(&symbol.to_lowercase()).await {
+                            total * price_info.price
+                        } else {
+                            0.0
+                        }
+                    };
+
+                    total_usdt_value += usdt_value;
+
+                    log::info!("KuCoin: Found {} balance: {} (free: {}, locked: {}, USD value: ${})",
+                        asset, total, available, holds, usdt_value);
+
+                    balances.push(crate::Balance {
+                        asset,
+                        free: available,
+                        locked: holds,
+                        total,
+                    });
+                }
+            }
+        }
+
+        log::info!("KuCoin: Portfolio summary - {} assets, total value: ${:.2} USDT",
+            balances.len(), total_usdt_value);
+
+        Ok(crate::Portfolio {
+            exchange: "KuCoin".to_string(),
+            balances,
+            total_usdt_value,
+            timestamp: current_time,
+        })
     }
 }

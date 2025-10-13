@@ -64,6 +64,9 @@ pub struct KucoinClient {
     client: Client,
     base_url: String,
     pub(crate) address_type: FilterAddressType,
+    api_key: Option<String>,
+    api_secret: Option<String>,
+    api_passphrase: Option<String>,
 }
 
 impl KucoinClient {
@@ -72,6 +75,25 @@ impl KucoinClient {
             client: Client::new(),
             base_url: "https://api.kucoin.com".to_string(),
             address_type,
+            api_key: None,
+            api_secret: None,
+            api_passphrase: None,
+        }
+    }
+
+    pub fn with_credentials(
+        address_type: FilterAddressType,
+        api_key: String,
+        api_secret: String,
+        api_passphrase: String,
+    ) -> Self {
+        Self {
+            client: Client::new(),
+            base_url: "https://api.kucoin.com".to_string(),
+            address_type,
+            api_key: Some(api_key),
+            api_secret: Some(api_secret),
+            api_passphrase: Some(api_passphrase),
         }
     }
 
@@ -231,5 +253,97 @@ impl KucoinClient {
         }
 
         Ok(detail_response.data)
+    }
+
+    /// Get account balances
+    /// Requires authentication
+    pub async fn get_account_balance(&self) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "KuCoin account balance endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let endpoint = "/api/v1/accounts";
+        let query_string = "";
+
+        // Generate signature: timestamp + method + endpoint + body
+        let pre_hash = format!("{}{}{}{}", timestamp, "GET", endpoint, query_string);
+        let signature = self.generate_signature(&pre_hash)?;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("KC-API-KEY", api_key)
+            .header("KC-API-SIGN", signature)
+            .header("KC-API-TIMESTAMP", &timestamp)
+            .header("KC-API-PASSPHRASE", self.get_encrypted_passphrase()?)
+            .header("KC-API-KEY-VERSION", "2")
+            .send()
+            .await
+            .context("Failed to get account balance from KuCoin")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("KuCoin API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Generate HMAC SHA256 signature for KuCoin API
+    fn generate_signature(&self, pre_hash: &str) -> Result<String> {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        let api_secret = self
+            .api_secret
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("API secret not set"))?;
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(api_secret.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Invalid HMAC key: {}", e))?;
+
+        mac.update(pre_hash.as_bytes());
+        let result = mac.finalize();
+        let signature = base64::encode(result.into_bytes());
+
+        Ok(signature)
+    }
+
+    /// Get encrypted passphrase for KuCoin API v2
+    fn get_encrypted_passphrase(&self) -> Result<String> {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        let api_secret = self
+            .api_secret
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("API secret not set"))?;
+
+        let api_passphrase = self
+            .api_passphrase
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("API passphrase not set"))?;
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(api_secret.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Invalid HMAC key: {}", e))?;
+
+        mac.update(api_passphrase.as_bytes());
+        let result = mac.finalize();
+        let encrypted = base64::encode(result.into_bytes());
+
+        Ok(encrypted)
     }
 }

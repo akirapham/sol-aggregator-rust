@@ -293,4 +293,179 @@ impl MexcClient {
 
         Ok(orderbook)
     }
+
+    /// Get deposit address for a specific coin and network
+    /// Requires authentication
+    pub async fn get_deposit_address(&self, coin: &str, network: &str) -> Result<String> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "MEXC deposit address endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Build query string
+        let query_string = format!("coin={}&network={}&timestamp={}", coin, network, timestamp);
+        let signature = self.generate_signature(&query_string)?;
+
+        let url = format!(
+            "{}/api/v3/capital/deposit/address?{}&signature={}",
+            self.base_url, query_string, signature
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("X-MEXC-APIKEY", api_key)
+            .send()
+            .await
+            .context("Failed to get deposit address from MEXC")?;
+
+        let json: serde_json::Value = response.json().await?;
+        let address = json.get("address")
+            .and_then(|v| v.as_str())
+            .context("Failed to extract deposit address from response")?
+            .to_string();
+
+        Ok(address)
+    }
+
+    /// Place a market order (buy or sell)
+    /// Requires authentication
+    pub async fn place_market_order(
+        &self,
+        symbol: &str,
+        side: &str, // "BUY" or "SELL"
+        quantity: f64,
+    ) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "MEXC order endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Build query string (parameters must be sorted alphabetically)
+        let query_string = format!(
+            "quantity={}&side={}&symbol={}&timestamp={}&type=MARKET",
+            quantity, side, symbol, timestamp
+        );
+        let signature = self.generate_signature(&query_string)?;
+
+        let url = format!(
+            "{}/api/v3/order?{}&signature={}",
+            self.base_url, query_string, signature
+        );
+
+        let response = self
+            .client
+            .post(&url)
+            .header("X-MEXC-APIKEY", api_key)
+            .send()
+            .await
+            .context("Failed to place order on MEXC")?;
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Withdraw coins to an external address
+    /// Requires authentication
+    pub async fn withdraw(
+        &self,
+        coin: &str,
+        address: &str,
+        amount: f64,
+        network: &str,
+    ) -> Result<String> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "MEXC withdrawal endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Build query string (parameters must be sorted alphabetically)
+        let query_string = format!(
+            "address={}&amount={}&coin={}&network={}&timestamp={}",
+            address, amount, coin, network, timestamp
+        );
+        let signature = self.generate_signature(&query_string)?;
+
+        let url = format!(
+            "{}/api/v3/capital/withdraw/apply?{}&signature={}",
+            self.base_url, query_string, signature
+        );
+
+        let response = self
+            .client
+            .post(&url)
+            .header("X-MEXC-APIKEY", api_key)
+            .send()
+            .await
+            .context("Failed to submit withdrawal to MEXC")?;
+
+        let json: serde_json::Value = response.json().await?;
+        let withdrawal_id = json.get("id")
+            .and_then(|v| v.as_str())
+            .context("Failed to extract withdrawal ID from response")?
+            .to_string();
+
+        Ok(withdrawal_id)
+    }
+
+    /// Get account information including balances
+    pub async fn get_account_info(&self) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "MEXC account info endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let query_string = format!("timestamp={}", timestamp);
+        let signature = self.generate_signature(&query_string)?;
+
+        let url = format!(
+            "{}/api/v3/account?{}&signature={}",
+            self.base_url, query_string, signature
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("X-MEXC-APIKEY", api_key)
+            .send()
+            .await
+            .context("Failed to get account info from MEXC")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("MEXC API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
 }

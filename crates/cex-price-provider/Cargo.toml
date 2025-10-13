@@ -32,6 +32,7 @@ solana-sdk = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+base64 = { workspace = true }
 dotenv = { workspace = true }
 
 [features]
@@ -59,6 +60,10 @@ path = "examples/mexc.rs"
 [[example]]
 name = "test_token_safety"
 path = "examples/test_token_safety.rs"
+
+[[example]]
+name = "test_portfolio"
+path = "examples/test_portfolio.rs"
 
 [build-dependencies]
 prost-build = { workspace = true }

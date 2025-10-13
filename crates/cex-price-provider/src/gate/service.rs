@@ -569,6 +569,22 @@ impl PriceProvider for GateService {
         info!("Gate.io: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
         Ok(safe_symbols)
     }
+
+    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("Gate.io: get_deposit_address not yet implemented"))
+    }
+
+    async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
+        Err(anyhow::anyhow!("Gate.io: sell_token_for_usdt not yet implemented"))
+    }
+
+    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("Gate.io: withdraw_usdt not yet implemented"))
+    }
+
+    async fn get_portfolio(&self) -> Result<crate::Portfolio> {
+        Err(anyhow::anyhow!("Gate.io: get_portfolio not yet implemented"))
+    }
 }
 
 impl GateService {

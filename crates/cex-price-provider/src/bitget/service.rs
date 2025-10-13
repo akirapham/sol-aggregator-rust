@@ -68,6 +68,110 @@ impl BitgetService {
         }
     }
 
+    pub fn with_credentials(
+        address_type: FilterAddressType,
+        api_key: String,
+        api_secret: String,
+        api_passphrase: String,
+    ) -> Self {
+        Self {
+            client: BitgetClient::with_credentials(address_type, api_key, api_secret, api_passphrase),
+            price_cache: Arc::new(DashMap::new()),
+            symbol_to_contract: Arc::new(DashMap::new()),
+            contract_to_symbol: Arc::new(DashMap::new()),
+            token_status_cache: Arc::new(DashMap::new()),
+        }
+    }
+
+    async fn get_portfolio_impl(&self) -> Result<crate::Portfolio> {
+        let response = self.client.get_account_assets().await?;
+
+        let data = response
+            .get("data")
+            .ok_or_else(|| anyhow::anyhow!("No data field in Bitget account assets response"))?;
+
+        let assets = data
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("Bitget account assets data is not an array"))?;
+
+        let mut balances: Vec<crate::Balance> = Vec::new();
+        let mut total_usdt_value = 0.0;
+
+        for asset in assets {
+            let coin = asset
+                .get("coin")
+                .and_then(|v| v.as_str())
+                .unwrap_or("UNKNOWN");
+
+            let available = asset
+                .get("available")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            let frozen = asset
+                .get("frozen")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            let total = available + frozen;
+
+            // Skip zero balances
+            if total == 0.0 {
+                continue;
+            }
+
+            // Get USDT value - use usdtValue if available from API
+            let usdt_value = if let Some(usd_val) = asset.get("usdtValue").and_then(|v| v.as_str()) {
+                usd_val.parse::<f64>().ok().unwrap_or_else(|| {
+                    // Fallback to price lookup
+                    if coin == "USDT" {
+                        total
+                    } else {
+                        let market_symbol = format!("{}USDT", coin);
+                        self.price_cache
+                            .get(&market_symbol.to_lowercase())
+                            .map(|p| p.price * total)
+                            .unwrap_or(0.0)
+                    }
+                })
+            } else {
+                // Fallback to price lookup
+                if coin == "USDT" {
+                    total
+                } else {
+                    let market_symbol = format!("{}USDT", coin);
+                    self.price_cache
+                        .get(&market_symbol.to_lowercase())
+                        .map(|p| p.price * total)
+                        .unwrap_or(0.0)
+                }
+            };
+
+            total_usdt_value += usdt_value;
+
+            balances.push(crate::Balance {
+                asset: coin.to_string(),
+                free: available,
+                locked: frozen,
+                total,
+            });
+        }
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(crate::Portfolio {
+            exchange: "Bitget".to_string(),
+            balances,
+            total_usdt_value,
+            timestamp,
+        })
+    }
+
     async fn start_websocket_connection(
         connection_id: usize,
         symbols: &[String],
@@ -531,6 +635,22 @@ impl PriceProvider for BitgetService {
 
         info!("Bitget: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
         Ok(safe_symbols)
+    }
+
+    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("Bitget: get_deposit_address not yet implemented"))
+    }
+
+    async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
+        Err(anyhow::anyhow!("Bitget: sell_token_for_usdt not yet implemented"))
+    }
+
+    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("Bitget: withdraw_usdt not yet implemented"))
+    }
+
+    async fn get_portfolio(&self) -> Result<crate::Portfolio> {
+        self.get_portfolio_impl().await
     }
 }
 

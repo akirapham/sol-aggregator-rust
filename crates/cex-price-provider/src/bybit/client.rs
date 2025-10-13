@@ -347,4 +347,107 @@ impl BybitClient {
 
         Ok(coin_info)
     }
+
+    /// Get account wallet balance
+    /// Requires authentication
+    pub async fn get_account_balance(&self, account_type: &str) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bybit account balance endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let recv_window = "5000";
+
+        // Build query string (params format for signature generation)
+        let recv_window_params = format!("{}accountType={}", recv_window, account_type);
+
+        // Generate signature
+        let signature = self.generate_signature(timestamp, &recv_window_params)?;
+
+        let url = format!(
+            "{}/v5/account/wallet-balance?accountType={}",
+            self.base_url, account_type
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("X-BAPI-API-KEY", api_key)
+            .header("X-BAPI-TIMESTAMP", timestamp.to_string())
+            .header("X-BAPI-SIGN", signature)
+            .header("X-BAPI-RECV-WINDOW", recv_window)
+            .send()
+            .await
+            .context("Failed to get account balance from Bybit")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bybit API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Get asset info for funding account
+    /// This uses a different endpoint than the unified account balance
+    pub async fn get_funding_balance(&self, coin: Option<&str>) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bybit funding balance endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let recv_window = "5000";
+
+        // Build query string
+        let query_string = if let Some(coin_name) = coin {
+            format!("accountType=FUND&coin={}", coin_name)
+        } else {
+            "accountType=FUND".to_string()
+        };
+
+        // Build params for signature
+        let recv_window_params = format!("{}{}", recv_window, query_string);
+
+        // Generate signature
+        let signature = self.generate_signature(timestamp, &recv_window_params)?;
+
+        let url = format!(
+            "{}/v5/asset/transfer/query-account-coins-balance?{}",
+            self.base_url, query_string
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("X-BAPI-API-KEY", api_key)
+            .header("X-BAPI-TIMESTAMP", timestamp.to_string())
+            .header("X-BAPI-SIGN", signature)
+            .header("X-BAPI-RECV-WINDOW", recv_window)
+            .send()
+            .await
+            .context("Failed to get funding balance from Bybit")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bybit API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
 }

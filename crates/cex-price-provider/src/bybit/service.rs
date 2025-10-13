@@ -554,6 +554,22 @@ impl PriceProvider for BybitService {
         info!("Bybit: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
         Ok(safe_symbols)
     }
+
+    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("Bybit: get_deposit_address not yet implemented"))
+    }
+
+    async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
+        Err(anyhow::anyhow!("Bybit: sell_token_for_usdt not yet implemented"))
+    }
+
+    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
+        Err(anyhow::anyhow!("Bybit: withdraw_usdt not yet implemented"))
+    }
+
+    async fn get_portfolio(&self) -> Result<crate::Portfolio> {
+        self.get_portfolio_impl().await
+    }
 }
 
 impl BybitService {
@@ -601,5 +617,177 @@ impl BybitService {
         }
 
         Ok(total_usdt)
+    }
+
+    async fn get_portfolio_impl(&self) -> Result<crate::Portfolio> {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut balances: Vec<crate::Balance> = Vec::new();
+        let mut total_usdt_value = 0.0;
+
+        // Step 1: Get UNIFIED account balance (main trading account)
+        log::info!("Bybit: Checking UNIFIED account...");
+        let account_types = vec!["UNIFIED"];
+
+        for account_type in account_types {
+            log::info!("Bybit: Checking {} account...", account_type);
+
+            let account_data = match self.client.get_account_balance(account_type).await {
+                Ok(data) => data,
+                Err(e) => {
+                    log::debug!("Bybit: Failed to get {} account balance: {}", account_type, e);
+                    continue;
+                }
+            };
+
+
+
+            // Parse Bybit response structure
+            if let Some(result) = account_data.get("result") {
+                if let Some(list) = result.get("list").and_then(|v| v.as_array()) {
+                    for account in list {
+                        if let Some(coins) = account.get("coin").and_then(|v| v.as_array()) {
+                            for coin_data in coins {
+                                let asset = coin_data
+                                    .get("coin")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                let wallet_balance: f64 = coin_data
+                                    .get("walletBalance")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0);
+
+                                let locked: f64 = coin_data
+                                    .get("locked")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0);
+
+                                let coin_total = wallet_balance + locked;
+
+                                // Get USD value directly from Bybit (more accurate)
+                                let usd_value: f64 = coin_data
+                                    .get("usdValue")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0);
+
+                                // Only include non-zero balances
+                                if coin_total > 0.0 {
+                                    log::info!("Bybit: Found {} balance: {} (free: {}, locked: {}, USD value: ${})",
+                                        asset, coin_total, wallet_balance, locked, usd_value);
+
+                                    total_usdt_value += usd_value;
+
+                                    // Check if we already have this asset in balances (from another account type)
+                                    if let Some(existing_balance) = balances.iter_mut().find(|b| b.asset == asset) {
+                                        // Aggregate balances from different account types
+                                        existing_balance.free += wallet_balance;
+                                        existing_balance.locked += locked;
+                                        existing_balance.total += coin_total;
+                                    } else {
+                                        balances.push(crate::Balance {
+                                            asset,
+                                            free: wallet_balance,
+                                            locked,
+                                            total: coin_total,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 2: Get FUNDING account balance (separate wallet)
+        log::info!("Bybit: Checking FUNDING account...");
+        match self.client.get_funding_balance(None).await {
+            Ok(funding_data) => {
+
+
+                // Parse funding account response
+                if let Some(result) = funding_data.get("result") {
+                    if let Some(balance_list) = result.get("balance").and_then(|v| v.as_array()) {
+                        for coin_data in balance_list {
+                            let asset = coin_data
+                                .get("coin")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+
+                            let wallet_balance: f64 = coin_data
+                                .get("walletBalance")
+                                .and_then(|v| v.as_str())
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0.0);
+
+                            let locked: f64 = coin_data
+                                .get("locked")
+                                .and_then(|v| v.as_str())
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0.0);
+
+                            let coin_total = wallet_balance + locked;
+
+                            if coin_total > 0.0 {
+                                log::info!("Bybit FUNDING: Found {} balance: {} (free: {}, locked: {})",
+                                    asset, coin_total, wallet_balance, locked);
+
+                                // For funding account, estimate USD value
+                                let usd_value = if asset == "USDT" {
+                                    coin_total
+                                } else {
+                                    // Try to get price from our cache
+                                    let symbol = format!("{}USDT", asset);
+                                    if let Some(price_info) = self.get_price(&symbol.to_lowercase()).await {
+                                        coin_total * price_info.price
+                                    } else {
+                                        log::debug!("No price found for {} in cache", symbol);
+                                        0.0
+                                    }
+                                };
+
+                                total_usdt_value += usd_value;
+
+                                // Check if we already have this asset (from UNIFIED account)
+                                if let Some(existing_balance) = balances.iter_mut().find(|b| b.asset == asset) {
+                                    existing_balance.free += wallet_balance;
+                                    existing_balance.locked += locked;
+                                    existing_balance.total += coin_total;
+                                } else {
+                                    balances.push(crate::Balance {
+                                        asset,
+                                        free: wallet_balance,
+                                        locked,
+                                        total: coin_total,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::debug!("Bybit: Failed to get FUNDING account balance: {}", e);
+            }
+        }
+
+        log::info!("Bybit: Portfolio summary - {} assets, total value: ${:.2} USDT",
+            balances.len(), total_usdt_value);
+
+        Ok(crate::Portfolio {
+            exchange: "Bybit".to_string(),
+            balances,
+            total_usdt_value,
+            timestamp: current_time,
+        })
     }
 }

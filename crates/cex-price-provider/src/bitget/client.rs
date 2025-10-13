@@ -65,6 +65,9 @@ pub struct BitgetClient {
     client: Client,
     base_url: String,
     pub address_type: FilterAddressType,
+    api_key: Option<String>,
+    api_secret: Option<String>,
+    api_passphrase: Option<String>,
 }
 
 impl BitgetClient {
@@ -73,6 +76,25 @@ impl BitgetClient {
             client: Client::new(),
             base_url: "https://api.bitget.com".to_string(),
             address_type,
+            api_key: None,
+            api_secret: None,
+            api_passphrase: None,
+        }
+    }
+
+    pub fn with_credentials(
+        address_type: FilterAddressType,
+        api_key: String,
+        api_secret: String,
+        api_passphrase: String,
+    ) -> Self {
+        Self {
+            client: Client::new(),
+            base_url: "https://api.bitget.com".to_string(),
+            address_type,
+            api_key: Some(api_key),
+            api_secret: Some(api_secret),
+            api_passphrase: Some(api_passphrase),
         }
     }
 
@@ -214,5 +236,72 @@ impl BitgetClient {
         }
 
         Ok(bitget_response.data)
+    }
+
+    /// Get account assets (spot account balances)
+    /// Requires authentication
+    pub async fn get_account_assets(&self) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() || self.api_passphrase.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bitget account assets endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let endpoint = "/api/v2/spot/account/assets";
+        let query_string = "";
+
+        // Generate signature: timestamp + method + endpoint + query_string
+        let pre_hash = format!("{}{}{}{}", timestamp, "GET", endpoint, query_string);
+        let signature = self.generate_signature(&pre_hash)?;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("ACCESS-KEY", api_key)
+            .header("ACCESS-SIGN", signature)
+            .header("ACCESS-TIMESTAMP", &timestamp)
+            .header("ACCESS-PASSPHRASE", self.api_passphrase.as_ref().unwrap())
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .context("Failed to get account assets from Bitget")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bitget API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Generate HMAC SHA256 signature for Bitget API
+    fn generate_signature(&self, pre_hash: &str) -> Result<String> {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        let api_secret = self
+            .api_secret
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("API secret not set"))?;
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(api_secret.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Invalid HMAC key: {}", e))?;
+
+        mac.update(pre_hash.as_bytes());
+        let result = mac.finalize();
+        let signature = base64::encode(result.into_bytes());
+
+        Ok(signature)
     }
 }

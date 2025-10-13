@@ -132,6 +132,74 @@ fn generate_dashboard_html(
         })
         .collect();
 
+    let exchange_stats_html: String = if stats.exchange_stats.is_empty() {
+        "<p style=\"text-align: center; color: #999; padding: 20px;\">No exchange data available yet</p>".to_string()
+    } else {
+        stats.exchange_stats
+            .iter()
+            .map(|ex| {
+                let win_rate_class = if ex.win_rate >= 50.0 {
+                    "positive"
+                } else {
+                    "negative"
+                };
+                let total_profit_class = if ex.total_profit > 0.0 {
+                    "positive"
+                } else {
+                    "negative"
+                };
+                
+                format!(
+                    r#"
+                    <div class="exchange-card">
+                        <div class="exchange-header">
+                            <div class="exchange-name">📊 {}</div>
+                            <div class="exchange-win-rate {}">{:.2}%</div>
+                        </div>
+                        <div class="exchange-metrics">
+                            <div class="metric">
+                                <div class="metric-label">Total Opportunities</div>
+                                <div class="metric-value">{}</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Profitable / Unprofitable</div>
+                                <div class="metric-value">✅ {} / ❌ {}</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Total Profit</div>
+                                <div class="metric-value {}">${:.2}</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Avg Profit</div>
+                                <div class="metric-value">${:.4}</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Max Profit</div>
+                                <div class="metric-value positive">${:.4}</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-label">Min Profit</div>
+                                <div class="metric-value negative">${:.4}</div>
+                            </div>
+                        </div>
+                    </div>
+                    "#,
+                    ex.exchange_name,
+                    win_rate_class,
+                    ex.win_rate,
+                    ex.total_opportunities,
+                    ex.profitable_count,
+                    ex.unprofitable_count,
+                    total_profit_class,
+                    ex.total_profit,
+                    ex.average_profit,
+                    ex.max_profit,
+                    ex.min_profit
+                )
+            })
+            .collect()
+    };
+
     let blacklist_items: String = if blacklist.is_empty() {
         "<li class=\"empty-message\">No blacklisted addresses</li>".to_string()
     } else {
@@ -220,6 +288,78 @@ fn generate_dashboard_html(
         .stat-value.large {{
             font-size: 2.5em;
             color: #667eea;
+        }}
+
+        .stat-sublabel {{
+            color: #999;
+            font-size: 0.75em;
+            margin-top: 5px;
+        }}
+
+        .exchange-card {{
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            transition: transform 0.2s;
+        }}
+
+        .exchange-card:hover {{
+            transform: translateX(5px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }}
+
+        .exchange-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }}
+
+        .exchange-name {{
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #333;
+        }}
+
+        .exchange-win-rate {{
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #28a745;
+        }}
+
+        .exchange-metrics {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }}
+
+        .metric {{
+            text-align: center;
+        }}
+
+        .metric-label {{
+            color: #666;
+            font-size: 0.85em;
+            margin-bottom: 5px;
+        }}
+
+        .metric-value {{
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+        }}
+
+        .metric-value.positive {{
+            color: #28a745;
+        }}
+
+        .metric-value.negative {{
+            color: #dc3545;
         }}
 
         .section {{
@@ -472,6 +612,11 @@ fn generate_dashboard_html(
                 <div class="stat-value large">{}</div>
             </div>
             <div class="stat-card">
+                <div class="stat-label">Win Rate</div>
+                <div class="stat-value profit-positive">{:.2}%</div>
+                <div class="stat-sublabel">✅ {} / ❌ {}</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-label">Unique Tokens</div>
                 <div class="stat-value">{}</div>
             </div>
@@ -488,9 +633,18 @@ fn generate_dashboard_html(
                 <div class="stat-value profit-positive">${:.2}</div>
             </div>
             <div class="stat-card">
+                <div class="stat-label">Exchanges Monitored</div>
+                <div class="stat-value">{}</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-label">Blacklisted</div>
                 <div class="stat-value">{}</div>
             </div>
+        </div>
+
+        <div class="section">
+            <h2>🏦 Exchange Performance</h2>
+            {}
         </div>
 
         <div class="section">
@@ -689,11 +843,16 @@ fn generate_dashboard_html(
 </body>
 </html>"#,
         stats.total_opportunities,
+        stats.win_rate,
+        stats.profitable_count,
+        stats.unprofitable_count,
         stats.unique_tokens,
         stats.total_profit_usdt,
         stats.average_profit_usdt,
         stats.max_profit_usdt,
+        stats.exchange_stats.len(),
         blacklist.len(),
+        exchange_stats_html,
         top_opps_rows,
         recent_opps_rows,
         blacklist_items

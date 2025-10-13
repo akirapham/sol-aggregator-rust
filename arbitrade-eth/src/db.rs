@@ -216,7 +216,10 @@ impl ArbitrageDb {
         let mut total_count = 0;
         let mut total_profit = 0.0;
         let mut max_profit: f64 = 0.0;
+        let mut profitable_count = 0;
+        let mut unprofitable_count = 0;
         let mut unique_tokens = std::collections::HashSet::new();
+        let mut exchange_data: std::collections::HashMap<String, Vec<f64>> = std::collections::HashMap::new();
 
         for item in iter {
             let (key, value) = item.context("Failed to read from RocksDB")?;
@@ -234,6 +237,19 @@ impl ArbitrageDb {
                     total_profit += opp.profit_usdt;
                     max_profit = max_profit.max(opp.profit_usdt);
                     unique_tokens.insert(opp.token_address.clone());
+
+                    // Count profitable vs unprofitable
+                    if opp.profit_usdt > 0.0 {
+                        profitable_count += 1;
+                    } else {
+                        unprofitable_count += 1;
+                    }
+
+                    // Collect per-exchange data
+                    exchange_data
+                        .entry(opp.cex_name.clone())
+                        .or_insert_with(Vec::new)
+                        .push(opp.profit_usdt);
                 }
                 Err(e) => {
                     log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
@@ -241,6 +257,46 @@ impl ArbitrageDb {
                 }
             }
         }
+
+        // Calculate per-exchange statistics
+        let mut exchange_stats: Vec<ExchangeStats> = exchange_data
+            .into_iter()
+            .map(|(name, profits)| {
+                let total = profits.len();
+                let profitable = profits.iter().filter(|&&p| p > 0.0).count();
+                let unprofitable = profits.iter().filter(|&&p| p <= 0.0).count();
+                let total_profit: f64 = profits.iter().sum();
+                let max_profit = profits.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                let min_profit = profits.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+
+                ExchangeStats {
+                    exchange_name: name,
+                    total_opportunities: total,
+                    profitable_count: profitable,
+                    unprofitable_count: unprofitable,
+                    win_rate: if total > 0 {
+                        (profitable as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    },
+                    total_profit,
+                    average_profit: if total > 0 {
+                        total_profit / total as f64
+                    } else {
+                        0.0
+                    },
+                    max_profit,
+                    min_profit,
+                }
+            })
+            .collect();
+
+        // Sort by total profit descending
+        exchange_stats.sort_by(|a, b| {
+            b.total_profit
+                .partial_cmp(&a.total_profit)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(DbStats {
             total_opportunities: total_count,
@@ -252,6 +308,14 @@ impl ArbitrageDb {
                 0.0
             },
             max_profit_usdt: max_profit,
+            profitable_count,
+            unprofitable_count,
+            win_rate: if total_count > 0 {
+                (profitable_count as f64 / total_count as f64) * 100.0
+            } else {
+                0.0
+            },
+            exchange_stats,
         })
     }
 
@@ -344,4 +408,21 @@ pub struct DbStats {
     pub total_profit_usdt: f64,
     pub average_profit_usdt: f64,
     pub max_profit_usdt: f64,
+    pub profitable_count: usize,
+    pub unprofitable_count: usize,
+    pub win_rate: f64,
+    pub exchange_stats: Vec<ExchangeStats>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExchangeStats {
+    pub exchange_name: String,
+    pub total_opportunities: usize,
+    pub profitable_count: usize,
+    pub unprofitable_count: usize,
+    pub win_rate: f64,
+    pub total_profit: f64,
+    pub average_profit: f64,
+    pub max_profit: f64,
+    pub min_profit: f64,
 }

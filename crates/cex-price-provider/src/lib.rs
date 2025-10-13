@@ -40,13 +40,21 @@ pub struct Balance {
     pub total: f64,              // Total balance (free + locked)
 }
 
+/// Account balances grouped by type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountBalances {
+    pub balances: Vec<Balance>,  // All non-zero balances in this account
+    pub total_usdt_value: f64,   // Total value in USDT for this account
+}
+
 /// Portfolio summary across all assets
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Portfolio {
-    pub exchange: String,        // Exchange name
-    pub balances: Vec<Balance>,  // All non-zero balances
-    pub total_usdt_value: f64,   // Total portfolio value in USDT
-    pub timestamp: u64,          // Unix timestamp when portfolio was fetched
+    pub exchange: String,           // Exchange name
+    pub trading: AccountBalances,   // Trading account balances (UNIFIED for Bybit, trade for KuCoin, spot for MEXC)
+    pub funding: AccountBalances,   // Funding account balances (FUND for Bybit, main for KuCoin, same as trading for MEXC)
+    pub total_usdt_value: f64,      // Total portfolio value in USDT (trading + funding)
+    pub timestamp: u64,             // Unix timestamp when portfolio was fetched
 }
 
 #[async_trait]
@@ -94,4 +102,18 @@ pub trait PriceProvider {
     /// Get account portfolio/balances on the exchange
     /// Returns: Portfolio with all non-zero balances and total USDT value
     async fn get_portfolio(&self) -> Result<Portfolio>;
+
+    /// Transfer all assets to trading account (UNIFIED/SPOT for trading)
+    /// This prepares assets for selling/trading
+    /// For exchanges without separate accounts (like MEXC), this is a no-op
+    /// - `coin`: Optional specific coin to transfer, None = all coins
+    /// Returns: Number of transfers executed
+    async fn transfer_all_to_trading(&self, coin: Option<&str>) -> Result<u32>;
+
+    /// Transfer all assets to funding account (for withdrawal)
+    /// This prepares assets for withdrawal
+    /// For exchanges without separate accounts (like MEXC), this is a no-op
+    /// - `coin`: Optional specific coin to transfer, None = all coins
+    /// Returns: Number of transfers executed
+    async fn transfer_all_to_funding(&self, coin: Option<&str>) -> Result<u32>;
 }

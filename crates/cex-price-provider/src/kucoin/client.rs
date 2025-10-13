@@ -302,6 +302,193 @@ impl KucoinClient {
         Ok(json)
     }
 
+    /// Place a market order on KuCoin
+    /// Requires authentication
+    pub async fn place_market_order(
+        &self,
+        symbol: &str,
+        side: &str, // "buy" or "sell"
+        size: f64,
+    ) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "KuCoin place order endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let endpoint = "/api/v1/orders";
+
+        // Generate a unique client order ID using timestamp and nanos for uniqueness
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
+        let client_oid = format!("{}_{}", timestamp, nanos);
+
+        // Build request body
+        let body = serde_json::json!({
+            "clientOid": client_oid,
+            "side": side,
+            "symbol": symbol,
+            "type": "market",
+            "size": size.to_string(),
+        });
+
+        let body_str = serde_json::to_string(&body)?;
+
+        // Generate signature: timestamp + method + endpoint + body
+        let pre_hash = format!("{}{}{}{}", timestamp, "POST", endpoint, body_str);
+        let signature = self.generate_signature(&pre_hash)?;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("KC-API-KEY", api_key)
+            .header("KC-API-SIGN", signature)
+            .header("KC-API-TIMESTAMP", &timestamp)
+            .header("KC-API-PASSPHRASE", self.get_encrypted_passphrase()?)
+            .header("KC-API-KEY-VERSION", "2")
+            .header("Content-Type", "application/json")
+            .body(body_str)
+            .send()
+            .await
+            .context("Failed to place order on KuCoin")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("KuCoin API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Query order details
+    pub async fn get_order(&self, order_id: &str) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "KuCoin get order endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let endpoint = format!("/api/v1/orders/{}", order_id);
+
+        // Generate signature: timestamp + method + endpoint
+        let pre_hash = format!("{}{}{}", timestamp, "GET", endpoint);
+        let signature = self.generate_signature(&pre_hash)?;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("KC-API-KEY", api_key)
+            .header("KC-API-SIGN", signature)
+            .header("KC-API-TIMESTAMP", &timestamp)
+            .header("KC-API-PASSPHRASE", self.get_encrypted_passphrase()?)
+            .header("KC-API-KEY-VERSION", "2")
+            .send()
+            .await
+            .context("Failed to query order from KuCoin")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("KuCoin API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Transfer funds between KuCoin accounts (main, trade, margin)
+    /// Account types: "main", "trade", "margin", "isolated"
+    pub async fn transfer_between_accounts(
+        &self,
+        currency: &str,
+        from: &str,
+        to: &str,
+        amount: &str,
+    ) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "KuCoin transfer endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let endpoint = "/api/v2/accounts/inner-transfer";
+
+        // Generate a unique client order ID using timestamp
+        let client_oid = format!("transfer_{}", timestamp);
+
+        let body = serde_json::json!({
+            "clientOid": client_oid,
+            "currency": currency,
+            "from": from,
+            "to": to,
+            "amount": amount
+        });
+
+        let body_str = serde_json::to_string(&body)?;
+
+        // Generate signature: timestamp + method + endpoint + body
+        let pre_hash = format!("{}{}{}{}", timestamp, "POST", endpoint, body_str);
+        let signature = self.generate_signature(&pre_hash)?;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("KC-API-KEY", api_key)
+            .header("KC-API-SIGN", signature)
+            .header("KC-API-TIMESTAMP", &timestamp)
+            .header("KC-API-PASSPHRASE", self.get_encrypted_passphrase()?)
+            .header("KC-API-KEY-VERSION", "2")
+            .header("Content-Type", "application/json")
+            .body(body_str)
+            .send()
+            .await
+            .context("Failed to transfer between accounts on KuCoin")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "KuCoin transfer API error ({}): {}",
+                status,
+                body
+            ));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
     /// Generate HMAC SHA256 signature for KuCoin API
     fn generate_signature(&self, pre_hash: &str) -> Result<String> {
         use hmac::{Hmac, Mac};

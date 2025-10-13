@@ -585,6 +585,14 @@ impl PriceProvider for GateService {
     async fn get_portfolio(&self) -> Result<crate::Portfolio> {
         Err(anyhow::anyhow!("Gate.io: get_portfolio not yet implemented"))
     }
+
+    async fn transfer_all_to_trading(&self, _coin: Option<&str>) -> Result<u32> {
+        Err(anyhow::anyhow!("Gate.io: transfer_all_to_trading not yet implemented"))
+    }
+
+    async fn transfer_all_to_funding(&self, _coin: Option<&str>) -> Result<u32> {
+        Err(anyhow::anyhow!("Gate.io: transfer_all_to_funding not yet implemented"))
+    }
 }
 
 impl GateService {

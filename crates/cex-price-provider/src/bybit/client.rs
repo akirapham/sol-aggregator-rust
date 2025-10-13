@@ -450,4 +450,184 @@ impl BybitClient {
         let json: serde_json::Value = response.json().await?;
         Ok(json)
     }
+
+    /// Place a market order on Bybit
+    /// Requires authentication
+    pub async fn place_market_order(
+        &self,
+        symbol: &str,
+        side: &str, // "Buy" or "Sell"
+        qty: f64,
+    ) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bybit place order endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let recv_window = "5000";
+
+        // Build request parameters
+        let params = serde_json::json!({
+            "category": "spot",
+            "symbol": symbol,
+            "side": side,
+            "orderType": "Market",
+            "qty": qty.to_string(),
+            "timeInForce": "IOC", // Immediate or Cancel
+        });
+
+        let params_str = serde_json::to_string(&params)?;
+
+        // Generate signature: timestamp + api_key + recv_window + params_str
+        let timestamp_u64: u64 = timestamp.parse()?;
+        let recv_window_params = format!("{}{}", recv_window, params_str);
+        let signature = self.generate_signature(timestamp_u64, &recv_window_params)?;
+
+        let url = format!("{}/v5/order/create", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("X-BAPI-API-KEY", api_key)
+            .header("X-BAPI-SIGN", signature)
+            .header("X-BAPI-TIMESTAMP", &timestamp)
+            .header("X-BAPI-RECV-WINDOW", recv_window)
+            .header("Content-Type", "application/json")
+            .body(params_str)
+            .send()
+            .await
+            .context("Failed to place order on Bybit")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bybit API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Query order details
+    pub async fn get_order(&self, order_id: &str, symbol: &str) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bybit get order endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let recv_window = "5000";
+
+        // Build query parameters
+        let query_params = format!("category=spot&orderId={}&symbol={}", order_id, symbol);
+
+        // Generate signature: timestamp + api_key + recv_window + query_params
+        let timestamp_u64: u64 = timestamp.parse()?;
+        let recv_window_params = format!("{}{}", recv_window, query_params);
+        let signature = self.generate_signature(timestamp_u64, &recv_window_params)?;
+
+        let url = format!("{}/v5/order/realtime?{}", self.base_url, query_params);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("X-BAPI-API-KEY", api_key)
+            .header("X-BAPI-SIGN", signature)
+            .header("X-BAPI-TIMESTAMP", &timestamp)
+            .header("X-BAPI-RECV-WINDOW", recv_window)
+            .send()
+            .await
+            .context("Failed to query order from Bybit")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bybit API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Transfer assets between accounts (e.g., FUNDING to UNIFIED)
+    pub async fn transfer_between_accounts(
+        &self,
+        coin: &str,
+        amount: f64,
+        from_account: &str, // "FUND", "UNIFIED", "SPOT", etc.
+        to_account: &str,
+    ) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bybit transfer endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let recv_window = "5000";
+
+        // Generate a UUID for the transfer ID
+        let transfer_id = uuid::Uuid::new_v4().to_string();
+
+        // Build request parameters
+        let params = serde_json::json!({
+            "transferId": transfer_id,
+            "coin": coin,
+            "amount": amount.to_string(),
+            "fromAccountType": from_account,
+            "toAccountType": to_account,
+        });
+
+        let params_str = serde_json::to_string(&params)?;
+
+        // Generate signature
+        let timestamp_u64: u64 = timestamp.parse()?;
+        let recv_window_params = format!("{}{}", recv_window, params_str);
+        let signature = self.generate_signature(timestamp_u64, &recv_window_params)?;
+
+        let url = format!("{}/v5/asset/transfer/inter-transfer", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("X-BAPI-API-KEY", api_key)
+            .header("X-BAPI-SIGN", signature)
+            .header("X-BAPI-TIMESTAMP", &timestamp)
+            .header("X-BAPI-RECV-WINDOW", recv_window)
+            .header("Content-Type", "application/json")
+            .body(params_str)
+            .send()
+            .await
+            .context("Failed to transfer assets on Bybit")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bybit API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
 }

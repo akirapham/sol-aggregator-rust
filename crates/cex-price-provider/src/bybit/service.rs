@@ -559,8 +559,8 @@ impl PriceProvider for BybitService {
         Err(anyhow::anyhow!("Bybit: get_deposit_address not yet implemented"))
     }
 
-    async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
-        Err(anyhow::anyhow!("Bybit: sell_token_for_usdt not yet implemented"))
+    async fn sell_token_for_usdt(&self, symbol: &str, amount: f64) -> Result<(String, f64, f64)> {
+        self.sell_token_for_usdt_impl(symbol, amount).await
     }
 
     async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
@@ -569,6 +569,14 @@ impl PriceProvider for BybitService {
 
     async fn get_portfolio(&self) -> Result<crate::Portfolio> {
         self.get_portfolio_impl().await
+    }
+
+    async fn transfer_all_to_trading(&self, coin: Option<&str>) -> Result<u32> {
+        self.transfer_all_to_trading_impl(coin).await
+    }
+
+    async fn transfer_all_to_funding(&self, coin: Option<&str>) -> Result<u32> {
+        self.transfer_all_to_funding_impl(coin).await
     }
 }
 
@@ -625,74 +633,56 @@ impl BybitService {
             .unwrap()
             .as_secs();
 
-        let mut balances: Vec<crate::Balance> = Vec::new();
-        let mut total_usdt_value = 0.0;
+        let mut trading_balances: Vec<crate::Balance> = Vec::new();
+        let mut trading_usdt_value = 0.0;
+        let mut funding_balances: Vec<crate::Balance> = Vec::new();
+        let mut funding_usdt_value = 0.0;
 
-        // Step 1: Get UNIFIED account balance (main trading account)
-        log::info!("Bybit: Checking UNIFIED account...");
-        let account_types = vec!["UNIFIED"];
+        // Step 1: Get UNIFIED account balance (trading account)
+        log::info!("Bybit: Checking UNIFIED (trading) account...");
+        match self.client.get_account_balance("UNIFIED").await {
+            Ok(account_data) => {
+                // Parse Bybit response structure
+                if let Some(result) = account_data.get("result") {
+                    if let Some(list) = result.get("list").and_then(|v| v.as_array()) {
+                        for account in list {
+                            if let Some(coins) = account.get("coin").and_then(|v| v.as_array()) {
+                                for coin_data in coins {
+                                    let asset = coin_data
+                                        .get("coin")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
 
-        for account_type in account_types {
-            log::info!("Bybit: Checking {} account...", account_type);
+                                    let wallet_balance: f64 = coin_data
+                                        .get("walletBalance")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| s.parse().ok())
+                                        .unwrap_or(0.0);
 
-            let account_data = match self.client.get_account_balance(account_type).await {
-                Ok(data) => data,
-                Err(e) => {
-                    log::debug!("Bybit: Failed to get {} account balance: {}", account_type, e);
-                    continue;
-                }
-            };
+                                    let locked: f64 = coin_data
+                                        .get("locked")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| s.parse().ok())
+                                        .unwrap_or(0.0);
 
+                                    let coin_total = wallet_balance + locked;
 
+                                    // Get USD value directly from Bybit (more accurate)
+                                    let usd_value: f64 = coin_data
+                                        .get("usdValue")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|s| s.parse().ok())
+                                        .unwrap_or(0.0);
 
-            // Parse Bybit response structure
-            if let Some(result) = account_data.get("result") {
-                if let Some(list) = result.get("list").and_then(|v| v.as_array()) {
-                    for account in list {
-                        if let Some(coins) = account.get("coin").and_then(|v| v.as_array()) {
-                            for coin_data in coins {
-                                let asset = coin_data
-                                    .get("coin")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
+                                    // Only include non-zero balances
+                                    if coin_total > 0.0 {
+                                        log::info!("Bybit UNIFIED: {} - {} (free: {}, locked: {}, USD: ${})",
+                                            asset, coin_total, wallet_balance, locked, usd_value);
 
-                                let wallet_balance: f64 = coin_data
-                                    .get("walletBalance")
-                                    .and_then(|v| v.as_str())
-                                    .and_then(|s| s.parse().ok())
-                                    .unwrap_or(0.0);
+                                        trading_usdt_value += usd_value;
 
-                                let locked: f64 = coin_data
-                                    .get("locked")
-                                    .and_then(|v| v.as_str())
-                                    .and_then(|s| s.parse().ok())
-                                    .unwrap_or(0.0);
-
-                                let coin_total = wallet_balance + locked;
-
-                                // Get USD value directly from Bybit (more accurate)
-                                let usd_value: f64 = coin_data
-                                    .get("usdValue")
-                                    .and_then(|v| v.as_str())
-                                    .and_then(|s| s.parse().ok())
-                                    .unwrap_or(0.0);
-
-                                // Only include non-zero balances
-                                if coin_total > 0.0 {
-                                    log::info!("Bybit: Found {} balance: {} (free: {}, locked: {}, USD value: ${})",
-                                        asset, coin_total, wallet_balance, locked, usd_value);
-
-                                    total_usdt_value += usd_value;
-
-                                    // Check if we already have this asset in balances (from another account type)
-                                    if let Some(existing_balance) = balances.iter_mut().find(|b| b.asset == asset) {
-                                        // Aggregate balances from different account types
-                                        existing_balance.free += wallet_balance;
-                                        existing_balance.locked += locked;
-                                        existing_balance.total += coin_total;
-                                    } else {
-                                        balances.push(crate::Balance {
+                                        trading_balances.push(crate::Balance {
                                             asset,
                                             free: wallet_balance,
                                             locked,
@@ -705,14 +695,15 @@ impl BybitService {
                     }
                 }
             }
+            Err(e) => {
+                log::debug!("Bybit: Failed to get UNIFIED account balance: {}", e);
+            }
         }
 
-        // Step 2: Get FUNDING account balance (separate wallet)
+        // Step 2: Get FUNDING account balance (funding account)
         log::info!("Bybit: Checking FUNDING account...");
         match self.client.get_funding_balance(None).await {
             Ok(funding_data) => {
-
-
                 // Parse funding account response
                 if let Some(result) = funding_data.get("result") {
                     if let Some(balance_list) = result.get("balance").and_then(|v| v.as_array()) {
@@ -738,9 +729,6 @@ impl BybitService {
                             let coin_total = wallet_balance + locked;
 
                             if coin_total > 0.0 {
-                                log::info!("Bybit FUNDING: Found {} balance: {} (free: {}, locked: {})",
-                                    asset, coin_total, wallet_balance, locked);
-
                                 // For funding account, estimate USD value
                                 let usd_value = if asset == "USDT" {
                                     coin_total
@@ -755,21 +743,17 @@ impl BybitService {
                                     }
                                 };
 
-                                total_usdt_value += usd_value;
+                                log::info!("Bybit FUNDING: {} - {} (free: {}, locked: {}, USD: ${})",
+                                    asset, coin_total, wallet_balance, locked, usd_value);
 
-                                // Check if we already have this asset (from UNIFIED account)
-                                if let Some(existing_balance) = balances.iter_mut().find(|b| b.asset == asset) {
-                                    existing_balance.free += wallet_balance;
-                                    existing_balance.locked += locked;
-                                    existing_balance.total += coin_total;
-                                } else {
-                                    balances.push(crate::Balance {
-                                        asset,
-                                        free: wallet_balance,
-                                        locked,
-                                        total: coin_total,
-                                    });
-                                }
+                                funding_usdt_value += usd_value;
+
+                                funding_balances.push(crate::Balance {
+                                    asset,
+                                    free: wallet_balance,
+                                    locked,
+                                    total: coin_total,
+                                });
                             }
                         }
                     }
@@ -780,14 +764,361 @@ impl BybitService {
             }
         }
 
-        log::info!("Bybit: Portfolio summary - {} assets, total value: ${:.2} USDT",
-            balances.len(), total_usdt_value);
+        let total_usdt_value = trading_usdt_value + funding_usdt_value;
+
+        log::info!("Bybit: Portfolio - Trading: ${:.2}, Funding: ${:.2}, Total: ${:.2}",
+            trading_usdt_value, funding_usdt_value, total_usdt_value);
 
         Ok(crate::Portfolio {
             exchange: "Bybit".to_string(),
-            balances,
+            trading: crate::AccountBalances {
+                balances: trading_balances,
+                total_usdt_value: trading_usdt_value,
+            },
+            funding: crate::AccountBalances {
+                balances: funding_balances,
+                total_usdt_value: funding_usdt_value,
+            },
             total_usdt_value,
             timestamp: current_time,
         })
+    }
+
+    /// Sell tokens for USDT using market order
+    /// Will check FUNDING account and transfer to UNIFIED (trading) account if needed
+    async fn sell_token_for_usdt_impl(
+        &self,
+        symbol: &str,
+        amount: f64,
+    ) -> Result<(String, f64, f64)> {
+        // Bybit uses no separator for spot symbols (e.g., LINKUSDT)
+        let symbol_pair = format!("{}USDT", symbol);
+
+        // Step 1: Check balances in both UNIFIED and FUNDING accounts
+        log::info!("Bybit: Checking {} balance in UNIFIED account...", symbol);
+        let unified_balance = match self.client.get_account_balance("UNIFIED").await {
+            Ok(data) => {
+                let mut balance = 0.0;
+                if let Some(result) = data.get("result") {
+                    if let Some(list) = result.get("list").and_then(|v| v.as_array()) {
+                        for account in list {
+                            if let Some(coins) = account.get("coin").and_then(|v| v.as_array()) {
+                                for coin_data in coins {
+                                    let coin = coin_data.get("coin").and_then(|v| v.as_str()).unwrap_or("");
+                                    if coin == symbol {
+                                        balance = coin_data
+                                            .get("walletBalance")
+                                            .and_then(|v| v.as_str())
+                                            .and_then(|s| s.parse().ok())
+                                            .unwrap_or(0.0);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                balance
+            }
+            Err(e) => {
+                log::warn!("Failed to get UNIFIED balance: {}", e);
+                0.0
+            }
+        };
+
+        log::info!("Bybit: UNIFIED account has {} {}", unified_balance, symbol);
+
+        // Step 2: Check FUNDING account
+        log::info!("Bybit: Checking {} balance in FUNDING account...", symbol);
+        let funding_balance = match self.client.get_funding_balance(Some(symbol)).await {
+            Ok(data) => {
+                let mut balance = 0.0;
+                if let Some(result) = data.get("result") {
+                    if let Some(balance_list) = result.get("balance").and_then(|v| v.as_array()) {
+                        for coin_data in balance_list {
+                            let coin = coin_data.get("coin").and_then(|v| v.as_str()).unwrap_or("");
+                            if coin == symbol {
+                                balance = coin_data
+                                    .get("walletBalance")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0);
+                                break;
+                            }
+                        }
+                    }
+                }
+                balance
+            }
+            Err(e) => {
+                log::warn!("Failed to get FUNDING balance: {}", e);
+                0.0
+            }
+        };
+
+        log::info!("Bybit: FUNDING account has {} {}", funding_balance, symbol);
+
+        let total_available = unified_balance + funding_balance;
+
+        if total_available < amount {
+            return Err(anyhow::anyhow!(
+                "Insufficient balance: need {} {}, but only have {} {} (UNIFIED: {}, FUNDING: {})",
+                amount, symbol, total_available, symbol, unified_balance, funding_balance
+            ));
+        }
+
+        // Step 3: Transfer from FUNDING to UNIFIED if needed
+        if unified_balance < amount && funding_balance > 0.0 {
+            let amount_to_transfer = (amount - unified_balance).min(funding_balance);
+            log::info!("Bybit: Transferring {} {} from FUNDING to UNIFIED...", amount_to_transfer, symbol);
+
+            match self.client.transfer_between_accounts(symbol, amount_to_transfer, "FUND", "UNIFIED").await {
+                Ok(transfer_result) => {
+                    log::info!("Bybit transfer response: {}", serde_json::to_string_pretty(&transfer_result)?);
+
+                    let ret_code = transfer_result.get("retCode").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    if ret_code != 0 {
+                        let ret_msg = transfer_result.get("retMsg").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+                        return Err(anyhow::anyhow!("Bybit transfer failed: {} (code: {})", ret_msg, ret_code));
+                    }
+
+                    log::info!("✅ Successfully transferred {} {} from FUNDING to UNIFIED", amount_to_transfer, symbol);
+
+                    // Wait a moment for the transfer to complete
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Failed to transfer from FUNDING to UNIFIED: {}", e));
+                }
+            }
+        }
+
+        // Step 4: Place market sell order on UNIFIED (trading) account
+        // Round quantity to avoid "too many decimals" error
+        // Most tokens allow 2-4 decimals, use 4 as a safe default
+        let rounded_amount = (amount * 10000.0).round() / 10000.0; // Round to 4 decimals
+        log::info!("Bybit: Placing sell order for {} on UNIFIED account... (rounded from {} to {})", symbol, amount, rounded_amount);
+        let order_result = self.client.place_market_order(&symbol_pair, "Sell", rounded_amount).await?;
+
+        log::info!("Bybit order placement response: {}", serde_json::to_string_pretty(&order_result)?);
+
+        // Check if the order was successful
+        let ret_code = order_result
+            .get("retCode")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1);
+
+        if ret_code != 0 {
+            let ret_msg = order_result
+                .get("retMsg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            return Err(anyhow::anyhow!("Bybit order failed: {} (code: {})", ret_msg, ret_code));
+        }
+
+        // Extract order ID from response
+        let order_id = order_result
+            .get("result")
+            .and_then(|r| r.get("orderId"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("No orderId in response"))?
+            .to_string();
+
+        // Wait a moment for order to execute
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Query order to get execution details
+        let order_status = self.client.get_order(&order_id, &symbol_pair).await?;
+        log::info!("Bybit order status response: {}", serde_json::to_string_pretty(&order_status)?);
+
+        // Extract execution details from the result object
+        let result = order_status
+            .get("result")
+            .and_then(|r| r.get("list"))
+            .and_then(|l| l.as_array())
+            .and_then(|arr| arr.first())
+            .ok_or_else(|| anyhow::anyhow!("No order data in status response"))?;
+
+        // cumExecQty = executed quantity in base currency (tokens sold)
+        let executed_qty = result
+            .get("cumExecQty")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| result.get("cumExecQty").and_then(|v| v.as_f64()))
+            .unwrap_or(0.0);
+
+        // cumExecValue = total value in quote currency (USDT received)
+        let usdt_received = result
+            .get("cumExecValue")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| result.get("cumExecValue").and_then(|v| v.as_f64()))
+            .unwrap_or(0.0);
+
+        Ok((order_id, executed_qty, usdt_received))
+    }
+
+    /// Transfer all assets from FUNDING account to UNIFIED (trading) account
+    /// This prepares assets for trading
+    pub async fn transfer_all_to_trading_impl(&self, coin: Option<&str>) -> Result<u32> {
+        println!("Bybit: Transferring all assets to trading account...");
+
+        // Get balances from FUNDING account
+        let account_info = self.client.get_funding_balance(None).await?;
+        let result = account_info
+            .get("result")
+            .and_then(|r| r.as_object())
+            .ok_or_else(|| anyhow::anyhow!("Invalid account info response"))?;
+
+        // FUNDING account uses "balance" array, not "list"
+        let balance_list = result
+            .get("balance")
+            .and_then(|b| b.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing balance array in FUNDING account"))?;
+
+        if balance_list.is_empty() {
+            println!("No FUNDING account balances");
+            return Ok(0);
+        }
+
+        let mut transfer_count = 0u32;
+
+        // Iterate through balance list directly (FUNDING account structure)
+        for coin_data in balance_list {
+            let coin_name = coin_data
+                .get("coin")
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+
+            // Filter by coin if specified
+            if let Some(target_coin) = coin {
+                if coin_name != target_coin {
+                    continue;
+                }
+            }
+
+            let wallet_balance = coin_data
+                .get("walletBalance")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            let locked = coin_data
+                .get("locked")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            // Use free balance (wallet_balance - locked) for transfer
+            let available = wallet_balance - locked;
+
+            if available > 0.0 {
+                println!("  Transferring {} {} from FUNDING to UNIFIED", available, coin_name);
+
+                match self.client.transfer_between_accounts(
+                    coin_name,
+                    available,
+                    "FUND",
+                    "UNIFIED"
+                ).await {
+                    Ok(_) => {
+                        transfer_count += 1;
+                        // Small delay between transfers
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    }
+                    Err(e) => {
+                        eprintln!("  Failed to transfer {} {}: {}", coin_name, available, e);
+                    }
+                }
+            }
+        }
+
+        if transfer_count > 0 {
+            println!("Bybit: Transferred {} assets to trading account", transfer_count);
+            // Wait for transfers to settle
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        } else {
+            println!("Bybit: No assets to transfer to trading account");
+        }
+
+        Ok(transfer_count)
+    }
+
+    /// Transfer all assets from UNIFIED (trading) account to FUNDING account
+    /// This prepares assets for withdrawal
+    pub async fn transfer_all_to_funding_impl(&self, coin: Option<&str>) -> Result<u32> {
+        println!("Bybit: Transferring all assets to funding account...");
+
+        // Get balances from UNIFIED account
+        let account_info = self.client.get_account_balance("UNIFIED").await?;
+        let result = account_info
+            .get("result")
+            .and_then(|r| r.as_object())
+            .ok_or_else(|| anyhow::anyhow!("Invalid account info response"))?;
+
+        let list = result
+            .get("list")
+            .and_then(|l| l.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing list in account info"))?;
+
+        if list.is_empty() {
+            println!("No UNIFIED account data");
+            return Ok(0);
+        }
+
+        let coins = list[0]
+            .get("coin")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing coin array in UNIFIED account"))?;
+
+        let mut transfer_count = 0u32;
+
+        for coin_data in coins {
+            let coin_obj = coin_data.as_object().unwrap();
+            let coin_name = coin_obj.get("coin").and_then(|c| c.as_str()).unwrap_or("");
+
+            // Filter by coin if specified
+            if let Some(target_coin) = coin {
+                if coin_name != target_coin {
+                    continue;
+                }
+            }
+
+            let available = coin_obj
+                .get("availableToWithdraw")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            if available > 0.0 {
+                println!("  Transferring {} {} from UNIFIED to FUNDING", available, coin_name);
+
+                match self.client.transfer_between_accounts(
+                    coin_name,
+                    available,
+                    "UNIFIED",
+                    "FUND"
+                ).await {
+                    Ok(_) => {
+                        transfer_count += 1;
+                        // Small delay between transfers
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    }
+                    Err(e) => {
+                        eprintln!("  Failed to transfer {} {}: {}", coin_name, available, e);
+                    }
+                }
+            }
+        }
+
+        if transfer_count > 0 {
+            println!("Bybit: Transferred {} assets to funding account", transfer_count);
+            // Wait for transfers to settle
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        } else {
+            println!("Bybit: No assets to transfer to funding account");
+        }
+
+        Ok(transfer_count)
     }
 }

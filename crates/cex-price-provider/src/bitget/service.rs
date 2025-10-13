@@ -164,9 +164,17 @@ impl BitgetService {
             .unwrap()
             .as_secs();
 
+        // Bitget doesn't clearly separate trading and funding in spot account
+        // Treat all as trading account (same as MEXC)
+        let account_balances = crate::AccountBalances {
+            balances: balances.clone(),
+            total_usdt_value,
+        };
+
         Ok(crate::Portfolio {
             exchange: "Bitget".to_string(),
-            balances,
+            trading: account_balances.clone(),
+            funding: account_balances,
             total_usdt_value,
             timestamp,
         })
@@ -641,8 +649,8 @@ impl PriceProvider for BitgetService {
         Err(anyhow::anyhow!("Bitget: get_deposit_address not yet implemented"))
     }
 
-    async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
-        Err(anyhow::anyhow!("Bitget: sell_token_for_usdt not yet implemented"))
+    async fn sell_token_for_usdt(&self, symbol: &str, amount: f64) -> Result<(String, f64, f64)> {
+        self.sell_token_for_usdt_impl(symbol, amount).await
     }
 
     async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
@@ -651,6 +659,20 @@ impl PriceProvider for BitgetService {
 
     async fn get_portfolio(&self) -> Result<crate::Portfolio> {
         self.get_portfolio_impl().await
+    }
+
+    async fn transfer_all_to_trading(&self, _coin: Option<&str>) -> Result<u32> {
+        // Bitget spot account doesn't separate trading and funding
+        // All funds are already available for trading
+        println!("Bitget: No transfer needed - spot account doesn't separate trading/funding");
+        Ok(0)
+    }
+
+    async fn transfer_all_to_funding(&self, _coin: Option<&str>) -> Result<u32> {
+        // Bitget spot account doesn't separate trading and funding
+        // All funds are already available for withdrawal
+        println!("Bitget: No transfer needed - spot account doesn't separate trading/funding");
+        Ok(0)
     }
 }
 
@@ -693,5 +715,110 @@ impl BitgetService {
         }
 
         Ok(total_usdt)
+    }
+
+    /// Sell tokens for USDT using market order
+    /// Bitget doesn't have separate trading/funding accounts, so no transfer needed
+    async fn sell_token_for_usdt_impl(
+        &self,
+        symbol: &str,
+        amount: f64,
+    ) -> Result<(String, f64, f64)> {
+        // Bitget uses no separator for spot symbols (e.g., LINKUSDT)
+        let symbol_pair = format!("{}USDT", symbol);
+
+        log::info!("Bitget: Selling {} {} for USDT (symbol: {})", amount, symbol, symbol_pair);
+
+        // Check account balance
+        let account_data = self.client.get_account_assets().await?;
+        let assets = account_data
+            .get("data")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Invalid account data response"))?;
+
+        let mut available_balance = 0.0;
+        for asset in assets {
+            if let Some(coin) = asset.get("coin").and_then(|c| c.as_str()) {
+                if coin == symbol {
+                    available_balance = asset
+                        .get("available")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    break;
+                }
+            }
+        }
+
+        log::info!("Bitget: Available {} balance: {}", symbol, available_balance);
+
+        if available_balance < amount {
+            return Err(anyhow::anyhow!(
+                "Insufficient {} balance: have {}, need {}",
+                symbol,
+                available_balance,
+                amount
+            ));
+        }
+
+        // Round quantity to 4 decimal places (Bitget precision requirement)
+        let rounded_amount = (amount * 10000.0).floor() / 10000.0;
+
+        log::info!("Bitget: Placing market sell order for {} {} (rounded from {})",
+            rounded_amount, symbol, amount);
+
+        // Place market sell order
+        let order_response = self
+            .client
+            .place_market_order(&symbol_pair, "sell", &rounded_amount.to_string())
+            .await?;
+
+        log::info!("Bitget: Order response: {}", serde_json::to_string_pretty(&order_response)?);
+
+        let order_id = order_response
+            .get("data")
+            .and_then(|d| d.get("orderId"))
+            .and_then(|o| o.as_str())
+            .ok_or_else(|| anyhow::anyhow!("No order ID in response"))?
+            .to_string();
+
+        log::info!("Bitget: Order placed successfully, ID: {}", order_id);
+
+        // Wait a bit for order to execute
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Query order status to get execution details
+        log::info!("Bitget: Querying order status for order ID: {}", order_id);
+        let order_status = self.client.get_order(&order_id).await?;
+
+        log::info!("Bitget: Order status: {}", serde_json::to_string_pretty(&order_status)?);
+
+        // Extract executed quantity and USDT received
+        let order_data = order_status
+            .get("data")
+            .and_then(|d| d.as_array())
+            .and_then(|arr| arr.first())
+            .ok_or_else(|| anyhow::anyhow!("No order data in status response"))?;
+
+        let executed_qty = order_data
+            .get("baseVolume")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        let usdt_received = order_data
+            .get("quoteVolume")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        log::info!(
+            "Bitget: Order executed - {} {} sold for {} USDT",
+            executed_qty,
+            symbol,
+            usdt_received
+        );
+
+        Ok((order_id, executed_qty, usdt_received))
     }
 }

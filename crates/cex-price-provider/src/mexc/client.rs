@@ -272,6 +272,35 @@ impl MexcClient {
         Ok(coin_info)
     }
 
+    /// Get current ticker price for a symbol (public endpoint)
+    pub async fn get_ticker_price(&self, symbol: &str) -> Result<f64> {
+        let url = format!("{}/api/v3/ticker/price?symbol={}", self.base_url, symbol);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to send ticker price request to MEXC API")?;
+
+        #[derive(serde::Deserialize)]
+        struct TickerPrice {
+            price: String,
+        }
+
+        let ticker: TickerPrice = response
+            .json()
+            .await
+            .context("Failed to parse ticker price response")?;
+
+        let price = ticker
+            .price
+            .parse::<f64>()
+            .context("Failed to parse price as f64")?;
+
+        Ok(price)
+    }
+
     /// Fetch orderbook for a specific symbol
     pub async fn get_orderbook(&self, symbol: &str, limit: u32) -> Result<OrderbookResponse> {
         let url = format!(
@@ -427,6 +456,43 @@ impl MexcClient {
             .to_string();
 
         Ok(withdrawal_id)
+    }
+
+    /// Query order status
+    pub async fn get_order(&self, symbol: &str, order_id: &str) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() {
+            return Err(anyhow::anyhow!(
+                "MEXC order query endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let query_string = format!(
+            "orderId={}&symbol={}&timestamp={}",
+            order_id, symbol, timestamp
+        );
+        let signature = self.generate_signature(&query_string)?;
+
+        let url = format!(
+            "{}/api/v3/order?{}&signature={}",
+            self.base_url, query_string, signature
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("X-MEXC-APIKEY", api_key)
+            .send()
+            .await
+            .context("Failed to query order from MEXC")?;
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
     }
 
     /// Get account information including balances

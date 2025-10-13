@@ -772,8 +772,8 @@ impl PriceProvider for KucoinService {
         Err(anyhow::anyhow!("KuCoin: get_deposit_address not yet implemented"))
     }
 
-    async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
-        Err(anyhow::anyhow!("KuCoin: sell_token_for_usdt not yet implemented"))
+    async fn sell_token_for_usdt(&self, symbol: &str, amount: f64) -> Result<(String, f64, f64)> {
+        self.sell_token_for_usdt_impl(symbol, amount).await
     }
 
     async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
@@ -782,6 +782,14 @@ impl PriceProvider for KucoinService {
 
     async fn get_portfolio(&self) -> Result<crate::Portfolio> {
         self.get_portfolio_impl().await
+    }
+
+    async fn transfer_all_to_trading(&self, coin: Option<&str>) -> Result<u32> {
+        self.transfer_all_to_trading_impl(coin).await
+    }
+
+    async fn transfer_all_to_funding(&self, coin: Option<&str>) -> Result<u32> {
+        self.transfer_all_to_funding_impl(coin).await
     }
 }
 
@@ -834,10 +842,13 @@ impl KucoinService {
             .unwrap()
             .as_secs();
 
-        let mut balances: Vec<crate::Balance> = Vec::new();
-        let mut total_usdt_value = 0.0;
+        let mut trading_balances: Vec<crate::Balance> = Vec::new();
+        let mut trading_usdt_value = 0.0;
+        let mut funding_balances: Vec<crate::Balance> = Vec::new();
+        let mut funding_usdt_value = 0.0;
 
         // Parse KuCoin response structure
+        // KuCoin has: trade (trading), main (funding), margin
         if let Some(data) = account_data.get("data").and_then(|v| v.as_array()) {
             for account in data {
                 let asset = account
@@ -845,6 +856,11 @@ impl KucoinService {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+
+                let account_type = account
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 let available: f64 = account
                     .get("available")
@@ -875,29 +891,406 @@ impl KucoinService {
                         }
                     };
 
-                    total_usdt_value += usdt_value;
+                    log::info!("KuCoin {}: {} - {} (free: {}, locked: {}, USD: ${})",
+                        account_type, asset, total, available, holds, usdt_value);
 
-                    log::info!("KuCoin: Found {} balance: {} (free: {}, locked: {}, USD value: ${})",
-                        asset, total, available, holds, usdt_value);
-
-                    balances.push(crate::Balance {
+                    let balance = crate::Balance {
                         asset,
                         free: available,
                         locked: holds,
                         total,
-                    });
+                    };
+
+                    // Categorize: trade + margin = trading, main = funding
+                    match account_type {
+                        "trade" | "margin" => {
+                            trading_usdt_value += usdt_value;
+                            trading_balances.push(balance);
+                        }
+                        "main" => {
+                            funding_usdt_value += usdt_value;
+                            funding_balances.push(balance);
+                        }
+                        _ => {
+                            log::debug!("Unknown KuCoin account type: {}", account_type);
+                        }
+                    }
                 }
             }
         }
 
-        log::info!("KuCoin: Portfolio summary - {} assets, total value: ${:.2} USDT",
-            balances.len(), total_usdt_value);
+        let total_usdt_value = trading_usdt_value + funding_usdt_value;
+
+        log::info!("KuCoin: Portfolio - Trading: ${:.2}, Funding: ${:.2}, Total: ${:.2}",
+            trading_usdt_value, funding_usdt_value, total_usdt_value);
 
         Ok(crate::Portfolio {
             exchange: "KuCoin".to_string(),
-            balances,
+            trading: crate::AccountBalances {
+                balances: trading_balances,
+                total_usdt_value: trading_usdt_value,
+            },
+            funding: crate::AccountBalances {
+                balances: funding_balances,
+                total_usdt_value: funding_usdt_value,
+            },
             total_usdt_value,
             timestamp: current_time,
         })
+    }
+
+    /// Sell tokens for USDT using market order
+    /// Will sell all available balance of the token across all accounts
+    /// Checks trade, main, and margin accounts and transfers to trade if needed
+    async fn sell_token_for_usdt_impl(
+        &self,
+        symbol: &str,
+        amount: f64,
+    ) -> Result<(String, f64, f64)> {
+        // KuCoin uses dash-separated symbols (e.g., LINK-USDT)
+        let symbol_pair = format!("{}-USDT", symbol);
+
+        log::info!("KuCoin: Checking balances across all account types for {}", symbol);
+
+        // Get all account balances
+        let account_data = self.client.get_account_balance().await?;
+
+        let mut trade_balance = 0.0;
+        let mut main_balance = 0.0;
+        let mut margin_balance = 0.0;
+
+        // Parse account balances by type
+        if let Some(data) = account_data.get("data").and_then(|v| v.as_array()) {
+            for account in data {
+                let currency = account
+                    .get("currency")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                if currency != symbol {
+                    continue;
+                }
+
+                let account_type = account
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                let available: f64 = account
+                    .get("available")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
+
+                match account_type {
+                    "trade" => trade_balance = available,
+                    "main" => main_balance = available,
+                    "margin" => margin_balance = available,
+                    _ => {}
+                }
+
+                log::info!("KuCoin: Found {} balance in {} account: {}", symbol, account_type, available);
+            }
+        }
+
+        let total_balance = trade_balance + main_balance + margin_balance;
+        log::info!("KuCoin: Total {} balance: {} (trade: {}, main: {}, margin: {})",
+            symbol, total_balance, trade_balance, main_balance, margin_balance);
+
+        if total_balance < amount {
+            return Err(anyhow::anyhow!(
+                "Insufficient {} balance: have {}, need {}",
+                symbol,
+                total_balance,
+                amount
+            ));
+        }
+
+        // Transfer from main to trade if needed
+        if main_balance > 0.0 && trade_balance < amount {
+            let transfer_amount = main_balance.min(amount - trade_balance);
+            log::info!("KuCoin: Transferring {} {} from main to trade account", transfer_amount, symbol);
+
+            let transfer_result = self
+                .client
+                .transfer_between_accounts(
+                    symbol,
+                    "main",
+                    "trade",
+                    &transfer_amount.to_string(),
+                )
+                .await?;
+
+            log::info!("KuCoin: Transfer result: {}", serde_json::to_string_pretty(&transfer_result)?);
+
+            trade_balance += transfer_amount;
+
+            // Wait for transfer to complete
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        // Transfer from margin to trade if still needed
+        if margin_balance > 0.0 && trade_balance < amount {
+            let transfer_amount = margin_balance.min(amount - trade_balance);
+            log::info!("KuCoin: Transferring {} {} from margin to trade account", transfer_amount, symbol);
+
+            let transfer_result = self
+                .client
+                .transfer_between_accounts(
+                    symbol,
+                    "margin",
+                    "trade",
+                    &transfer_amount.to_string(),
+                )
+                .await?;
+
+            log::info!("KuCoin: Transfer result: {}", serde_json::to_string_pretty(&transfer_result)?);
+
+            trade_balance += transfer_amount;
+
+            // Wait for transfer to complete
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        log::info!("KuCoin: Ready to sell {} {} from trade account", amount, symbol);
+
+        // Place market sell order
+        let order_result = self.client.place_market_order(&symbol_pair, "sell", amount).await?;
+
+        log::info!("KuCoin order placement response: {}", serde_json::to_string_pretty(&order_result)?);
+
+        // Extract order ID from response
+        let order_id = order_result
+            .get("data")
+            .and_then(|d| d.get("orderId"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("No orderId in response"))?
+            .to_string();
+
+        // Wait a moment for order to execute
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Query order to get execution details
+        let order_status = self.client.get_order(&order_id).await?;
+        log::info!("KuCoin order status response: {}", serde_json::to_string_pretty(&order_status)?);
+
+        // Extract execution details from the data object
+        let data = order_status
+            .get("data")
+            .ok_or_else(|| anyhow::anyhow!("No data in order status response"))?;
+
+        // dealSize = executed quantity in base currency (tokens sold)
+        let executed_qty = data
+            .get("dealSize")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| data.get("dealSize").and_then(|v| v.as_f64()))
+            .unwrap_or(0.0);
+
+        // dealFunds = total value in quote currency (USDT received)
+        let usdt_received = data
+            .get("dealFunds")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| data.get("dealFunds").and_then(|v| v.as_f64()))
+            .unwrap_or(0.0);
+
+        Ok((order_id, executed_qty, usdt_received))
+    }
+
+    /// Transfer all assets from main/margin accounts to trade account
+    /// This prepares assets for trading
+    pub async fn transfer_all_to_trading_impl(&self, coin: Option<&str>) -> Result<u32> {
+        println!("KuCoin: Transferring all assets to trading account...");
+
+        // Get all accounts
+        let accounts_resp = self.client.get_account_balance().await?;
+        let accounts = accounts_resp
+            .get("data")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Invalid accounts response"))?;
+
+        let mut transfer_count = 0u32;
+
+        // Group balances by currency and account type
+        let mut balances: std::collections::HashMap<String, std::collections::HashMap<String, f64>> =
+            std::collections::HashMap::new();
+
+        for account in accounts {
+            let account_obj = account.as_object().unwrap();
+            let currency = account_obj.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+            let account_type = account_obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let available = account_obj
+                .get("available")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            if available > 0.0 {
+                balances.entry(currency.to_string())
+                    .or_insert_with(std::collections::HashMap::new)
+                    .insert(account_type.to_string(), available);
+            }
+        }
+
+        // Transfer from main and margin to trade
+        for (currency, accounts) in balances.iter() {
+            // Filter by coin if specified
+            if let Some(target_coin) = coin {
+                if currency != target_coin {
+                    continue;
+                }
+            }
+
+            // Transfer from main to trade
+            if let Some(&amount) = accounts.get("main") {
+                if amount > 0.0 {
+                    println!("  Transferring {} {} from main to trade", amount, currency);
+
+                    match self.client.transfer_between_accounts(
+                        currency,
+                        "main",
+                        "trade",
+                        &amount.to_string()
+                    ).await {
+                        Ok(_) => {
+                            transfer_count += 1;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        }
+                        Err(e) => {
+                            eprintln!("  Failed to transfer {} {} from main: {}", currency, amount, e);
+                        }
+                    }
+                }
+            }
+
+            // Transfer from margin to trade
+            if let Some(&amount) = accounts.get("margin") {
+                if amount > 0.0 {
+                    println!("  Transferring {} {} from margin to trade", amount, currency);
+
+                    match self.client.transfer_between_accounts(
+                        currency,
+                        "margin",
+                        "trade",
+                        &amount.to_string()
+                    ).await {
+                        Ok(_) => {
+                            transfer_count += 1;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        }
+                        Err(e) => {
+                            eprintln!("  Failed to transfer {} {} from margin: {}", currency, amount, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        if transfer_count > 0 {
+            println!("KuCoin: Transferred {} assets to trading account", transfer_count);
+        } else {
+            println!("KuCoin: No assets to transfer to trading account");
+        }
+
+        Ok(transfer_count)
+    }
+
+    /// Transfer all assets from trade/margin accounts to main account (funding)
+    /// This prepares assets for withdrawal
+    pub async fn transfer_all_to_funding_impl(&self, coin: Option<&str>) -> Result<u32> {
+        println!("KuCoin: Transferring all assets to funding account (main)...");
+
+        // Get all accounts
+        let accounts_resp = self.client.get_account_balance().await?;
+        let accounts = accounts_resp
+            .get("data")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Invalid accounts response"))?;
+
+        let mut transfer_count = 0u32;
+
+        // Group balances by currency and account type
+        let mut balances: std::collections::HashMap<String, std::collections::HashMap<String, f64>> =
+            std::collections::HashMap::new();
+
+        for account in accounts {
+            let account_obj = account.as_object().unwrap();
+            let currency = account_obj.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+            let account_type = account_obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let available = account_obj
+                .get("available")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+
+            if available > 0.0 {
+                balances.entry(currency.to_string())
+                    .or_insert_with(std::collections::HashMap::new)
+                    .insert(account_type.to_string(), available);
+            }
+        }
+
+        // Transfer from trade and margin to main
+        for (currency, accounts) in balances.iter() {
+            // Filter by coin if specified
+            if let Some(target_coin) = coin {
+                if currency != target_coin {
+                    continue;
+                }
+            }
+
+            // Transfer from trade to main
+            if let Some(&amount) = accounts.get("trade") {
+                if amount > 0.0 {
+                    println!("  Transferring {} {} from trade to main", amount, currency);
+
+                    match self.client.transfer_between_accounts(
+                        currency,
+                        "trade",
+                        "main",
+                        &amount.to_string()
+                    ).await {
+                        Ok(_) => {
+                            transfer_count += 1;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        }
+                        Err(e) => {
+                            eprintln!("  Failed to transfer {} {} from trade: {}", currency, amount, e);
+                        }
+                    }
+                }
+            }
+
+            // Transfer from margin to main
+            if let Some(&amount) = accounts.get("margin") {
+                if amount > 0.0 {
+                    println!("  Transferring {} {} from margin to main", amount, currency);
+
+                    match self.client.transfer_between_accounts(
+                        currency,
+                        "margin",
+                        "main",
+                        &amount.to_string()
+                    ).await {
+                        Ok(_) => {
+                            transfer_count += 1;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        }
+                        Err(e) => {
+                            eprintln!("  Failed to transfer {} {} from margin: {}", currency, amount, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        if transfer_count > 0 {
+            println!("KuCoin: Transferred {} assets to funding account", transfer_count);
+        } else {
+            println!("KuCoin: No assets to transfer to funding account");
+        }
+
+        Ok(transfer_count)
     }
 }

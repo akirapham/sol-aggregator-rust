@@ -53,15 +53,16 @@ async fn main() -> anyhow::Result<()> {
             Ok(portfolio) => {
                 log::info!("✅ MEXC Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Assets with balance:");
-                for balance in portfolio.balances.iter().take(10) {
+                log::info!("   Trading Account (same as funding): ${:.2}", portfolio.trading.total_usdt_value);
+                log::info!("   Assets:");
+                for balance in portfolio.trading.balances.iter().take(10) {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
                         balance.asset, balance.free, balance.locked, balance.total
                     );
                 }
-                if portfolio.balances.len() > 10 {
-                    log::info!("     ... and {} more assets", portfolio.balances.len() - 10);
+                if portfolio.trading.balances.len() > 10 {
+                    log::info!("     ... and {} more assets", portfolio.trading.balances.len() - 10);
                 }
             }
             Err(e) => {
@@ -90,15 +91,19 @@ async fn main() -> anyhow::Result<()> {
             Ok(portfolio) => {
                 log::info!("✅ Bybit Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Assets with balance:");
-                for balance in portfolio.balances.iter().take(10) {
+                log::info!("   Trading Account (UNIFIED): ${:.2}", portfolio.trading.total_usdt_value);
+                for balance in &portfolio.trading.balances {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
                         balance.asset, balance.free, balance.locked, balance.total
                     );
                 }
-                if portfolio.balances.len() > 10 {
-                    log::info!("     ... and {} more assets", portfolio.balances.len() - 10);
+                log::info!("   Funding Account (FUND): ${:.2}", portfolio.funding.total_usdt_value);
+                for balance in &portfolio.funding.balances {
+                    log::info!(
+                        "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
+                        balance.asset, balance.free, balance.locked, balance.total
+                    );
                 }
             }
             Err(e) => {
@@ -129,15 +134,19 @@ async fn main() -> anyhow::Result<()> {
             Ok(portfolio) => {
                 log::info!("✅ KuCoin Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Assets with balance:");
-                for balance in portfolio.balances.iter().take(10) {
+                log::info!("   Trading Account (trade + margin): ${:.2}", portfolio.trading.total_usdt_value);
+                for balance in &portfolio.trading.balances {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
                         balance.asset, balance.free, balance.locked, balance.total
                     );
                 }
-                if portfolio.balances.len() > 10 {
-                    log::info!("     ... and {} more assets", portfolio.balances.len() - 10);
+                log::info!("   Funding Account (main): ${:.2}", portfolio.funding.total_usdt_value);
+                for balance in &portfolio.funding.balances {
+                    log::info!(
+                        "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
+                        balance.asset, balance.free, balance.locked, balance.total
+                    );
                 }
             }
             Err(e) => {
@@ -168,15 +177,16 @@ async fn main() -> anyhow::Result<()> {
             Ok(portfolio) => {
                 log::info!("✅ Bitget Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Assets with balance:");
-                for balance in portfolio.balances.iter().take(10) {
+                log::info!("   Trading Account (same as funding): ${:.2}", portfolio.trading.total_usdt_value);
+                log::info!("   Assets:");
+                for balance in portfolio.trading.balances.iter().take(10) {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
                         balance.asset, balance.free, balance.locked, balance.total
                     );
                 }
-                if portfolio.balances.len() > 10 {
-                    log::info!("     ... and {} more assets", portfolio.balances.len() - 10);
+                if portfolio.trading.balances.len() > 10 {
+                    log::info!("     ... and {} more assets", portfolio.trading.balances.len() - 10);
                 }
             }
             Err(e) => {

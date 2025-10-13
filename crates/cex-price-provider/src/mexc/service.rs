@@ -226,6 +226,11 @@ impl MexcService {
             }
         }
     }
+
+    /// Get current ticker price directly from REST API (useful when WebSocket is not running)
+    pub async fn get_ticker_price(&self, symbol: &str) -> Result<f64> {
+        self.client.get_ticker_price(symbol).await
+    }
 }
 
 #[async_trait]
@@ -582,6 +587,16 @@ impl PriceProvider for MexcService {
     async fn get_portfolio(&self) -> Result<crate::Portfolio> {
         self.get_portfolio_impl().await
     }
+
+    async fn transfer_all_to_trading(&self, _coin: Option<&str>) -> Result<u32> {
+        // MEXC has no separate trading/funding accounts, so this is a no-op
+        Ok(0)
+    }
+
+    async fn transfer_all_to_funding(&self, _coin: Option<&str>) -> Result<u32> {
+        // MEXC has no separate trading/funding accounts, so this is a no-op
+        Ok(0)
+    }
 }
 
 impl MexcService {
@@ -651,23 +666,40 @@ impl MexcService {
         symbol: &str,
         amount: f64,
     ) -> Result<(String, f64, f64)> {
+        let symbol_pair = format!("{}USDT", symbol);
+
         // Place market sell order
-        let order_result = self.client.place_market_order(symbol, "SELL", amount).await?;
+        let order_result = self.client.place_market_order(&symbol_pair, "SELL", amount).await?;
 
-        // Extract order details
-        let order_id = order_result.get("orderId")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        log::info!("MEXC order placement response: {}", serde_json::to_string_pretty(&order_result)?);
 
-        let executed_qty = order_result.get("executedQty")
+        // Extract order ID
+        let order_id = if let Some(id_str) = order_result.get("orderId").and_then(|v| v.as_str()) {
+            id_str.to_string()
+        } else if let Some(id_num) = order_result.get("orderId").and_then(|v| v.as_i64()) {
+            id_num.to_string()
+        } else {
+            return Err(anyhow::anyhow!("No orderId in response"));
+        };
+
+        // Wait a moment for order to execute
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Query order to get execution details
+        let order_status = self.client.get_order(&symbol_pair, &order_id).await?;
+        log::info!("MEXC order status response: {}", serde_json::to_string_pretty(&order_status)?);
+
+        // Extract execution details
+        let executed_qty = order_status.get("executedQty")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| order_status.get("executedQty").and_then(|v| v.as_f64()))
             .unwrap_or(0.0);
 
-        let cumulative_quote_qty = order_result.get("cummulativeQuoteQty")
+        let cumulative_quote_qty = order_status.get("cummulativeQuoteQty")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<f64>().ok())
+            .or_else(|| order_status.get("cummulativeQuoteQty").and_then(|v| v.as_f64()))
             .unwrap_or(0.0);
 
         Ok((order_id, executed_qty, cumulative_quote_qty))
@@ -753,9 +785,17 @@ impl MexcService {
             }
         }
 
+        // MEXC doesn't have separate trading and funding accounts
+        // Both are the same
+        let account_balances = crate::AccountBalances {
+            balances: balances.clone(),
+            total_usdt_value,
+        };
+
         Ok(crate::Portfolio {
             exchange: "MEXC".to_string(),
-            balances,
+            trading: account_balances.clone(),
+            funding: account_balances,
             total_usdt_value,
             timestamp,
         })

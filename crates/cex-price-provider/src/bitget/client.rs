@@ -285,6 +285,120 @@ impl BitgetClient {
         Ok(json)
     }
 
+    /// Place a market order on Bitget
+    /// Requires authentication
+    pub async fn place_market_order(
+        &self,
+        symbol: &str,
+        side: &str, // "buy" or "sell"
+        size: &str, // Amount in base currency
+    ) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() || self.api_passphrase.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bitget place order endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let endpoint = "/api/v2/spot/trade/place-order";
+
+        // Generate a unique client order ID
+        let client_oid = format!("{}_{}", timestamp, std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos());
+
+        // Build request body
+        let body = serde_json::json!({
+            "symbol": symbol,
+            "side": side,
+            "orderType": "market",
+            "size": size,
+            "clientOid": client_oid,
+        });
+
+        let body_str = serde_json::to_string(&body)?;
+
+        // Generate signature: timestamp + method + endpoint + body
+        let pre_hash = format!("{}{}{}{}", timestamp, "POST", endpoint, body_str);
+        let signature = self.generate_signature(&pre_hash)?;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("ACCESS-KEY", api_key)
+            .header("ACCESS-SIGN", signature)
+            .header("ACCESS-TIMESTAMP", &timestamp)
+            .header("ACCESS-PASSPHRASE", self.api_passphrase.as_ref().unwrap())
+            .header("Content-Type", "application/json")
+            .body(body_str)
+            .send()
+            .await
+            .context("Failed to place order on Bitget")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bitget API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
+    /// Query order details
+    pub async fn get_order(&self, order_id: &str) -> Result<serde_json::Value> {
+        if self.api_key.is_none() || self.api_secret.is_none() || self.api_passphrase.is_none() {
+            return Err(anyhow::anyhow!(
+                "Bitget get order endpoint requires API credentials"
+            ));
+        }
+
+        let api_key = self.api_key.as_ref().unwrap();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+
+        let endpoint = format!("/api/v2/spot/trade/orderInfo?orderId={}", order_id);
+
+        // Generate signature: timestamp + method + endpoint
+        let pre_hash = format!("{}{}{}", timestamp, "GET", endpoint);
+        let signature = self.generate_signature(&pre_hash)?;
+
+        let url = format!("{}{}", self.base_url, endpoint);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("ACCESS-KEY", api_key)
+            .header("ACCESS-SIGN", signature)
+            .header("ACCESS-TIMESTAMP", &timestamp)
+            .header("ACCESS-PASSPHRASE", self.api_passphrase.as_ref().unwrap())
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .context("Failed to query order from Bitget")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Bitget API error ({}): {}", status, body));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        Ok(json)
+    }
+
     /// Generate HMAC SHA256 signature for Bitget API
     fn generate_signature(&self, pre_hash: &str) -> Result<String> {
         use hmac::{Hmac, Mac};

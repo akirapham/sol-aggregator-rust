@@ -33,6 +33,7 @@ hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
+uuid = { workspace = true }
 dotenv = { workspace = true }
 
 [features]
@@ -64,6 +65,10 @@ path = "examples/test_token_safety.rs"
 [[example]]
 name = "test_portfolio"
 path = "examples/test_portfolio.rs"
+
+[[example]]
+name = "test_sell_token"
+path = "examples/test_sell_token.rs"
 
 [build-dependencies]
 prost-build = { workspace = true }

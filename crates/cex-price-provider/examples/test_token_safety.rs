@@ -1,10 +1,10 @@
 use anyhow::Result;
 use cex_price_provider::{
+    bitget::{BitgetClient, BitgetService},
     bybit::{BybitClient, BybitService},
     gate::{GateClient, GateService},
     kucoin::{KucoinClient, KucoinService},
     mexc::MexcService,
-    bitget::{BitgetClient, BitgetService},
     FilterAddressType, PriceProvider,
 };
 use std::env;
@@ -18,13 +18,15 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     println!("\n🔍 CEX Token Safety Verification Test\n");
-    println!("This test verifies that tokens are tradeable AND depositable on the correct network.");
+    println!(
+        "This test verifies that tokens are tradeable AND depositable on the correct network."
+    );
     println!("For Ethereum: Must support ERC20 deposits on Ethereum mainnet");
     println!("For Solana: Must support deposits on Solana network\n");
 
     // Test tokens - use actual tokens that would be traded, not stablecoins
     let link_eth_contract = "0x514910771af9ca656af840dff83e8264ecf986ca"; // LINK on Ethereum
-    let uni_eth_contract = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984";  // UNI on Ethereum
+    let uni_eth_contract = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"; // UNI on Ethereum
 
     println!("═══════════════════════════════════════════════════════════════");
     println!("Testing MEXC");
@@ -80,7 +82,10 @@ async fn test_mexc(link_contract: &str, uni_contract: &str) -> Result<()> {
     println!("\n🔄 Refreshing token status...");
     match service.refresh_token_status().await {
         Ok(safe_symbols) => {
-            println!("✅ Successfully verified {} safe tokens", safe_symbols.len());
+            println!(
+                "✅ Successfully verified {} safe tokens",
+                safe_symbols.len()
+            );
         }
         Err(e) => {
             println!("❌ Failed to refresh token status: {}", e);
@@ -123,7 +128,10 @@ async fn test_bybit(link_contract: &str, uni_contract: &str) -> Result<()> {
     println!("\n🔄 Refreshing token status...");
     match service.refresh_token_status().await {
         Ok(safe_symbols) => {
-            println!("✅ Successfully verified {} safe tokens", safe_symbols.len());
+            println!(
+                "✅ Successfully verified {} safe tokens",
+                safe_symbols.len()
+            );
         }
         Err(e) => {
             println!("❌ Failed to refresh token status: {}", e);
@@ -146,7 +154,10 @@ async fn test_gate(link_contract: &str, uni_contract: &str) -> Result<()> {
     println!("\n🔄 Refreshing token status...");
     match service.refresh_token_status().await {
         Ok(safe_symbols) => {
-            println!("✅ Successfully verified {} safe tokens", safe_symbols.len());
+            println!(
+                "✅ Successfully verified {} safe tokens",
+                safe_symbols.len()
+            );
         }
         Err(e) => {
             println!("❌ Failed to refresh token status: {}", e);
@@ -169,7 +180,10 @@ async fn test_kucoin(link_contract: &str, uni_contract: &str) -> Result<()> {
     println!("\n🔄 Refreshing token status...");
     match service.refresh_token_status().await {
         Ok(safe_symbols) => {
-            println!("✅ Successfully verified {} safe tokens", safe_symbols.len());
+            println!(
+                "✅ Successfully verified {} safe tokens",
+                safe_symbols.len()
+            );
         }
         Err(e) => {
             println!("❌ Failed to refresh token status: {}", e);
@@ -192,7 +206,10 @@ async fn test_bitget(link_contract: &str, uni_contract: &str) -> Result<()> {
     println!("\n🔄 Refreshing token status...");
     match service.refresh_token_status().await {
         Ok(safe_symbols) => {
-            println!("✅ Successfully verified {} safe tokens", safe_symbols.len());
+            println!(
+                "✅ Successfully verified {} safe tokens",
+                safe_symbols.len()
+            );
         }
         Err(e) => {
             println!("❌ Failed to refresh token status: {}", e);
@@ -221,12 +238,32 @@ async fn test_token<T: PriceProvider>(service: &T, symbol: &str, contract: Optio
         if let Some(addr) = &status.contract_address {
             println!("  Contract: {}", addr);
         }
-        println!("  ✓ Trading enabled: {}", if status.is_trading { "✅" } else { "❌" });
-        println!("  ✓ Deposits enabled: {}", if status.is_deposit_enabled { "✅" } else { "❌" });
-        println!("  ✓ Network verified: {}", if status.network_verified { "✅" } else { "❌" });
+        println!(
+            "  ✓ Trading enabled: {}",
+            if status.is_trading { "✅" } else { "❌" }
+        );
+        println!(
+            "  ✓ Deposits enabled: {}",
+            if status.is_deposit_enabled {
+                "✅"
+            } else {
+                "❌"
+            }
+        );
+        println!(
+            "  ✓ Network verified: {}",
+            if status.network_verified {
+                "✅"
+            } else {
+                "❌"
+            }
+        );
 
         // Final verdict
-        println!("\n  � Safe for arbitrage: {}", if is_safe { "✅" } else { "❌" });
+        println!(
+            "\n  � Safe for arbitrage: {}",
+            if is_safe { "✅" } else { "❌" }
+        );
 
         if !is_safe {
             println!("     ⚠️  Reasons:");
@@ -242,6 +279,9 @@ async fn test_token<T: PriceProvider>(service: &T, symbol: &str, contract: Optio
         }
     } else {
         println!("  ❌ No status information available");
-        println!("  🎯 Safe for arbitrage: {}", if is_safe { "✅" } else { "❌" });
+        println!(
+            "  🎯 Safe for arbitrage: {}",
+            if is_safe { "✅" } else { "❌" }
+        );
     }
 }

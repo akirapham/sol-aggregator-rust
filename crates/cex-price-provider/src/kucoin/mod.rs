@@ -14,6 +14,10 @@ pub struct Symbol {
     pub quote_currency: String,
     #[serde(rename = "enableTrading")]
     pub enable_trading: bool,
+    #[serde(rename = "baseIncrement", default)]
+    pub base_increment: Option<String>, // Min quantity increment (e.g., "0.01")
+    #[serde(rename = "quoteIncrement", default)]
+    pub quote_increment: Option<String>, // Min price increment
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

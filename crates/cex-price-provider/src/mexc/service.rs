@@ -22,6 +22,7 @@ pub struct MexcService {
     market_symbol_to_contract: Arc<DashMap<String, String>>,
     contract_to_market_symbol: Arc<DashMap<String, String>>,
     token_status_cache: Arc<DashMap<String, crate::TokenStatus>>, // symbol -> status
+    symbol_precision_cache: Arc<DashMap<String, u32>>, // base_asset -> quantity_precision
 }
 
 impl MexcService {
@@ -32,6 +33,7 @@ impl MexcService {
             market_symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_market_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -46,6 +48,7 @@ impl MexcService {
             market_symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_market_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -279,7 +282,10 @@ impl PriceProvider for MexcService {
             return Ok(());
         }
 
-        info!("MEXC: Subscribing to {} verified safe tokens", safe_market_symbols.len());
+        info!(
+            "MEXC: Subscribing to {} verified safe tokens",
+            safe_market_symbols.len()
+        );
 
         // Split symbols into chunks for multiple WebSocket connections
         const MAX_STREAMS_PER_CONNECTION: usize = 15; // Using 15 instead of 30 for safety margin
@@ -341,6 +347,7 @@ impl PriceProvider for MexcService {
             market_symbol_to_contract: self.market_symbol_to_contract.clone(),
             contract_to_market_symbol: self.contract_to_market_symbol.clone(),
             token_status_cache: self.token_status_cache.clone(),
+            symbol_precision_cache: self.symbol_precision_cache.clone(),
         });
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
@@ -384,7 +391,11 @@ impl PriceProvider for MexcService {
         "MEXC"
     }
 
-    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+    async fn is_token_safe_for_arbitrage(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> bool {
         let status = self.get_token_status(symbol, contract_address).await;
         match status {
             Some(status) => {
@@ -394,7 +405,11 @@ impl PriceProvider for MexcService {
         }
     }
 
-    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+    async fn get_token_status(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> Option<crate::TokenStatus> {
         // Try to get from cache first
         if let Some(status) = self.token_status_cache.get(symbol) {
             return Some(status.clone());
@@ -405,7 +420,10 @@ impl PriceProvider for MexcService {
             // Normalize to lowercase for lookup (contract addresses are case-insensitive)
             let normalized_addr = contract_addr.to_lowercase();
             if let Some(market_symbol) = self.contract_to_market_symbol.get(&normalized_addr) {
-                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+                return self
+                    .token_status_cache
+                    .get(market_symbol.value())
+                    .map(|s| s.clone());
             }
         }
 
@@ -424,7 +442,10 @@ impl PriceProvider for MexcService {
 
         match &coin_info_result {
             Ok(infos) => {
-                info!("MEXC: Successfully fetched coin info for {} coins", infos.len());
+                info!(
+                    "MEXC: Successfully fetched coin info for {} coins",
+                    infos.len()
+                );
             }
             Err(e) => {
                 warn!("MEXC: Failed to fetch coin info (auth required): {}", e);
@@ -459,14 +480,26 @@ impl PriceProvider for MexcService {
 
             // If we have coin info, verify deposit status and network
             if let Ok(ref coin_infos) = coin_info_result {
-                log::debug!("MEXC: Checking token {} (contract: {})", base_asset, symbol_info.contract_address);
+                log::debug!(
+                    "MEXC: Checking token {} (contract: {})",
+                    base_asset,
+                    symbol_info.contract_address
+                );
 
                 if let Some(coin_info) = coin_infos.iter().find(|c| c.coin == base_asset) {
-                    log::debug!("MEXC: Found coin_info for {} with {} networks", base_asset, coin_info.network_list.len());
+                    log::debug!(
+                        "MEXC: Found coin_info for {} with {} networks",
+                        base_asset,
+                        coin_info.network_list.len()
+                    );
 
                     // Check if there's a network that matches our requirements
                     for network in &coin_info.network_list {
-                        let network_name = network.network.as_deref().or(network.net_work.as_deref()).unwrap_or("");
+                        let network_name = network
+                            .network
+                            .as_deref()
+                            .or(network.net_work.as_deref())
+                            .unwrap_or("");
                         log::debug!(
                             "MEXC: {} - checking network '{}', deposit_enable={}, contract={:?}",
                             base_asset,
@@ -480,14 +513,14 @@ impl PriceProvider for MexcService {
                                 // MEXC returns network names like "Ethereum(ERC20)", "ERC20", "ETH", etc.
                                 // Accept any network that contains "Ethereum" or "ERC20" (but not BEP20, TRC20, etc.)
                                 let name_lower = network_name.to_lowercase();
-                                (name_lower.contains("ethereum") || name_lower.contains("erc20")) &&
-                                !name_lower.contains("bep") &&
-                                !name_lower.contains("trc") &&
-                                !name_lower.contains("arbitrum") &&
-                                !name_lower.contains("polygon") &&
-                                !name_lower.contains("optimism") &&
-                                !name_lower.contains("base") &&
-                                !name_lower.contains("linea")
+                                (name_lower.contains("ethereum") || name_lower.contains("erc20"))
+                                    && !name_lower.contains("bep")
+                                    && !name_lower.contains("trc")
+                                    && !name_lower.contains("arbitrum")
+                                    && !name_lower.contains("polygon")
+                                    && !name_lower.contains("optimism")
+                                    && !name_lower.contains("base")
+                                    && !name_lower.contains("linea")
                             }
                             FilterAddressType::Solana => {
                                 // Only accept Solana network
@@ -503,7 +536,10 @@ impl PriceProvider for MexcService {
                                     status.is_deposit_enabled = network.is_deposit_enabled();
                                     status.network_verified = true;
 
-                                    if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                                    if status.is_trading
+                                        && status.is_deposit_enabled
+                                        && status.network_verified
+                                    {
                                         verified_count += 1;
                                         log::debug!(
                                             "MEXC: ✓ Verified {} - trading:{} deposit:{} network:{}",
@@ -550,11 +586,19 @@ impl PriceProvider for MexcService {
             }
 
             // Store in cache
-            self.token_status_cache.insert(market_symbol.clone(), status.clone());
+            self.token_status_cache
+                .insert(market_symbol.clone(), status.clone());
 
             // Also store the contract-to-symbol mapping (using normalized lowercase address)
-            self.contract_to_market_symbol.insert(normalized_contract.clone(), market_symbol.clone());
-            self.market_symbol_to_contract.insert(market_symbol.clone(), normalized_contract.clone());
+            self.contract_to_market_symbol
+                .insert(normalized_contract.clone(), market_symbol.clone());
+            self.market_symbol_to_contract
+                .insert(market_symbol.clone(), normalized_contract.clone());
+
+            // Store quantity precision (default to 8 if not provided)
+            let precision = symbol_info.base_asset_precision.unwrap_or(8);
+            self.symbol_precision_cache
+                .insert(base_asset.clone(), precision);
 
             // Add to safe symbols list if verified
             if status.is_trading && status.is_deposit_enabled && status.network_verified {
@@ -572,7 +616,11 @@ impl PriceProvider for MexcService {
         Ok(safe_symbols)
     }
 
-    async fn get_deposit_address(&self, symbol: &str, address_type: FilterAddressType) -> Result<String> {
+    async fn get_deposit_address(
+        &self,
+        symbol: &str,
+        address_type: FilterAddressType,
+    ) -> Result<String> {
         self.get_deposit_address_impl(symbol, address_type).await
     }
 
@@ -580,7 +628,12 @@ impl PriceProvider for MexcService {
         self.sell_token_for_usdt_impl(symbol, amount).await
     }
 
-    async fn withdraw_usdt(&self, address: &str, amount: f64, address_type: FilterAddressType) -> Result<String> {
+    async fn withdraw_usdt(
+        &self,
+        address: &str,
+        amount: f64,
+        address_type: FilterAddressType,
+    ) -> Result<String> {
         self.withdraw_usdt_impl(address, amount, address_type).await
     }
 
@@ -596,6 +649,47 @@ impl PriceProvider for MexcService {
     async fn transfer_all_to_funding(&self, _coin: Option<&str>) -> Result<u32> {
         // MEXC has no separate trading/funding accounts, so this is a no-op
         Ok(0)
+    }
+
+    async fn get_token_symbol_for_contract_address(
+        &self,
+        contract_address: &str,
+    ) -> Option<String> {
+        // Get the market symbol (e.g., "LINKUSDT") and extract base asset
+        let market_symbol = self
+            .contract_to_market_symbol
+            .get(&contract_address.to_lowercase())
+            .map(|entry| entry.value().clone())?;
+
+        // Remove "USDT" suffix to get base asset symbol
+        if market_symbol.ends_with("USDT") {
+            Some(market_symbol[..market_symbol.len() - 4].to_string())
+        } else {
+            Some(market_symbol)
+        }
+    }
+
+    async fn get_quantity_precision(&self, symbol: &str) -> Result<u32> {
+        // Check cache first
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If not in cache, fetch exchange info to populate cache
+        log::debug!("MEXC: Precision not in cache for {}, refreshing...", symbol);
+        let symbols = self.client.get_token_usdt_pairs().await?;
+
+        for symbol_info in symbols {
+            let base_asset = symbol_info.base_asset.clone();
+            let precision = symbol_info.base_asset_precision.unwrap_or(8);
+            self.symbol_precision_cache.insert(base_asset, precision);
+        }
+
+        // Try again after refresh
+        self.symbol_precision_cache
+            .get(symbol)
+            .map(|p| *p)
+            .ok_or_else(|| anyhow::anyhow!("MEXC: Symbol {} not found after refresh", symbol))
     }
 }
 
@@ -669,9 +763,15 @@ impl MexcService {
         let symbol_pair = format!("{}USDT", symbol);
 
         // Place market sell order
-        let order_result = self.client.place_market_order(&symbol_pair, "SELL", amount).await?;
+        let order_result = self
+            .client
+            .place_market_order(&symbol_pair, "SELL", amount)
+            .await?;
 
-        log::info!("MEXC order placement response: {}", serde_json::to_string_pretty(&order_result)?);
+        log::info!(
+            "MEXC order placement response: {}",
+            serde_json::to_string_pretty(&order_result)?
+        );
 
         // Extract order ID
         let order_id = if let Some(id_str) = order_result.get("orderId").and_then(|v| v.as_str()) {
@@ -687,19 +787,28 @@ impl MexcService {
 
         // Query order to get execution details
         let order_status = self.client.get_order(&symbol_pair, &order_id).await?;
-        log::info!("MEXC order status response: {}", serde_json::to_string_pretty(&order_status)?);
+        log::info!(
+            "MEXC order status response: {}",
+            serde_json::to_string_pretty(&order_status)?
+        );
 
         // Extract execution details
-        let executed_qty = order_status.get("executedQty")
+        let executed_qty = order_status
+            .get("executedQty")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<f64>().ok())
             .or_else(|| order_status.get("executedQty").and_then(|v| v.as_f64()))
             .unwrap_or(0.0);
 
-        let cumulative_quote_qty = order_status.get("cummulativeQuoteQty")
+        let cumulative_quote_qty = order_status
+            .get("cummulativeQuoteQty")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<f64>().ok())
-            .or_else(|| order_status.get("cummulativeQuoteQty").and_then(|v| v.as_f64()))
+            .or_else(|| {
+                order_status
+                    .get("cummulativeQuoteQty")
+                    .and_then(|v| v.as_f64())
+            })
             .unwrap_or(0.0);
 
         Ok((order_id, executed_qty, cumulative_quote_qty))
@@ -718,7 +827,10 @@ impl MexcService {
             FilterAddressType::Solana => "SOL",
         };
 
-        let withdrawal_id = self.client.withdraw("USDT", address, amount, network).await?;
+        let withdrawal_id = self
+            .client
+            .withdraw("USDT", address, amount, network)
+            .await?;
         Ok(withdrawal_id)
     }
 
@@ -737,17 +849,20 @@ impl MexcService {
         // Extract balances from account info
         if let Some(balance_array) = account_info.get("balances").and_then(|v| v.as_array()) {
             for balance_item in balance_array {
-                let asset = balance_item.get("asset")
+                let asset = balance_item
+                    .get("asset")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
-                let free = balance_item.get("free")
+                let free = balance_item
+                    .get("free")
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<f64>().ok())
                     .unwrap_or(0.0);
 
-                let locked = balance_item.get("locked")
+                let locked = balance_item
+                    .get("locked")
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<f64>().ok())
                     .unwrap_or(0.0);

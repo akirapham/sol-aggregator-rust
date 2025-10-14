@@ -1230,9 +1230,7 @@ impl EthSwapListener {
                     data: log.data.to_vec(),
                 },
             ) {
-                Ok(event) => {
-                    event
-                }
+                Ok(event) => event,
                 Err(e) => {
                     warn!("Failed to decode V4 swap event: {}", e);
                     return Ok(()); // Skip if not a swap event
@@ -1246,9 +1244,7 @@ impl EthSwapListener {
         // Get or fetch token information for this pool ID
         let (token0, token1, decimals0, decimals1, pool_address) =
             match Self::get_or_fetch_v4_pool_info(pool_id, v4_cache, config).await {
-                Ok(info) => {
-                    info
-                }
+                Ok(info) => info,
                 Err(e) => {
                     // V4 pool info not cached and couldn't be fetched
                     // This might happen for new pools or if we don't have a way to derive tokens from pool ID

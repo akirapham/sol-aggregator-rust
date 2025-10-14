@@ -45,6 +45,7 @@ pub struct BybitService {
     symbol_to_contract: Arc<DashMap<String, String>>, // Maps symbol -> contract_address
     contract_to_symbol: Arc<DashMap<String, String>>, // Maps contract_address -> symbol
     token_status_cache: Arc<DashMap<String, crate::TokenStatus>>, // symbol -> status
+    symbol_precision_cache: Arc<DashMap<String, u32>>, // Maps base_coin -> precision
 }
 
 impl BybitService {
@@ -56,6 +57,7 @@ impl BybitService {
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -71,6 +73,7 @@ impl BybitService {
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -311,7 +314,10 @@ impl PriceProvider for BybitService {
             return Ok(());
         }
 
-        info!("Bybit: Subscribing to {} verified safe tokens", safe_market_symbols.len());
+        info!(
+            "Bybit: Subscribing to {} verified safe tokens",
+            safe_market_symbols.len()
+        );
 
         // Split symbols into chunks for multiple connections
         const MAX_SYMBOLS_PER_CONNECTION: usize = 50;
@@ -349,8 +355,14 @@ impl PriceProvider for BybitService {
                     )
                     .await
                     {
-                        error!("Bybit: WebSocket connection {} failed: {}", connection_id, e);
-                        info!("Bybit: Reconnecting connection {} in 5 seconds...", connection_id);
+                        error!(
+                            "Bybit: WebSocket connection {} failed: {}",
+                            connection_id, e
+                        );
+                        info!(
+                            "Bybit: Reconnecting connection {} in 5 seconds...",
+                            connection_id
+                        );
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -373,6 +385,7 @@ impl PriceProvider for BybitService {
             symbol_to_contract: self.symbol_to_contract.clone(),
             contract_to_symbol: self.contract_to_symbol.clone(),
             token_status_cache: self.token_status_cache.clone(),
+            symbol_precision_cache: self.symbol_precision_cache.clone(),
         });
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
@@ -416,7 +429,11 @@ impl PriceProvider for BybitService {
         "Bybit"
     }
 
-    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+    async fn is_token_safe_for_arbitrage(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> bool {
         let status = self.get_token_status(symbol, contract_address).await;
         match status {
             Some(status) => {
@@ -426,7 +443,11 @@ impl PriceProvider for BybitService {
         }
     }
 
-    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+    async fn get_token_status(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> Option<crate::TokenStatus> {
         // Try to get from cache first
         if let Some(status) = self.token_status_cache.get(symbol) {
             return Some(status.clone());
@@ -437,7 +458,10 @@ impl PriceProvider for BybitService {
             // Normalize to lowercase for lookup (contract addresses are case-insensitive)
             let normalized_addr = contract_addr.to_lowercase();
             if let Some(market_symbol) = self.contract_to_symbol.get(&normalized_addr) {
-                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+                return self
+                    .token_status_cache
+                    .get(market_symbol.value())
+                    .map(|s| s.clone());
             }
         }
 
@@ -465,6 +489,27 @@ impl PriceProvider for BybitService {
             let symbol = instrument.symbol.clone();
             let base_asset = instrument.base_coin.clone();
 
+            // Extract and cache precision from lot_size_filter
+            if let Some(ref lot_size) = instrument.lot_size_filter {
+                if let Some(ref base_precision_str) = lot_size.base_precision {
+                    // Parse precision - count decimal places in the string
+                    if let Ok(precision_val) = base_precision_str.parse::<f64>() {
+                        let precision = if precision_val >= 1.0 {
+                            0 // No decimals needed
+                        } else {
+                            // Count decimal places: e.g., "0.01" = 2, "0.0001" = 4
+                            base_precision_str
+                                .split('.')
+                                .nth(1)
+                                .map(|s| s.len() as u32)
+                                .unwrap_or(8)
+                        };
+                        self.symbol_precision_cache
+                            .insert(base_asset.clone(), precision);
+                    }
+                }
+            }
+
             // Default status: trading enabled (from instrument info)
             let mut status = crate::TokenStatus {
                 symbol: symbol.clone(),
@@ -478,16 +523,22 @@ impl PriceProvider for BybitService {
 
             // If we have coin info, verify deposit status and network
             if let Ok(ref coin_info_response) = coin_info_result {
-                if let Some(coin_info) = coin_info_response.result.iter().find(|c| c.coin == base_asset) {
+                if let Some(coin_info) = coin_info_response
+                    .result
+                    .iter()
+                    .find(|c| c.coin == base_asset)
+                {
                     // Check if there's a chain that matches our requirements
                     for chain in &coin_info.chains {
                         let chain_name = chain.chain.to_uppercase();
                         let is_correct_chain = match self.client.address_type {
                             FilterAddressType::Ethereum => {
                                 // Only accept ETH/ERC20 on Ethereum mainnet
-                                chain_name == "ETH" ||
-                                chain_name.contains("ETHEREUM") ||
-                                (chain_name.contains("ERC20") && !chain_name.contains("ARB") && !chain_name.contains("POLYGON"))
+                                chain_name == "ETH"
+                                    || chain_name.contains("ETHEREUM")
+                                    || (chain_name.contains("ERC20")
+                                        && !chain_name.contains("ARB")
+                                        && !chain_name.contains("POLYGON"))
                             }
                             FilterAddressType::Solana => {
                                 // Only accept Solana network
@@ -500,7 +551,10 @@ impl PriceProvider for BybitService {
                             status.is_deposit_enabled = chain.is_deposit_enabled();
                             status.network_verified = true;
 
-                            if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                            if status.is_trading
+                                && status.is_deposit_enabled
+                                && status.network_verified
+                            {
                                 verified_count += 1;
                             }
                             break;
@@ -519,14 +573,17 @@ impl PriceProvider for BybitService {
             }
 
             // Store in cache
-            self.token_status_cache.insert(symbol.clone(), status.clone());
+            self.token_status_cache
+                .insert(symbol.clone(), status.clone());
 
             // If we have a verified contract address, populate the bidirectional mappings
             if let Some(ref contract_addr) = status.contract_address {
                 if status.network_verified {
                     let normalized_contract = contract_addr.to_lowercase();
-                    self.contract_to_symbol.insert(normalized_contract.clone(), symbol.clone());
-                    self.symbol_to_contract.insert(symbol.clone(), normalized_contract);
+                    self.contract_to_symbol
+                        .insert(normalized_contract.clone(), symbol.clone());
+                    self.symbol_to_contract
+                        .insert(symbol.clone(), normalized_contract);
                 }
             }
         }
@@ -539,7 +596,8 @@ impl PriceProvider for BybitService {
         );
 
         // Return list of verified safe market symbols
-        let safe_symbols: Vec<String> = self.token_status_cache
+        let safe_symbols: Vec<String> = self
+            .token_status_cache
             .iter()
             .filter_map(|entry| {
                 let status = entry.value();
@@ -551,19 +609,33 @@ impl PriceProvider for BybitService {
             })
             .collect();
 
-        info!("Bybit: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
+        info!(
+            "Bybit: Returning {} safe symbols for WebSocket subscription",
+            safe_symbols.len()
+        );
         Ok(safe_symbols)
     }
 
-    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
-        Err(anyhow::anyhow!("Bybit: get_deposit_address not yet implemented"))
+    async fn get_deposit_address(
+        &self,
+        _symbol: &str,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
+        Err(anyhow::anyhow!(
+            "Bybit: get_deposit_address not yet implemented"
+        ))
     }
 
     async fn sell_token_for_usdt(&self, symbol: &str, amount: f64) -> Result<(String, f64, f64)> {
         self.sell_token_for_usdt_impl(symbol, amount).await
     }
 
-    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
+    async fn withdraw_usdt(
+        &self,
+        _address: &str,
+        _amount: f64,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
         Err(anyhow::anyhow!("Bybit: withdraw_usdt not yet implemented"))
     }
 
@@ -577,6 +649,50 @@ impl PriceProvider for BybitService {
 
     async fn transfer_all_to_funding(&self, coin: Option<&str>) -> Result<u32> {
         self.transfer_all_to_funding_impl(coin).await
+    }
+
+    async fn get_token_symbol_for_contract_address(
+        &self,
+        contract_address: &str,
+    ) -> Option<String> {
+        // Get the market symbol (e.g., "LINKUSDT") and extract base asset
+        let market_symbol = self
+            .contract_to_symbol
+            .get(&contract_address.to_lowercase())
+            .map(|entry| entry.value().clone())?;
+
+        // Remove "USDT" suffix to get base asset symbol
+        if market_symbol.ends_with("USDT") {
+            Some(market_symbol[..market_symbol.len() - 4].to_string())
+        } else {
+            Some(market_symbol)
+        }
+    }
+
+    async fn get_quantity_precision(&self, symbol: &str) -> Result<u32> {
+        // Check cache first
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If not in cache, refresh token status and try again
+        log::info!(
+            "Bybit: Precision not in cache for {}, refreshing...",
+            symbol
+        );
+        self.refresh_token_status().await?;
+
+        // Check cache again after refresh
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If still not found, return default
+        log::warn!(
+            "Bybit: Could not find precision for {}, using default (2)",
+            symbol
+        );
+        Ok(2)
     }
 }
 
@@ -735,7 +851,9 @@ impl BybitService {
                                 } else {
                                     // Try to get price from our cache
                                     let symbol = format!("{}USDT", asset);
-                                    if let Some(price_info) = self.get_price(&symbol.to_lowercase()).await {
+                                    if let Some(price_info) =
+                                        self.get_price(&symbol.to_lowercase()).await
+                                    {
                                         coin_total * price_info.price
                                     } else {
                                         log::debug!("No price found for {} in cache", symbol);
@@ -743,8 +861,14 @@ impl BybitService {
                                     }
                                 };
 
-                                log::info!("Bybit FUNDING: {} - {} (free: {}, locked: {}, USD: ${})",
-                                    asset, coin_total, wallet_balance, locked, usd_value);
+                                log::info!(
+                                    "Bybit FUNDING: {} - {} (free: {}, locked: {}, USD: ${})",
+                                    asset,
+                                    coin_total,
+                                    wallet_balance,
+                                    locked,
+                                    usd_value
+                                );
 
                                 funding_usdt_value += usd_value;
 
@@ -766,8 +890,12 @@ impl BybitService {
 
         let total_usdt_value = trading_usdt_value + funding_usdt_value;
 
-        log::info!("Bybit: Portfolio - Trading: ${:.2}, Funding: ${:.2}, Total: ${:.2}",
-            trading_usdt_value, funding_usdt_value, total_usdt_value);
+        log::info!(
+            "Bybit: Portfolio - Trading: ${:.2}, Funding: ${:.2}, Total: ${:.2}",
+            trading_usdt_value,
+            funding_usdt_value,
+            total_usdt_value
+        );
 
         Ok(crate::Portfolio {
             exchange: "Bybit".to_string(),
@@ -804,7 +932,10 @@ impl BybitService {
                         for account in list {
                             if let Some(coins) = account.get("coin").and_then(|v| v.as_array()) {
                                 for coin_data in coins {
-                                    let coin = coin_data.get("coin").and_then(|v| v.as_str()).unwrap_or("");
+                                    let coin = coin_data
+                                        .get("coin")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
                                     if coin == symbol {
                                         balance = coin_data
                                             .get("walletBalance")
@@ -863,32 +994,65 @@ impl BybitService {
         if total_available < amount {
             return Err(anyhow::anyhow!(
                 "Insufficient balance: need {} {}, but only have {} {} (UNIFIED: {}, FUNDING: {})",
-                amount, symbol, total_available, symbol, unified_balance, funding_balance
+                amount,
+                symbol,
+                total_available,
+                symbol,
+                unified_balance,
+                funding_balance
             ));
         }
 
         // Step 3: Transfer from FUNDING to UNIFIED if needed
         if unified_balance < amount && funding_balance > 0.0 {
             let amount_to_transfer = (amount - unified_balance).min(funding_balance);
-            log::info!("Bybit: Transferring {} {} from FUNDING to UNIFIED...", amount_to_transfer, symbol);
+            log::info!(
+                "Bybit: Transferring {} {} from FUNDING to UNIFIED...",
+                amount_to_transfer,
+                symbol
+            );
 
-            match self.client.transfer_between_accounts(symbol, amount_to_transfer, "FUND", "UNIFIED").await {
+            match self
+                .client
+                .transfer_between_accounts(symbol, amount_to_transfer, "FUND", "UNIFIED")
+                .await
+            {
                 Ok(transfer_result) => {
-                    log::info!("Bybit transfer response: {}", serde_json::to_string_pretty(&transfer_result)?);
+                    log::info!(
+                        "Bybit transfer response: {}",
+                        serde_json::to_string_pretty(&transfer_result)?
+                    );
 
-                    let ret_code = transfer_result.get("retCode").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    let ret_code = transfer_result
+                        .get("retCode")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(-1);
                     if ret_code != 0 {
-                        let ret_msg = transfer_result.get("retMsg").and_then(|v| v.as_str()).unwrap_or("Unknown error");
-                        return Err(anyhow::anyhow!("Bybit transfer failed: {} (code: {})", ret_msg, ret_code));
+                        let ret_msg = transfer_result
+                            .get("retMsg")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error");
+                        return Err(anyhow::anyhow!(
+                            "Bybit transfer failed: {} (code: {})",
+                            ret_msg,
+                            ret_code
+                        ));
                     }
 
-                    log::info!("✅ Successfully transferred {} {} from FUNDING to UNIFIED", amount_to_transfer, symbol);
+                    log::info!(
+                        "✅ Successfully transferred {} {} from FUNDING to UNIFIED",
+                        amount_to_transfer,
+                        symbol
+                    );
 
                     // Wait a moment for the transfer to complete
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to transfer from FUNDING to UNIFIED: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "Failed to transfer from FUNDING to UNIFIED: {}",
+                        e
+                    ));
                 }
             }
         }
@@ -897,10 +1061,21 @@ impl BybitService {
         // Round quantity to avoid "too many decimals" error
         // Most tokens allow 2-4 decimals, use 4 as a safe default
         let rounded_amount = (amount * 10000.0).round() / 10000.0; // Round to 4 decimals
-        log::info!("Bybit: Placing sell order for {} on UNIFIED account... (rounded from {} to {})", symbol, amount, rounded_amount);
-        let order_result = self.client.place_market_order(&symbol_pair, "Sell", rounded_amount).await?;
+        log::info!(
+            "Bybit: Placing sell order for {} on UNIFIED account... (rounded from {} to {})",
+            symbol,
+            amount,
+            rounded_amount
+        );
+        let order_result = self
+            .client
+            .place_market_order(&symbol_pair, "Sell", rounded_amount)
+            .await?;
 
-        log::info!("Bybit order placement response: {}", serde_json::to_string_pretty(&order_result)?);
+        log::info!(
+            "Bybit order placement response: {}",
+            serde_json::to_string_pretty(&order_result)?
+        );
 
         // Check if the order was successful
         let ret_code = order_result
@@ -913,7 +1088,11 @@ impl BybitService {
                 .get("retMsg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown error");
-            return Err(anyhow::anyhow!("Bybit order failed: {} (code: {})", ret_msg, ret_code));
+            return Err(anyhow::anyhow!(
+                "Bybit order failed: {} (code: {})",
+                ret_msg,
+                ret_code
+            ));
         }
 
         // Extract order ID from response
@@ -929,7 +1108,10 @@ impl BybitService {
 
         // Query order to get execution details
         let order_status = self.client.get_order(&order_id, &symbol_pair).await?;
-        log::info!("Bybit order status response: {}", serde_json::to_string_pretty(&order_status)?);
+        log::info!(
+            "Bybit order status response: {}",
+            serde_json::to_string_pretty(&order_status)?
+        );
 
         // Extract execution details from the result object
         let result = order_status
@@ -985,10 +1167,7 @@ impl BybitService {
 
         // Iterate through balance list directly (FUNDING account structure)
         for coin_data in balance_list {
-            let coin_name = coin_data
-                .get("coin")
-                .and_then(|c| c.as_str())
-                .unwrap_or("");
+            let coin_name = coin_data.get("coin").and_then(|c| c.as_str()).unwrap_or("");
 
             // Filter by coin if specified
             if let Some(target_coin) = coin {
@@ -1013,14 +1192,16 @@ impl BybitService {
             let available = wallet_balance - locked;
 
             if available > 0.0 {
-                println!("  Transferring {} {} from FUNDING to UNIFIED", available, coin_name);
+                println!(
+                    "  Transferring {} {} from FUNDING to UNIFIED",
+                    available, coin_name
+                );
 
-                match self.client.transfer_between_accounts(
-                    coin_name,
-                    available,
-                    "FUND",
-                    "UNIFIED"
-                ).await {
+                match self
+                    .client
+                    .transfer_between_accounts(coin_name, available, "FUND", "UNIFIED")
+                    .await
+                {
                     Ok(_) => {
                         transfer_count += 1;
                         // Small delay between transfers
@@ -1034,7 +1215,10 @@ impl BybitService {
         }
 
         if transfer_count > 0 {
-            println!("Bybit: Transferred {} assets to trading account", transfer_count);
+            println!(
+                "Bybit: Transferred {} assets to trading account",
+                transfer_count
+            );
             // Wait for transfers to settle
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         } else {
@@ -1091,14 +1275,16 @@ impl BybitService {
                 .unwrap_or(0.0);
 
             if available > 0.0 {
-                println!("  Transferring {} {} from UNIFIED to FUNDING", available, coin_name);
+                println!(
+                    "  Transferring {} {} from UNIFIED to FUNDING",
+                    available, coin_name
+                );
 
-                match self.client.transfer_between_accounts(
-                    coin_name,
-                    available,
-                    "UNIFIED",
-                    "FUND"
-                ).await {
+                match self
+                    .client
+                    .transfer_between_accounts(coin_name, available, "UNIFIED", "FUND")
+                    .await
+                {
                     Ok(_) => {
                         transfer_count += 1;
                         // Small delay between transfers
@@ -1112,7 +1298,10 @@ impl BybitService {
         }
 
         if transfer_count > 0 {
-            println!("Bybit: Transferred {} assets to funding account", transfer_count);
+            println!(
+                "Bybit: Transferred {} assets to funding account",
+                transfer_count
+            );
             // Wait for transfers to settle
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         } else {

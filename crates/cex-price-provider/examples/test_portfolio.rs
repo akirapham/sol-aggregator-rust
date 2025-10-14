@@ -15,12 +15,8 @@
 ///
 /// Note: Other exchanges (Gate.io) need with_credentials()
 /// constructors implemented before they can be tested here.
-
 use cex_price_provider::{
-    bitget::BitgetService,
-    bybit::BybitService,
-    kucoin::KucoinService,
-    mexc::MexcService,
+    bitget::BitgetService, bybit::BybitService, kucoin::KucoinService, mexc::MexcService,
     FilterAddressType, PriceProvider,
 };
 use dotenv::dotenv;
@@ -38,10 +34,7 @@ async fn main() -> anyhow::Result<()> {
     log::info!("=== CEX Portfolio Test ===\n");
 
     // Test MEXC Portfolio
-    if let (Ok(api_key), Ok(api_secret)) = (
-        env::var("MEXC_API_KEY"),
-        env::var("MEXC_API_SECRET"),
-    ) {
+    if let (Ok(api_key), Ok(api_secret)) = (env::var("MEXC_API_KEY"), env::var("MEXC_API_SECRET")) {
         log::info!("Testing MEXC Portfolio...");
         let mexc_service = Arc::new(MexcService::with_credentials(
             FilterAddressType::Ethereum,
@@ -51,18 +44,28 @@ async fn main() -> anyhow::Result<()> {
 
         match mexc_service.get_portfolio().await {
             Ok(portfolio) => {
+                log::info!("portfolio {:?}", portfolio);
                 log::info!("✅ MEXC Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Trading Account (same as funding): ${:.2}", portfolio.trading.total_usdt_value);
+                log::info!(
+                    "   Trading Account (same as funding): ${:.2}",
+                    portfolio.trading.total_usdt_value
+                );
                 log::info!("   Assets:");
                 for balance in portfolio.trading.balances.iter().take(10) {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
-                        balance.asset, balance.free, balance.locked, balance.total
+                        balance.asset,
+                        balance.free,
+                        balance.locked,
+                        balance.total
                     );
                 }
                 if portfolio.trading.balances.len() > 10 {
-                    log::info!("     ... and {} more assets", portfolio.trading.balances.len() - 10);
+                    log::info!(
+                        "     ... and {} more assets",
+                        portfolio.trading.balances.len() - 10
+                    );
                 }
             }
             Err(e) => {
@@ -76,10 +79,8 @@ async fn main() -> anyhow::Result<()> {
     log::info!("");
 
     // Test Bybit Portfolio
-    if let (Ok(api_key), Ok(api_secret)) = (
-        env::var("BYBIT_API_KEY"),
-        env::var("BYBIT_API_SECRET"),
-    ) {
+    if let (Ok(api_key), Ok(api_secret)) = (env::var("BYBIT_API_KEY"), env::var("BYBIT_API_SECRET"))
+    {
         log::info!("Testing Bybit Portfolio...");
         let bybit_service = Arc::new(BybitService::with_credentials(
             FilterAddressType::Ethereum,
@@ -91,18 +92,30 @@ async fn main() -> anyhow::Result<()> {
             Ok(portfolio) => {
                 log::info!("✅ Bybit Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Trading Account (UNIFIED): ${:.2}", portfolio.trading.total_usdt_value);
+                log::info!(
+                    "   Trading Account (UNIFIED): ${:.2}",
+                    portfolio.trading.total_usdt_value
+                );
                 for balance in &portfolio.trading.balances {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
-                        balance.asset, balance.free, balance.locked, balance.total
+                        balance.asset,
+                        balance.free,
+                        balance.locked,
+                        balance.total
                     );
                 }
-                log::info!("   Funding Account (FUND): ${:.2}", portfolio.funding.total_usdt_value);
+                log::info!(
+                    "   Funding Account (FUND): ${:.2}",
+                    portfolio.funding.total_usdt_value
+                );
                 for balance in &portfolio.funding.balances {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
-                        balance.asset, balance.free, balance.locked, balance.total
+                        balance.asset,
+                        balance.free,
+                        balance.locked,
+                        balance.total
                     );
                 }
             }
@@ -134,18 +147,30 @@ async fn main() -> anyhow::Result<()> {
             Ok(portfolio) => {
                 log::info!("✅ KuCoin Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Trading Account (trade + margin): ${:.2}", portfolio.trading.total_usdt_value);
+                log::info!(
+                    "   Trading Account (trade + margin): ${:.2}",
+                    portfolio.trading.total_usdt_value
+                );
                 for balance in &portfolio.trading.balances {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
-                        balance.asset, balance.free, balance.locked, balance.total
+                        balance.asset,
+                        balance.free,
+                        balance.locked,
+                        balance.total
                     );
                 }
-                log::info!("   Funding Account (main): ${:.2}", portfolio.funding.total_usdt_value);
+                log::info!(
+                    "   Funding Account (main): ${:.2}",
+                    portfolio.funding.total_usdt_value
+                );
                 for balance in &portfolio.funding.balances {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
-                        balance.asset, balance.free, balance.locked, balance.total
+                        balance.asset,
+                        balance.free,
+                        balance.locked,
+                        balance.total
                     );
                 }
             }
@@ -177,16 +202,25 @@ async fn main() -> anyhow::Result<()> {
             Ok(portfolio) => {
                 log::info!("✅ Bitget Portfolio:");
                 log::info!("   Total USDT Value: ${:.2}", portfolio.total_usdt_value);
-                log::info!("   Trading Account (same as funding): ${:.2}", portfolio.trading.total_usdt_value);
+                log::info!(
+                    "   Trading Account (same as funding): ${:.2}",
+                    portfolio.trading.total_usdt_value
+                );
                 log::info!("   Assets:");
                 for balance in portfolio.trading.balances.iter().take(10) {
                     log::info!(
                         "     {} - Free: {:.6}, Locked: {:.6}, Total: {:.6}",
-                        balance.asset, balance.free, balance.locked, balance.total
+                        balance.asset,
+                        balance.free,
+                        balance.locked,
+                        balance.total
                     );
                 }
                 if portfolio.trading.balances.len() > 10 {
-                    log::info!("     ... and {} more assets", portfolio.trading.balances.len() - 10);
+                    log::info!(
+                        "     ... and {} more assets",
+                        portfolio.trading.balances.len() - 10
+                    );
                 }
             }
             Err(e) => {

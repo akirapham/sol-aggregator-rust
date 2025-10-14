@@ -13,6 +13,20 @@ pub struct InstrumentInfo {
     #[serde(rename = "quoteCoin")]
     pub quote_coin: String,
     pub status: String,
+    #[serde(rename = "lotSizeFilter", default)]
+    pub lot_size_filter: Option<LotSizeFilter>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LotSizeFilter {
+    #[serde(rename = "basePrecision")]
+    pub base_precision: Option<String>,
+    #[serde(rename = "quotePrecision")]
+    pub quote_precision: Option<String>,
+    #[serde(rename = "minOrderQty")]
+    pub min_order_qty: Option<String>,
+    #[serde(rename = "maxOrderQty")]
+    pub max_order_qty: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

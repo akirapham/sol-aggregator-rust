@@ -55,6 +55,7 @@ pub struct BitgetService {
     symbol_to_contract: Arc<DashMap<String, String>>,
     contract_to_symbol: Arc<DashMap<String, String>>,
     token_status_cache: Arc<DashMap<String, crate::TokenStatus>>,
+    symbol_precision_cache: Arc<DashMap<String, u32>>,
 }
 
 impl BitgetService {
@@ -65,6 +66,7 @@ impl BitgetService {
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -75,11 +77,17 @@ impl BitgetService {
         api_passphrase: String,
     ) -> Self {
         Self {
-            client: BitgetClient::with_credentials(address_type, api_key, api_secret, api_passphrase),
+            client: BitgetClient::with_credentials(
+                address_type,
+                api_key,
+                api_secret,
+                api_passphrase,
+            ),
             price_cache: Arc::new(DashMap::new()),
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -123,7 +131,8 @@ impl BitgetService {
             }
 
             // Get USDT value - use usdtValue if available from API
-            let usdt_value = if let Some(usd_val) = asset.get("usdtValue").and_then(|v| v.as_str()) {
+            let usdt_value = if let Some(usd_val) = asset.get("usdtValue").and_then(|v| v.as_str())
+            {
                 usd_val.parse::<f64>().ok().unwrap_or_else(|| {
                     // Fallback to price lookup
                     if coin == "USDT" {
@@ -375,7 +384,10 @@ impl PriceProvider for BitgetService {
         info!("Bitget: Performing initial token status verification...");
         let safe_market_symbols = match self.refresh_token_status().await {
             Ok(symbols) => {
-                info!("Bitget: Successfully verified {} safe tokens", symbols.len());
+                info!(
+                    "Bitget: Successfully verified {} safe tokens",
+                    symbols.len()
+                );
                 symbols
             }
             Err(e) => {
@@ -389,7 +401,10 @@ impl PriceProvider for BitgetService {
             return Ok(());
         }
 
-        info!("Bitget: Subscribing to {} verified safe tokens", safe_market_symbols.len());
+        info!(
+            "Bitget: Subscribing to {} verified safe tokens",
+            safe_market_symbols.len()
+        );
 
         // Split symbols into chunks for multiple connections
         const MAX_SYMBOLS_PER_CONNECTION: usize = 50;
@@ -447,6 +462,7 @@ impl PriceProvider for BitgetService {
             symbol_to_contract: self.symbol_to_contract.clone(),
             contract_to_symbol: self.contract_to_symbol.clone(),
             token_status_cache: self.token_status_cache.clone(),
+            symbol_precision_cache: self.symbol_precision_cache.clone(),
         });
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
@@ -490,7 +506,11 @@ impl PriceProvider for BitgetService {
         "Bitget"
     }
 
-    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+    async fn is_token_safe_for_arbitrage(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> bool {
         let status = self.get_token_status(symbol, contract_address).await;
         match status {
             Some(status) => {
@@ -500,7 +520,11 @@ impl PriceProvider for BitgetService {
         }
     }
 
-    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+    async fn get_token_status(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> Option<crate::TokenStatus> {
         // Try to get from cache first using market symbol (e.g., "LINKUSDT")
         if let Some(status) = self.token_status_cache.get(symbol) {
             return Some(status.clone());
@@ -510,7 +534,10 @@ impl PriceProvider for BitgetService {
         if let Some(contract_addr) = contract_address {
             let normalized_addr = contract_addr.to_lowercase();
             if let Some(market_symbol) = self.contract_to_symbol.get(&normalized_addr) {
-                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+                return self
+                    .token_status_cache
+                    .get(market_symbol.value())
+                    .map(|s| s.clone());
             }
         }
 
@@ -535,6 +562,14 @@ impl PriceProvider for BitgetService {
             let market_symbol = pair.symbol.clone(); // e.g., "LINKUSDT"
             let base_asset = pair.base_coin.clone();
 
+            // Extract and cache precision from quantity_precision
+            if let Some(ref quantity_precision) = pair.quantity_precision {
+                if let Ok(precision) = quantity_precision.parse::<u32>() {
+                    self.symbol_precision_cache
+                        .insert(base_asset.clone(), precision);
+                }
+            }
+
             // Default status: trading enabled (from exchange info), but need to verify deposits
             let mut status = crate::TokenStatus {
                 symbol: market_symbol.clone(),
@@ -549,7 +584,11 @@ impl PriceProvider for BitgetService {
             // Get coin information to check chain details
             match self.client.get_coin_info(&base_asset).await {
                 Ok(coin_infos) => {
-                    log::debug!("Bitget: Checking token {} with {} chains", base_asset, coin_infos.len());
+                    log::debug!(
+                        "Bitget: Checking token {} with {} chains",
+                        base_asset,
+                        coin_infos.len()
+                    );
 
                     // Check if there's a network that matches our requirements
                     for coin_info in &coin_infos {
@@ -560,11 +599,11 @@ impl PriceProvider for BitgetService {
                                 FilterAddressType::Ethereum => {
                                     // Bitget uses chain names like "ETH", "ERC20", or "Ethereum"
                                     let chain_lower = chain_name.to_lowercase();
-                                    (chain_lower.contains("eth") || chain_lower.contains("erc20")) &&
-                                    !chain_lower.contains("bsc") &&
-                                    !chain_lower.contains("arb") &&
-                                    !chain_lower.contains("polygon") &&
-                                    !chain_lower.contains("optimism")
+                                    (chain_lower.contains("eth") || chain_lower.contains("erc20"))
+                                        && !chain_lower.contains("bsc")
+                                        && !chain_lower.contains("arb")
+                                        && !chain_lower.contains("polygon")
+                                        && !chain_lower.contains("optimism")
                                 }
                                 FilterAddressType::Solana => {
                                     let chain_lower = chain_name.to_lowercase();
@@ -580,7 +619,10 @@ impl PriceProvider for BitgetService {
                                         status.is_deposit_enabled = true;
                                         status.network_verified = true;
 
-                                        if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                                        if status.is_trading
+                                            && status.is_deposit_enabled
+                                            && status.network_verified
+                                        {
                                             verified_count += 1;
                                             log::debug!(
                                                 "Bitget: ✓ Verified {} - trading:{} deposit:{} network:{}",
@@ -592,8 +634,12 @@ impl PriceProvider for BitgetService {
                                         }
 
                                         // Store contract mapping
-                                        self.contract_to_symbol.insert(normalized_contract.clone(), market_symbol.clone());
-                                        self.symbol_to_contract.insert(market_symbol.clone(), normalized_contract);
+                                        self.contract_to_symbol.insert(
+                                            normalized_contract.clone(),
+                                            market_symbol.clone(),
+                                        );
+                                        self.symbol_to_contract
+                                            .insert(market_symbol.clone(), normalized_contract);
                                         break;
                                     }
                                 }
@@ -629,7 +675,8 @@ impl PriceProvider for BitgetService {
         );
 
         // Return list of verified safe market symbols
-        let safe_symbols: Vec<String> = self.token_status_cache
+        let safe_symbols: Vec<String> = self
+            .token_status_cache
             .iter()
             .filter_map(|entry| {
                 let status = entry.value();
@@ -641,19 +688,33 @@ impl PriceProvider for BitgetService {
             })
             .collect();
 
-        info!("Bitget: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
+        info!(
+            "Bitget: Returning {} safe symbols for WebSocket subscription",
+            safe_symbols.len()
+        );
         Ok(safe_symbols)
     }
 
-    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
-        Err(anyhow::anyhow!("Bitget: get_deposit_address not yet implemented"))
+    async fn get_deposit_address(
+        &self,
+        _symbol: &str,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
+        Err(anyhow::anyhow!(
+            "Bitget: get_deposit_address not yet implemented"
+        ))
     }
 
     async fn sell_token_for_usdt(&self, symbol: &str, amount: f64) -> Result<(String, f64, f64)> {
         self.sell_token_for_usdt_impl(symbol, amount).await
     }
 
-    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
+    async fn withdraw_usdt(
+        &self,
+        _address: &str,
+        _amount: f64,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
         Err(anyhow::anyhow!("Bitget: withdraw_usdt not yet implemented"))
     }
 
@@ -673,6 +734,50 @@ impl PriceProvider for BitgetService {
         // All funds are already available for withdrawal
         println!("Bitget: No transfer needed - spot account doesn't separate trading/funding");
         Ok(0)
+    }
+
+    async fn get_token_symbol_for_contract_address(
+        &self,
+        contract_address: &str,
+    ) -> Option<String> {
+        // Get the market symbol (e.g., "LINKUSDT") and extract base asset
+        let market_symbol = self
+            .contract_to_symbol
+            .get(&contract_address.to_lowercase())
+            .map(|entry| entry.value().clone())?;
+
+        // Remove "USDT" suffix to get base asset symbol
+        if market_symbol.ends_with("USDT") {
+            Some(market_symbol[..market_symbol.len() - 4].to_string())
+        } else {
+            Some(market_symbol)
+        }
+    }
+
+    async fn get_quantity_precision(&self, symbol: &str) -> Result<u32> {
+        // Check cache first
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If not in cache, refresh token status and try again
+        log::info!(
+            "Bitget: Precision not in cache for {}, refreshing...",
+            symbol
+        );
+        self.refresh_token_status().await?;
+
+        // Check cache again after refresh
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If still not found, return default
+        log::warn!(
+            "Bitget: Could not find precision for {}, using default (4)",
+            symbol
+        );
+        Ok(4)
     }
 }
 
@@ -727,7 +832,12 @@ impl BitgetService {
         // Bitget uses no separator for spot symbols (e.g., LINKUSDT)
         let symbol_pair = format!("{}USDT", symbol);
 
-        log::info!("Bitget: Selling {} {} for USDT (symbol: {})", amount, symbol, symbol_pair);
+        log::info!(
+            "Bitget: Selling {} {} for USDT (symbol: {})",
+            amount,
+            symbol,
+            symbol_pair
+        );
 
         // Check account balance
         let account_data = self.client.get_account_assets().await?;
@@ -750,7 +860,11 @@ impl BitgetService {
             }
         }
 
-        log::info!("Bitget: Available {} balance: {}", symbol, available_balance);
+        log::info!(
+            "Bitget: Available {} balance: {}",
+            symbol,
+            available_balance
+        );
 
         if available_balance < amount {
             return Err(anyhow::anyhow!(
@@ -764,8 +878,12 @@ impl BitgetService {
         // Round quantity to 4 decimal places (Bitget precision requirement)
         let rounded_amount = (amount * 10000.0).floor() / 10000.0;
 
-        log::info!("Bitget: Placing market sell order for {} {} (rounded from {})",
-            rounded_amount, symbol, amount);
+        log::info!(
+            "Bitget: Placing market sell order for {} {} (rounded from {})",
+            rounded_amount,
+            symbol,
+            amount
+        );
 
         // Place market sell order
         let order_response = self
@@ -773,7 +891,10 @@ impl BitgetService {
             .place_market_order(&symbol_pair, "sell", &rounded_amount.to_string())
             .await?;
 
-        log::info!("Bitget: Order response: {}", serde_json::to_string_pretty(&order_response)?);
+        log::info!(
+            "Bitget: Order response: {}",
+            serde_json::to_string_pretty(&order_response)?
+        );
 
         let order_id = order_response
             .get("data")
@@ -791,7 +912,10 @@ impl BitgetService {
         log::info!("Bitget: Querying order status for order ID: {}", order_id);
         let order_status = self.client.get_order(&order_id).await?;
 
-        log::info!("Bitget: Order status: {}", serde_json::to_string_pretty(&order_status)?);
+        log::info!(
+            "Bitget: Order status: {}",
+            serde_json::to_string_pretty(&order_status)?
+        );
 
         // Extract executed quantity and USDT received
         let order_data = order_status

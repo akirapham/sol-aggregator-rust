@@ -11,6 +11,10 @@ pub struct CurrencyPair {
     pub base: String,
     pub quote: String,
     pub trade_status: String,
+    #[serde(rename = "amount_precision", default)]
+    pub amount_precision: Option<i32>, // Precision for base currency quantity
+    #[serde(rename = "precision", default)]
+    pub precision: Option<i32>, // Precision for quote currency price
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -20,6 +20,10 @@ pub struct SymbolInfo {
     #[serde(rename = "quoteCoin")]
     pub quote_coin: String,
     pub status: String,
+    #[serde(rename = "quantityPrecision", default)]
+    pub quantity_precision: Option<String>, // Precision for base coin quantity
+    #[serde(rename = "pricePrecision", default)]
+    pub price_precision: Option<String>, // Precision for quote coin price
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -309,10 +313,14 @@ impl BitgetClient {
         let endpoint = "/api/v2/spot/trade/place-order";
 
         // Generate a unique client order ID
-        let client_oid = format!("{}_{}", timestamp, std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos());
+        let client_oid = format!(
+            "{}_{}",
+            timestamp,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        );
 
         // Build request body
         let body = serde_json::json!({

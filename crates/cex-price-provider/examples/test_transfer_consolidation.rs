@@ -5,12 +5,8 @@
 /// 2. Transfer all assets to funding accounts (for withdrawal)
 ///
 /// For exchanges without separate accounts (like MEXC), these are no-ops.
-
 use cex_price_provider::{
-    bybit::BybitService,
-    kucoin::KucoinService,
-    mexc::MexcService,
-    PriceProvider,
+    bybit::BybitService, kucoin::KucoinService, mexc::MexcService, PriceProvider,
 };
 
 #[tokio::main]
@@ -103,8 +99,10 @@ async fn main() -> anyhow::Result<()> {
             println!("  Balances:");
             for balance in portfolio.balances {
                 if balance.total > 0.0 {
-                    println!("    {} {}: free={}, locked={}",
-                        balance.asset, balance.total, balance.free, balance.locked);
+                    println!(
+                        "    {} {}: free={}, locked={}",
+                        balance.asset, balance.total, balance.free, balance.locked
+                    );
                 }
             }
             println!();
@@ -119,8 +117,10 @@ async fn main() -> anyhow::Result<()> {
             println!("  Balances:");
             for balance in portfolio.balances {
                 if balance.total > 0.0 {
-                    println!("    {} {}: free={}, locked={}",
-                        balance.asset, balance.total, balance.free, balance.locked);
+                    println!(
+                        "    {} {}: free={}, locked={}",
+                        balance.asset, balance.total, balance.free, balance.locked
+                    );
                 }
             }
             println!();

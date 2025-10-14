@@ -15,11 +15,7 @@
 ///
 /// Note: This is a demonstration. Actual trading functions will return errors
 /// until fully implemented. The example shows the intended workflow.
-
-use cex_price_provider::{
-    mexc::MexcService,
-    FilterAddressType, PriceProvider,
-};
+use cex_price_provider::{mexc::MexcService, FilterAddressType, PriceProvider};
 use dotenv::dotenv;
 use std::env;
 use std::sync::Arc;
@@ -60,23 +56,41 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // Step 1: Check if token is safe for arbitrage
-    log::info!("\n📋 Step 1: Checking if {} is safe for arbitrage...", example_token_symbol);
+    log::info!(
+        "\n📋 Step 1: Checking if {} is safe for arbitrage...",
+        example_token_symbol
+    );
     let is_safe = mexc_service
         .is_token_safe_for_arbitrage(example_token_symbol, Some(example_token_contract))
         .await;
 
     if is_safe {
-        log::info!("   ✅ {} is SAFE for arbitrage (deposits enabled, network verified)", example_token_symbol);
+        log::info!(
+            "   ✅ {} is SAFE for arbitrage (deposits enabled, network verified)",
+            example_token_symbol
+        );
     } else {
-        log::warn!("   ⚠️  {} may not be safe for arbitrage (check token status)", example_token_symbol);
+        log::warn!(
+            "   ⚠️  {} may not be safe for arbitrage (check token status)",
+            example_token_symbol
+        );
     }
 
     // Step 2: Get deposit address
-    log::info!("\n📋 Step 2: Getting deposit address for {}...", example_token_symbol);
-    match mexc_service.get_deposit_address(example_token_symbol, FilterAddressType::Ethereum).await {
+    log::info!(
+        "\n📋 Step 2: Getting deposit address for {}...",
+        example_token_symbol
+    );
+    match mexc_service
+        .get_deposit_address(example_token_symbol, FilterAddressType::Ethereum)
+        .await
+    {
         Ok(address) => {
             log::info!("   ✅ Deposit address: {}", address);
-            log::info!("   📝 You can send {} tokens to this address to fund your MEXC account", example_token_symbol);
+            log::info!(
+                "   📝 You can send {} tokens to this address to fund your MEXC account",
+                example_token_symbol
+            );
         }
         Err(e) => {
             log::warn!("   ⚠️  Failed to get deposit address: {}", e);
@@ -85,14 +99,25 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Step 3: Estimate sell output using orderbook
-    log::info!("\n📋 Step 3: Estimating sell output for {} {}...", example_amount, example_token_symbol);
-    match mexc_service.estimate_sell_output(example_token_contract, example_amount).await {
+    log::info!(
+        "\n📋 Step 3: Estimating sell output for {} {}...",
+        example_amount,
+        example_token_symbol
+    );
+    match mexc_service
+        .estimate_sell_output(example_token_contract, example_amount)
+        .await
+    {
         Ok(usdt_output) => {
             log::info!("   ✅ Estimated output: ${:.2} USDT", usdt_output);
             log::info!("   📝 This is based on current orderbook depth");
 
             let estimated_price = usdt_output / example_amount;
-            log::info!("   💰 Estimated price per {}: ${:.2}", example_token_symbol, estimated_price);
+            log::info!(
+                "   💰 Estimated price per {}: ${:.2}",
+                example_token_symbol,
+                estimated_price
+            );
         }
         Err(e) => {
             log::warn!("   ⚠️  Failed to estimate sell output: {}", e);
@@ -100,12 +125,23 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Step 4: Execute sell order (DRY RUN)
-    log::info!("\n📋 Step 4: [DRY RUN] Selling {} {} for USDT...", example_amount, example_token_symbol);
-    match mexc_service.sell_token_for_usdt(example_token_symbol, example_amount).await {
+    log::info!(
+        "\n📋 Step 4: [DRY RUN] Selling {} {} for USDT...",
+        example_amount,
+        example_token_symbol
+    );
+    match mexc_service
+        .sell_token_for_usdt(example_token_symbol, example_amount)
+        .await
+    {
         Ok((order_id, executed_qty, usdt_received)) => {
             log::info!("   ✅ Order executed successfully!");
             log::info!("      Order ID: {}", order_id);
-            log::info!("      Executed quantity: {} {}", executed_qty, example_token_symbol);
+            log::info!(
+                "      Executed quantity: {} {}",
+                executed_qty,
+                example_token_symbol
+            );
             log::info!("      USDT received: ${:.2}", usdt_received);
         }
         Err(e) => {
@@ -117,7 +153,10 @@ async fn main() -> anyhow::Result<()> {
     // Step 5: Withdraw USDT (DRY RUN)
     log::info!("\n📋 Step 5: [DRY RUN] Withdrawing USDT to external wallet...");
     log::info!("   Target address: {}", example_withdraw_address);
-    match mexc_service.withdraw_usdt(example_withdraw_address, 100.0, FilterAddressType::Ethereum).await {
+    match mexc_service
+        .withdraw_usdt(example_withdraw_address, 100.0, FilterAddressType::Ethereum)
+        .await
+    {
         Ok(withdrawal_id) => {
             log::info!("   ✅ Withdrawal initiated successfully!");
             log::info!("      Withdrawal ID: {}", withdrawal_id);
@@ -125,7 +164,10 @@ async fn main() -> anyhow::Result<()> {
             log::info!("      Network: Ethereum (ERC20)");
         }
         Err(e) => {
-            log::warn!("   ⚠️  Withdrawal operation not yet fully implemented: {}", e);
+            log::warn!(
+                "   ⚠️  Withdrawal operation not yet fully implemented: {}",
+                e
+            );
             log::info!("   📝 In production, this would submit a withdrawal request to MEXC");
         }
     }
@@ -134,16 +176,32 @@ async fn main() -> anyhow::Result<()> {
     log::info!("\n📋 Step 6: Checking final portfolio balance...");
     match mexc_service.get_portfolio().await {
         Ok(portfolio) => {
-            log::info!("   ✅ Portfolio total value: ${:.2} USDT", portfolio.total_usdt_value);
+            log::info!(
+                "   ✅ Portfolio total value: ${:.2} USDT",
+                portfolio.total_usdt_value
+            );
 
             if let Some(usdt_balance) = portfolio.balances.iter().find(|b| b.asset == "USDT") {
-                log::info!("   💰 USDT balance: {:.2} (free: {:.2}, locked: {:.2})",
-                    usdt_balance.total, usdt_balance.free, usdt_balance.locked);
+                log::info!(
+                    "   💰 USDT balance: {:.2} (free: {:.2}, locked: {:.2})",
+                    usdt_balance.total,
+                    usdt_balance.free,
+                    usdt_balance.locked
+                );
             }
 
-            if let Some(token_balance) = portfolio.balances.iter().find(|b| b.asset == example_token_symbol) {
-                log::info!("   💰 {} balance: {:.6} (free: {:.6}, locked: {:.6})",
-                    example_token_symbol, token_balance.total, token_balance.free, token_balance.locked);
+            if let Some(token_balance) = portfolio
+                .balances
+                .iter()
+                .find(|b| b.asset == example_token_symbol)
+            {
+                log::info!(
+                    "   💰 {} balance: {:.6} (free: {:.6}, locked: {:.6})",
+                    example_token_symbol,
+                    token_balance.total,
+                    token_balance.free,
+                    token_balance.locked
+                );
             }
         }
         Err(e) => {

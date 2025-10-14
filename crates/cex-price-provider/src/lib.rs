@@ -16,13 +16,13 @@ pub enum FilterAddressType {
 /// Represents the trading and deposit status of a token on an exchange
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenStatus {
-    pub symbol: String,                // Trading pair symbol (e.g., "BTCUSDT")
-    pub base_asset: String,             // Base currency (e.g., "BTC")
+    pub symbol: String,                   // Trading pair symbol (e.g., "BTCUSDT")
+    pub base_asset: String,               // Base currency (e.g., "BTC")
     pub contract_address: Option<String>, // Token contract address
-    pub is_trading: bool,               // Whether trading is enabled
-    pub is_deposit_enabled: bool,       // Whether deposits are enabled on the correct network
-    pub network_verified: bool,         // Whether network matches filter (ERC20 for Ethereum, Solana chain for Solana)
-    pub last_updated: u64,              // Unix timestamp of last update
+    pub is_trading: bool,                 // Whether trading is enabled
+    pub is_deposit_enabled: bool,         // Whether deposits are enabled on the correct network
+    pub network_verified: bool, // Whether network matches filter (ERC20 for Ethereum, Solana chain for Solana)
+    pub last_updated: u64,      // Unix timestamp of last update
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,27 +34,27 @@ pub struct TokenPrice {
 /// Represents a balance entry in the portfolio
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Balance {
-    pub asset: String,           // Asset symbol (e.g., "BTC", "USDT", "LINK")
-    pub free: f64,               // Available balance
-    pub locked: f64,             // Locked balance (in orders, etc.)
-    pub total: f64,              // Total balance (free + locked)
+    pub asset: String, // Asset symbol (e.g., "BTC", "USDT", "LINK")
+    pub free: f64,     // Available balance
+    pub locked: f64,   // Locked balance (in orders, etc.)
+    pub total: f64,    // Total balance (free + locked)
 }
 
 /// Account balances grouped by type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountBalances {
-    pub balances: Vec<Balance>,  // All non-zero balances in this account
-    pub total_usdt_value: f64,   // Total value in USDT for this account
+    pub balances: Vec<Balance>, // All non-zero balances in this account
+    pub total_usdt_value: f64,  // Total value in USDT for this account
 }
 
 /// Portfolio summary across all assets
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Portfolio {
-    pub exchange: String,           // Exchange name
-    pub trading: AccountBalances,   // Trading account balances (UNIFIED for Bybit, trade for KuCoin, spot for MEXC)
-    pub funding: AccountBalances,   // Funding account balances (FUND for Bybit, main for KuCoin, same as trading for MEXC)
-    pub total_usdt_value: f64,      // Total portfolio value in USDT (trading + funding)
-    pub timestamp: u64,             // Unix timestamp when portfolio was fetched
+    pub exchange: String,         // Exchange name
+    pub trading: AccountBalances, // Trading account balances (UNIFIED for Bybit, trade for KuCoin, spot for MEXC)
+    pub funding: AccountBalances, // Funding account balances (FUND for Bybit, main for KuCoin, same as trading for MEXC)
+    pub total_usdt_value: f64,    // Total portfolio value in USDT (trading + funding)
+    pub timestamp: u64,           // Unix timestamp when portfolio was fetched
 }
 
 #[async_trait]
@@ -70,10 +70,18 @@ pub trait PriceProvider {
     /// - Trading must be enabled
     /// - Deposits must be enabled on the correct network (ERC20 for Ethereum, Solana chain for Solana)
     /// Returns true only if ALL conditions are met
-    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool;
+    async fn is_token_safe_for_arbitrage(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> bool;
 
     /// Get the status of a token (trading, deposit, network verification)
-    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<TokenStatus>;
+    async fn get_token_status(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> Option<TokenStatus>;
 
     /// Refresh the token status cache and return list of safe trading pair symbols
     /// (should be called periodically, e.g., every 12 hours)
@@ -84,7 +92,11 @@ pub trait PriceProvider {
     /// - `symbol`: Base asset symbol (e.g., "LINK")
     /// - `address_type`: Either Ethereum (ERC20) or Solana (SPL)
     /// Returns: Deposit address for the specified token and network
-    async fn get_deposit_address(&self, symbol: &str, address_type: FilterAddressType) -> Result<String>;
+    async fn get_deposit_address(
+        &self,
+        symbol: &str,
+        address_type: FilterAddressType,
+    ) -> Result<String>;
 
     /// Sell tokens for USDT on the exchange
     /// - `symbol`: Trading pair symbol (e.g., "LINKUSDT", "LINK_USDT", etc.)
@@ -97,7 +109,12 @@ pub trait PriceProvider {
     /// - `amount`: Amount of USDT to withdraw
     /// - `address_type`: Either Ethereum (ERC20) or Solana (SPL)
     /// Returns: withdrawal_id
-    async fn withdraw_usdt(&self, address: &str, amount: f64, address_type: FilterAddressType) -> Result<String>;
+    async fn withdraw_usdt(
+        &self,
+        address: &str,
+        amount: f64,
+        address_type: FilterAddressType,
+    ) -> Result<String>;
 
     /// Get account portfolio/balances on the exchange
     /// Returns: Portfolio with all non-zero balances and total USDT value
@@ -116,4 +133,13 @@ pub trait PriceProvider {
     /// - `coin`: Optional specific coin to transfer, None = all coins
     /// Returns: Number of transfers executed
     async fn transfer_all_to_funding(&self, coin: Option<&str>) -> Result<u32>;
+
+    async fn get_token_symbol_for_contract_address(&self, contract_address: &str)
+        -> Option<String>;
+
+    /// Get the quantity precision (decimal places) for a trading pair
+    /// This is needed to round quantities correctly before placing orders
+    /// - `symbol`: Base asset symbol (e.g., "LINK")
+    /// Returns: Number of decimal places allowed for quantity (e.g., 2, 4, 6)
+    async fn get_quantity_precision(&self, symbol: &str) -> Result<u32>;
 }

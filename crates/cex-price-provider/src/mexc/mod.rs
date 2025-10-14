@@ -16,6 +16,10 @@ pub struct SymbolInfo {
     pub permissions: Vec<String>,
     #[serde(rename = "isSpotTradingAllowed", default)]
     pub is_spot_trading_allowed: bool,
+    #[serde(rename = "baseAssetPrecision", default)]
+    pub base_asset_precision: Option<u32>, // Precision for base asset (quantity)
+    #[serde(rename = "quoteAssetPrecision", default)]
+    pub quote_asset_precision: Option<u32>, // Precision for quote asset (price)
 }
 
 impl SymbolInfo {

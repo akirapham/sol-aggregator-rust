@@ -82,6 +82,7 @@ pub struct KucoinService {
     symbol_to_contract: Arc<DashMap<String, String>>,
     contract_to_symbol: Arc<DashMap<String, String>>,
     token_status_cache: Arc<DashMap<String, crate::TokenStatus>>,
+    symbol_precision_cache: Arc<DashMap<String, u32>>,
 }
 
 impl KucoinService {
@@ -92,6 +93,7 @@ impl KucoinService {
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -107,6 +109,7 @@ impl KucoinService {
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -497,7 +500,10 @@ impl PriceProvider for KucoinService {
         info!("KuCoin: Performing initial token status verification...");
         let safe_market_symbols = match self.refresh_token_status().await {
             Ok(symbols) => {
-                info!("KuCoin: Successfully verified {} safe tokens", symbols.len());
+                info!(
+                    "KuCoin: Successfully verified {} safe tokens",
+                    symbols.len()
+                );
                 symbols
             }
             Err(e) => {
@@ -511,7 +517,10 @@ impl PriceProvider for KucoinService {
             return Ok(());
         }
 
-        info!("KuCoin: Subscribing to {} verified safe tokens", safe_market_symbols.len());
+        info!(
+            "KuCoin: Subscribing to {} verified safe tokens",
+            safe_market_symbols.len()
+        );
 
         // Get WebSocket connection info
         let bullet = self.get_bullet().await?;
@@ -576,6 +585,7 @@ impl PriceProvider for KucoinService {
             symbol_to_contract: self.symbol_to_contract.clone(),
             contract_to_symbol: self.contract_to_symbol.clone(),
             token_status_cache: self.token_status_cache.clone(),
+            symbol_precision_cache: self.symbol_precision_cache.clone(),
         });
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
@@ -619,7 +629,11 @@ impl PriceProvider for KucoinService {
         "KuCoin"
     }
 
-    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+    async fn is_token_safe_for_arbitrage(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> bool {
         let status = self.get_token_status(symbol, contract_address).await;
         match status {
             Some(status) => {
@@ -629,7 +643,11 @@ impl PriceProvider for KucoinService {
         }
     }
 
-    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+    async fn get_token_status(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> Option<crate::TokenStatus> {
         // Try to get from cache first using market symbol (e.g., "LINK-USDT")
         if let Some(status) = self.token_status_cache.get(symbol) {
             return Some(status.clone());
@@ -639,7 +657,10 @@ impl PriceProvider for KucoinService {
         if let Some(contract_addr) = contract_address {
             let normalized_addr = contract_addr.to_lowercase();
             if let Some(market_symbol) = self.contract_to_symbol.get(&normalized_addr) {
-                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+                return self
+                    .token_status_cache
+                    .get(market_symbol.value())
+                    .map(|s| s.clone());
             }
         }
 
@@ -664,6 +685,24 @@ impl PriceProvider for KucoinService {
             let market_symbol = pair.symbol.clone(); // e.g., "LINK-USDT"
             let base_asset = pair.base_currency.clone();
 
+            // Extract and cache precision from base_increment
+            if let Some(ref base_increment) = pair.base_increment {
+                if let Ok(increment_val) = base_increment.parse::<f64>() {
+                    let precision = if increment_val >= 1.0 {
+                        0 // No decimals needed
+                    } else {
+                        // Count decimal places: e.g., "0.01" = 2, "0.0001" = 4
+                        base_increment
+                            .split('.')
+                            .nth(1)
+                            .map(|s| s.len() as u32)
+                            .unwrap_or(8)
+                    };
+                    self.symbol_precision_cache
+                        .insert(base_asset.clone(), precision);
+                }
+            }
+
             // Default status: trading enabled (from exchange info), but need to verify deposits
             let mut status = crate::TokenStatus {
                 symbol: market_symbol.clone(),
@@ -678,7 +717,11 @@ impl PriceProvider for KucoinService {
             // Get currency detail to check chain information
             match self.client.get_currency_detail(&base_asset).await {
                 Ok(currency_detail) => {
-                    log::debug!("KuCoin: Checking token {} with {} chains", base_asset, currency_detail.chains.len());
+                    log::debug!(
+                        "KuCoin: Checking token {} with {} chains",
+                        base_asset,
+                        currency_detail.chains.len()
+                    );
 
                     // Check if there's a network that matches our requirements
                     for chain_detail in &currency_detail.chains {
@@ -688,11 +731,11 @@ impl PriceProvider for KucoinService {
                             FilterAddressType::Ethereum => {
                                 // KuCoin uses chain names like "ETH", "ERC20", or "Ethereum"
                                 let chain_lower = chain_name.to_lowercase();
-                                (chain_lower.contains("eth") || chain_lower.contains("erc20")) &&
-                                !chain_lower.contains("bsc") &&
-                                !chain_lower.contains("arb") &&
-                                !chain_lower.contains("polygon") &&
-                                !chain_lower.contains("optimism")
+                                (chain_lower.contains("eth") || chain_lower.contains("erc20"))
+                                    && !chain_lower.contains("bsc")
+                                    && !chain_lower.contains("arb")
+                                    && !chain_lower.contains("polygon")
+                                    && !chain_lower.contains("optimism")
                             }
                             FilterAddressType::Solana => {
                                 let chain_lower = chain_name.to_lowercase();
@@ -708,7 +751,10 @@ impl PriceProvider for KucoinService {
                                 status.is_deposit_enabled = true;
                                 status.network_verified = true;
 
-                                if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                                if status.is_trading
+                                    && status.is_deposit_enabled
+                                    && status.network_verified
+                                {
                                     verified_count += 1;
                                     log::debug!(
                                         "KuCoin: ✓ Verified {} - trading:{} deposit:{} network:{}",
@@ -720,15 +766,21 @@ impl PriceProvider for KucoinService {
                                 }
 
                                 // Store contract mapping
-                                self.contract_to_symbol.insert(normalized_contract.clone(), market_symbol.clone());
-                                self.symbol_to_contract.insert(market_symbol.clone(), normalized_contract);
+                                self.contract_to_symbol
+                                    .insert(normalized_contract.clone(), market_symbol.clone());
+                                self.symbol_to_contract
+                                    .insert(market_symbol.clone(), normalized_contract);
                                 break;
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    log::debug!("KuCoin: Failed to get currency detail for {}: {}", base_asset, e);
+                    log::debug!(
+                        "KuCoin: Failed to get currency detail for {}: {}",
+                        base_asset,
+                        e
+                    );
                 }
             }
 
@@ -752,7 +804,8 @@ impl PriceProvider for KucoinService {
         );
 
         // Return list of verified safe market symbols
-        let safe_symbols: Vec<String> = self.token_status_cache
+        let safe_symbols: Vec<String> = self
+            .token_status_cache
             .iter()
             .filter_map(|entry| {
                 let status = entry.value();
@@ -764,19 +817,33 @@ impl PriceProvider for KucoinService {
             })
             .collect();
 
-        info!("KuCoin: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
+        info!(
+            "KuCoin: Returning {} safe symbols for WebSocket subscription",
+            safe_symbols.len()
+        );
         Ok(safe_symbols)
     }
 
-    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
-        Err(anyhow::anyhow!("KuCoin: get_deposit_address not yet implemented"))
+    async fn get_deposit_address(
+        &self,
+        _symbol: &str,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
+        Err(anyhow::anyhow!(
+            "KuCoin: get_deposit_address not yet implemented"
+        ))
     }
 
     async fn sell_token_for_usdt(&self, symbol: &str, amount: f64) -> Result<(String, f64, f64)> {
         self.sell_token_for_usdt_impl(symbol, amount).await
     }
 
-    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
+    async fn withdraw_usdt(
+        &self,
+        _address: &str,
+        _amount: f64,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
         Err(anyhow::anyhow!("KuCoin: withdraw_usdt not yet implemented"))
     }
 
@@ -790,6 +857,50 @@ impl PriceProvider for KucoinService {
 
     async fn transfer_all_to_funding(&self, coin: Option<&str>) -> Result<u32> {
         self.transfer_all_to_funding_impl(coin).await
+    }
+
+    async fn get_token_symbol_for_contract_address(
+        &self,
+        contract_address: &str,
+    ) -> Option<String> {
+        // Get the market symbol (e.g., "LINK-USDT") and extract base asset
+        let market_symbol = self
+            .contract_to_symbol
+            .get(&contract_address.to_lowercase())
+            .map(|entry| entry.value().clone())?;
+
+        // KuCoin uses dash separator, split on "-USDT"
+        if let Some(base) = market_symbol.strip_suffix("-USDT") {
+            Some(base.to_string())
+        } else {
+            Some(market_symbol)
+        }
+    }
+
+    async fn get_quantity_precision(&self, symbol: &str) -> Result<u32> {
+        // Check cache first
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If not in cache, refresh token status and try again
+        log::info!(
+            "KuCoin: Precision not in cache for {}, refreshing...",
+            symbol
+        );
+        self.refresh_token_status().await?;
+
+        // Check cache again after refresh
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If still not found, return default
+        log::warn!(
+            "KuCoin: Could not find precision for {}, using default (8)",
+            symbol
+        );
+        Ok(8)
     }
 }
 
@@ -857,10 +968,7 @@ impl KucoinService {
                     .unwrap_or("")
                     .to_string();
 
-                let account_type = account
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let account_type = account.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
                 let available: f64 = account
                     .get("available")
@@ -891,8 +999,15 @@ impl KucoinService {
                         }
                     };
 
-                    log::info!("KuCoin {}: {} - {} (free: {}, locked: {}, USD: ${})",
-                        account_type, asset, total, available, holds, usdt_value);
+                    log::info!(
+                        "KuCoin {}: {} - {} (free: {}, locked: {}, USD: ${})",
+                        account_type,
+                        asset,
+                        total,
+                        available,
+                        holds,
+                        usdt_value
+                    );
 
                     let balance = crate::Balance {
                         asset,
@@ -921,8 +1036,12 @@ impl KucoinService {
 
         let total_usdt_value = trading_usdt_value + funding_usdt_value;
 
-        log::info!("KuCoin: Portfolio - Trading: ${:.2}, Funding: ${:.2}, Total: ${:.2}",
-            trading_usdt_value, funding_usdt_value, total_usdt_value);
+        log::info!(
+            "KuCoin: Portfolio - Trading: ${:.2}, Funding: ${:.2}, Total: ${:.2}",
+            trading_usdt_value,
+            funding_usdt_value,
+            total_usdt_value
+        );
 
         Ok(crate::Portfolio {
             exchange: "KuCoin".to_string(),
@@ -950,7 +1069,10 @@ impl KucoinService {
         // KuCoin uses dash-separated symbols (e.g., LINK-USDT)
         let symbol_pair = format!("{}-USDT", symbol);
 
-        log::info!("KuCoin: Checking balances across all account types for {}", symbol);
+        log::info!(
+            "KuCoin: Checking balances across all account types for {}",
+            symbol
+        );
 
         // Get all account balances
         let account_data = self.client.get_account_balance().await?;
@@ -971,10 +1093,7 @@ impl KucoinService {
                     continue;
                 }
 
-                let account_type = account
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let account_type = account.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
                 let available: f64 = account
                     .get("available")
@@ -989,13 +1108,24 @@ impl KucoinService {
                     _ => {}
                 }
 
-                log::info!("KuCoin: Found {} balance in {} account: {}", symbol, account_type, available);
+                log::info!(
+                    "KuCoin: Found {} balance in {} account: {}",
+                    symbol,
+                    account_type,
+                    available
+                );
             }
         }
 
         let total_balance = trade_balance + main_balance + margin_balance;
-        log::info!("KuCoin: Total {} balance: {} (trade: {}, main: {}, margin: {})",
-            symbol, total_balance, trade_balance, main_balance, margin_balance);
+        log::info!(
+            "KuCoin: Total {} balance: {} (trade: {}, main: {}, margin: {})",
+            symbol,
+            total_balance,
+            trade_balance,
+            main_balance,
+            margin_balance
+        );
 
         if total_balance < amount {
             return Err(anyhow::anyhow!(
@@ -1009,19 +1139,21 @@ impl KucoinService {
         // Transfer from main to trade if needed
         if main_balance > 0.0 && trade_balance < amount {
             let transfer_amount = main_balance.min(amount - trade_balance);
-            log::info!("KuCoin: Transferring {} {} from main to trade account", transfer_amount, symbol);
+            log::info!(
+                "KuCoin: Transferring {} {} from main to trade account",
+                transfer_amount,
+                symbol
+            );
 
             let transfer_result = self
                 .client
-                .transfer_between_accounts(
-                    symbol,
-                    "main",
-                    "trade",
-                    &transfer_amount.to_string(),
-                )
+                .transfer_between_accounts(symbol, "main", "trade", &transfer_amount.to_string())
                 .await?;
 
-            log::info!("KuCoin: Transfer result: {}", serde_json::to_string_pretty(&transfer_result)?);
+            log::info!(
+                "KuCoin: Transfer result: {}",
+                serde_json::to_string_pretty(&transfer_result)?
+            );
 
             trade_balance += transfer_amount;
 
@@ -1032,19 +1164,21 @@ impl KucoinService {
         // Transfer from margin to trade if still needed
         if margin_balance > 0.0 && trade_balance < amount {
             let transfer_amount = margin_balance.min(amount - trade_balance);
-            log::info!("KuCoin: Transferring {} {} from margin to trade account", transfer_amount, symbol);
+            log::info!(
+                "KuCoin: Transferring {} {} from margin to trade account",
+                transfer_amount,
+                symbol
+            );
 
             let transfer_result = self
                 .client
-                .transfer_between_accounts(
-                    symbol,
-                    "margin",
-                    "trade",
-                    &transfer_amount.to_string(),
-                )
+                .transfer_between_accounts(symbol, "margin", "trade", &transfer_amount.to_string())
                 .await?;
 
-            log::info!("KuCoin: Transfer result: {}", serde_json::to_string_pretty(&transfer_result)?);
+            log::info!(
+                "KuCoin: Transfer result: {}",
+                serde_json::to_string_pretty(&transfer_result)?
+            );
 
             trade_balance += transfer_amount;
 
@@ -1052,12 +1186,22 @@ impl KucoinService {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
 
-        log::info!("KuCoin: Ready to sell {} {} from trade account", amount, symbol);
+        log::info!(
+            "KuCoin: Ready to sell {} {} from trade account",
+            amount,
+            symbol
+        );
 
         // Place market sell order
-        let order_result = self.client.place_market_order(&symbol_pair, "sell", amount).await?;
+        let order_result = self
+            .client
+            .place_market_order(&symbol_pair, "sell", amount)
+            .await?;
 
-        log::info!("KuCoin order placement response: {}", serde_json::to_string_pretty(&order_result)?);
+        log::info!(
+            "KuCoin order placement response: {}",
+            serde_json::to_string_pretty(&order_result)?
+        );
 
         // Extract order ID from response
         let order_id = order_result
@@ -1072,7 +1216,10 @@ impl KucoinService {
 
         // Query order to get execution details
         let order_status = self.client.get_order(&order_id).await?;
-        log::info!("KuCoin order status response: {}", serde_json::to_string_pretty(&order_status)?);
+        log::info!(
+            "KuCoin order status response: {}",
+            serde_json::to_string_pretty(&order_status)?
+        );
 
         // Extract execution details from the data object
         let data = order_status
@@ -1113,13 +1260,21 @@ impl KucoinService {
         let mut transfer_count = 0u32;
 
         // Group balances by currency and account type
-        let mut balances: std::collections::HashMap<String, std::collections::HashMap<String, f64>> =
-            std::collections::HashMap::new();
+        let mut balances: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, f64>,
+        > = std::collections::HashMap::new();
 
         for account in accounts {
             let account_obj = account.as_object().unwrap();
-            let currency = account_obj.get("currency").and_then(|c| c.as_str()).unwrap_or("");
-            let account_type = account_obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let currency = account_obj
+                .get("currency")
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            let account_type = account_obj
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
             let available = account_obj
                 .get("available")
                 .and_then(|v| v.as_str())
@@ -1127,7 +1282,8 @@ impl KucoinService {
                 .unwrap_or(0.0);
 
             if available > 0.0 {
-                balances.entry(currency.to_string())
+                balances
+                    .entry(currency.to_string())
                     .or_insert_with(std::collections::HashMap::new)
                     .insert(account_type.to_string(), available);
             }
@@ -1147,18 +1303,20 @@ impl KucoinService {
                 if amount > 0.0 {
                     println!("  Transferring {} {} from main to trade", amount, currency);
 
-                    match self.client.transfer_between_accounts(
-                        currency,
-                        "main",
-                        "trade",
-                        &amount.to_string()
-                    ).await {
+                    match self
+                        .client
+                        .transfer_between_accounts(currency, "main", "trade", &amount.to_string())
+                        .await
+                    {
                         Ok(_) => {
                             transfer_count += 1;
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                         }
                         Err(e) => {
-                            eprintln!("  Failed to transfer {} {} from main: {}", currency, amount, e);
+                            eprintln!(
+                                "  Failed to transfer {} {} from main: {}",
+                                currency, amount, e
+                            );
                         }
                     }
                 }
@@ -1167,20 +1325,25 @@ impl KucoinService {
             // Transfer from margin to trade
             if let Some(&amount) = accounts.get("margin") {
                 if amount > 0.0 {
-                    println!("  Transferring {} {} from margin to trade", amount, currency);
+                    println!(
+                        "  Transferring {} {} from margin to trade",
+                        amount, currency
+                    );
 
-                    match self.client.transfer_between_accounts(
-                        currency,
-                        "margin",
-                        "trade",
-                        &amount.to_string()
-                    ).await {
+                    match self
+                        .client
+                        .transfer_between_accounts(currency, "margin", "trade", &amount.to_string())
+                        .await
+                    {
                         Ok(_) => {
                             transfer_count += 1;
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                         }
                         Err(e) => {
-                            eprintln!("  Failed to transfer {} {} from margin: {}", currency, amount, e);
+                            eprintln!(
+                                "  Failed to transfer {} {} from margin: {}",
+                                currency, amount, e
+                            );
                         }
                     }
                 }
@@ -1188,7 +1351,10 @@ impl KucoinService {
         }
 
         if transfer_count > 0 {
-            println!("KuCoin: Transferred {} assets to trading account", transfer_count);
+            println!(
+                "KuCoin: Transferred {} assets to trading account",
+                transfer_count
+            );
         } else {
             println!("KuCoin: No assets to transfer to trading account");
         }
@@ -1211,13 +1377,21 @@ impl KucoinService {
         let mut transfer_count = 0u32;
 
         // Group balances by currency and account type
-        let mut balances: std::collections::HashMap<String, std::collections::HashMap<String, f64>> =
-            std::collections::HashMap::new();
+        let mut balances: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, f64>,
+        > = std::collections::HashMap::new();
 
         for account in accounts {
             let account_obj = account.as_object().unwrap();
-            let currency = account_obj.get("currency").and_then(|c| c.as_str()).unwrap_or("");
-            let account_type = account_obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let currency = account_obj
+                .get("currency")
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            let account_type = account_obj
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
             let available = account_obj
                 .get("available")
                 .and_then(|v| v.as_str())
@@ -1225,7 +1399,8 @@ impl KucoinService {
                 .unwrap_or(0.0);
 
             if available > 0.0 {
-                balances.entry(currency.to_string())
+                balances
+                    .entry(currency.to_string())
                     .or_insert_with(std::collections::HashMap::new)
                     .insert(account_type.to_string(), available);
             }
@@ -1245,18 +1420,20 @@ impl KucoinService {
                 if amount > 0.0 {
                     println!("  Transferring {} {} from trade to main", amount, currency);
 
-                    match self.client.transfer_between_accounts(
-                        currency,
-                        "trade",
-                        "main",
-                        &amount.to_string()
-                    ).await {
+                    match self
+                        .client
+                        .transfer_between_accounts(currency, "trade", "main", &amount.to_string())
+                        .await
+                    {
                         Ok(_) => {
                             transfer_count += 1;
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                         }
                         Err(e) => {
-                            eprintln!("  Failed to transfer {} {} from trade: {}", currency, amount, e);
+                            eprintln!(
+                                "  Failed to transfer {} {} from trade: {}",
+                                currency, amount, e
+                            );
                         }
                     }
                 }
@@ -1267,18 +1444,20 @@ impl KucoinService {
                 if amount > 0.0 {
                     println!("  Transferring {} {} from margin to main", amount, currency);
 
-                    match self.client.transfer_between_accounts(
-                        currency,
-                        "margin",
-                        "main",
-                        &amount.to_string()
-                    ).await {
+                    match self
+                        .client
+                        .transfer_between_accounts(currency, "margin", "main", &amount.to_string())
+                        .await
+                    {
                         Ok(_) => {
                             transfer_count += 1;
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                         }
                         Err(e) => {
-                            eprintln!("  Failed to transfer {} {} from margin: {}", currency, amount, e);
+                            eprintln!(
+                                "  Failed to transfer {} {} from margin: {}",
+                                currency, amount, e
+                            );
                         }
                     }
                 }
@@ -1286,7 +1465,10 @@ impl KucoinService {
         }
 
         if transfer_count > 0 {
-            println!("KuCoin: Transferred {} assets to funding account", transfer_count);
+            println!(
+                "KuCoin: Transferred {} assets to funding account",
+                transfer_count
+            );
         } else {
             println!("KuCoin: No assets to transfer to funding account");
         }

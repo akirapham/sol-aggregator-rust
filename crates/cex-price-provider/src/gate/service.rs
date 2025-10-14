@@ -38,6 +38,7 @@ pub struct GateService {
     symbol_to_contract: Arc<DashMap<String, String>>,
     contract_to_symbol: Arc<DashMap<String, String>>,
     token_status_cache: Arc<DashMap<String, crate::TokenStatus>>,
+    symbol_precision_cache: Arc<DashMap<String, u32>>,
 }
 
 impl GateService {
@@ -48,6 +49,7 @@ impl GateService {
             symbol_to_contract: Arc::new(DashMap::new()),
             contract_to_symbol: Arc::new(DashMap::new()),
             token_status_cache: Arc::new(DashMap::new()),
+            symbol_precision_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -255,7 +257,10 @@ impl PriceProvider for GateService {
         info!("Gate.io: Performing initial token status verification...");
         let safe_market_symbols = match self.refresh_token_status().await {
             Ok(symbols) => {
-                info!("Gate.io: Successfully verified {} safe tokens", symbols.len());
+                info!(
+                    "Gate.io: Successfully verified {} safe tokens",
+                    symbols.len()
+                );
                 symbols
             }
             Err(e) => {
@@ -269,7 +274,10 @@ impl PriceProvider for GateService {
             return Ok(());
         }
 
-        info!("Gate.io: Subscribing to {} verified safe tokens", safe_market_symbols.len());
+        info!(
+            "Gate.io: Subscribing to {} verified safe tokens",
+            safe_market_symbols.len()
+        );
 
         // Split symbols into chunks for multiple connections
         // Gate.io can handle many symbols per connection
@@ -328,6 +336,7 @@ impl PriceProvider for GateService {
             symbol_to_contract: self.symbol_to_contract.clone(),
             contract_to_symbol: self.contract_to_symbol.clone(),
             token_status_cache: self.token_status_cache.clone(),
+            symbol_precision_cache: self.symbol_precision_cache.clone(),
         });
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(12 * 3600)); // 12 hours
@@ -371,7 +380,11 @@ impl PriceProvider for GateService {
         "Gate.io"
     }
 
-    async fn is_token_safe_for_arbitrage(&self, symbol: &str, contract_address: Option<&str>) -> bool {
+    async fn is_token_safe_for_arbitrage(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> bool {
         let status = self.get_token_status(symbol, contract_address).await;
         match status {
             Some(status) => {
@@ -381,7 +394,11 @@ impl PriceProvider for GateService {
         }
     }
 
-    async fn get_token_status(&self, symbol: &str, contract_address: Option<&str>) -> Option<crate::TokenStatus> {
+    async fn get_token_status(
+        &self,
+        symbol: &str,
+        contract_address: Option<&str>,
+    ) -> Option<crate::TokenStatus> {
         // Try to get from cache first using market symbol (e.g., "LINK_USDT")
         if let Some(status) = self.token_status_cache.get(symbol) {
             return Some(status.clone());
@@ -391,7 +408,10 @@ impl PriceProvider for GateService {
         if let Some(contract_addr) = contract_address {
             let normalized_addr = contract_addr.to_lowercase();
             if let Some(market_symbol) = self.contract_to_symbol.get(&normalized_addr) {
-                return self.token_status_cache.get(market_symbol.value()).map(|s| s.clone());
+                return self
+                    .token_status_cache
+                    .get(market_symbol.value())
+                    .map(|s| s.clone());
             }
         }
 
@@ -414,7 +434,10 @@ impl PriceProvider for GateService {
         let unique_currencies: std::collections::HashSet<String> =
             pairs.iter().map(|p| p.base.clone()).collect();
 
-        info!("Gate.io: Fetching chain info for {} unique currencies...", unique_currencies.len());
+        info!(
+            "Gate.io: Fetching chain info for {} unique currencies...",
+            unique_currencies.len()
+        );
 
         // Fetch all currency chains concurrently in batches (same as start() method)
         const BATCH_SIZE: usize = 5;
@@ -454,7 +477,10 @@ impl PriceProvider for GateService {
             }
         }
 
-        info!("Gate.io: Fetched chain info for {} currencies", all_currency_chains.len());
+        info!(
+            "Gate.io: Fetched chain info for {} currencies",
+            all_currency_chains.len()
+        );
 
         // Build a map of currency -> contract addresses
         let mut currency_contracts: std::collections::HashMap<String, Vec<(String, String)>> =
@@ -491,6 +517,14 @@ impl PriceProvider for GateService {
             let market_symbol = pair.id.clone(); // e.g., "LINK_USDT"
             let base_asset = pair.base.clone();
 
+            // Extract and cache precision from amount_precision
+            if let Some(precision) = pair.amount_precision {
+                if precision >= 0 {
+                    self.symbol_precision_cache
+                        .insert(base_asset.clone(), precision as u32);
+                }
+            }
+
             // Default status: trading enabled (from exchange info), but need to verify deposits
             let mut status = crate::TokenStatus {
                 symbol: market_symbol.clone(),
@@ -508,11 +542,11 @@ impl PriceProvider for GateService {
                     let is_correct_network = match self.client.address_type {
                         FilterAddressType::Ethereum => {
                             let chain_lower = chain_name.to_lowercase();
-                            (chain_lower.contains("eth") || chain_lower.contains("erc20")) &&
-                            !chain_lower.contains("bsc") &&
-                            !chain_lower.contains("arb") &&
-                            !chain_lower.contains("polygon") &&
-                            !chain_lower.contains("optimism")
+                            (chain_lower.contains("eth") || chain_lower.contains("erc20"))
+                                && !chain_lower.contains("bsc")
+                                && !chain_lower.contains("arb")
+                                && !chain_lower.contains("polygon")
+                                && !chain_lower.contains("optimism")
                         }
                         FilterAddressType::Solana => {
                             let chain_lower = chain_name.to_lowercase();
@@ -526,13 +560,16 @@ impl PriceProvider for GateService {
                         status.is_deposit_enabled = true;
                         status.network_verified = true;
 
-                        if status.is_trading && status.is_deposit_enabled && status.network_verified {
+                        if status.is_trading && status.is_deposit_enabled && status.network_verified
+                        {
                             verified_count += 1;
                         }
 
                         // Store contract mapping
-                        self.contract_to_symbol.insert(normalized_contract.clone(), market_symbol.clone());
-                        self.symbol_to_contract.insert(market_symbol.clone(), normalized_contract);
+                        self.contract_to_symbol
+                            .insert(normalized_contract.clone(), market_symbol.clone());
+                        self.symbol_to_contract
+                            .insert(market_symbol.clone(), normalized_contract);
                         break;
                     }
                 }
@@ -554,7 +591,8 @@ impl PriceProvider for GateService {
         );
 
         // Return list of verified safe market symbols
-        let safe_symbols: Vec<String> = self.token_status_cache
+        let safe_symbols: Vec<String> = self
+            .token_status_cache
             .iter()
             .filter_map(|entry| {
                 let status = entry.value();
@@ -566,32 +604,100 @@ impl PriceProvider for GateService {
             })
             .collect();
 
-        info!("Gate.io: Returning {} safe symbols for WebSocket subscription", safe_symbols.len());
+        info!(
+            "Gate.io: Returning {} safe symbols for WebSocket subscription",
+            safe_symbols.len()
+        );
         Ok(safe_symbols)
     }
 
-    async fn get_deposit_address(&self, _symbol: &str, _address_type: crate::FilterAddressType) -> Result<String> {
-        Err(anyhow::anyhow!("Gate.io: get_deposit_address not yet implemented"))
+    async fn get_deposit_address(
+        &self,
+        _symbol: &str,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
+        Err(anyhow::anyhow!(
+            "Gate.io: get_deposit_address not yet implemented"
+        ))
     }
 
     async fn sell_token_for_usdt(&self, _symbol: &str, _amount: f64) -> Result<(String, f64, f64)> {
-        Err(anyhow::anyhow!("Gate.io: sell_token_for_usdt not yet implemented"))
+        Err(anyhow::anyhow!(
+            "Gate.io: sell_token_for_usdt not yet implemented"
+        ))
     }
 
-    async fn withdraw_usdt(&self, _address: &str, _amount: f64, _address_type: crate::FilterAddressType) -> Result<String> {
-        Err(anyhow::anyhow!("Gate.io: withdraw_usdt not yet implemented"))
+    async fn withdraw_usdt(
+        &self,
+        _address: &str,
+        _amount: f64,
+        _address_type: crate::FilterAddressType,
+    ) -> Result<String> {
+        Err(anyhow::anyhow!(
+            "Gate.io: withdraw_usdt not yet implemented"
+        ))
     }
 
     async fn get_portfolio(&self) -> Result<crate::Portfolio> {
-        Err(anyhow::anyhow!("Gate.io: get_portfolio not yet implemented"))
+        Err(anyhow::anyhow!(
+            "Gate.io: get_portfolio not yet implemented"
+        ))
     }
 
     async fn transfer_all_to_trading(&self, _coin: Option<&str>) -> Result<u32> {
-        Err(anyhow::anyhow!("Gate.io: transfer_all_to_trading not yet implemented"))
+        Err(anyhow::anyhow!(
+            "Gate.io: transfer_all_to_trading not yet implemented"
+        ))
     }
 
     async fn transfer_all_to_funding(&self, _coin: Option<&str>) -> Result<u32> {
-        Err(anyhow::anyhow!("Gate.io: transfer_all_to_funding not yet implemented"))
+        Err(anyhow::anyhow!(
+            "Gate.io: transfer_all_to_funding not yet implemented"
+        ))
+    }
+
+    async fn get_token_symbol_for_contract_address(
+        &self,
+        contract_address: &str,
+    ) -> Option<String> {
+        // Get the market symbol (e.g., "LINK_USDT") and extract base asset
+        let market_symbol = self
+            .contract_to_symbol
+            .get(&contract_address.to_lowercase())
+            .map(|entry| entry.value().clone())?;
+
+        // Gate.io uses underscore separator, split on "_USDT"
+        if let Some(base) = market_symbol.strip_suffix("_USDT") {
+            Some(base.to_string())
+        } else {
+            Some(market_symbol)
+        }
+    }
+
+    async fn get_quantity_precision(&self, symbol: &str) -> Result<u32> {
+        // Check cache first
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If not in cache, refresh token status and try again
+        log::info!(
+            "Gate.io: Precision not in cache for {}, refreshing...",
+            symbol
+        );
+        self.refresh_token_status().await?;
+
+        // Check cache again after refresh
+        if let Some(precision) = self.symbol_precision_cache.get(symbol) {
+            return Ok(*precision);
+        }
+
+        // If still not found, return default
+        log::warn!(
+            "Gate.io: Could not find precision for {}, using default (8)",
+            symbol
+        );
+        Ok(8)
     }
 }
 

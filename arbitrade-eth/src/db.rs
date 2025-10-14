@@ -143,7 +143,11 @@ impl ArbitrageDb {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    log::warn!(
+                        "Failed to deserialize opportunity with key {}: {}",
+                        key_str,
+                        e
+                    );
                     continue;
                 }
             }
@@ -185,7 +189,11 @@ impl ArbitrageDb {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    log::warn!(
+                        "Failed to deserialize opportunity with key {}: {}",
+                        key_str,
+                        e
+                    );
                     continue;
                 }
             }
@@ -219,7 +227,8 @@ impl ArbitrageDb {
         let mut profitable_count = 0;
         let mut unprofitable_count = 0;
         let mut unique_tokens = std::collections::HashSet::new();
-        let mut exchange_data: std::collections::HashMap<String, Vec<f64>> = std::collections::HashMap::new();
+        let mut exchange_data: std::collections::HashMap<String, Vec<f64>> =
+            std::collections::HashMap::new();
 
         for item in iter {
             let (key, value) = item.context("Failed to read from RocksDB")?;
@@ -252,7 +261,11 @@ impl ArbitrageDb {
                         .push(opp.profit_usdt);
                 }
                 Err(e) => {
-                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    log::warn!(
+                        "Failed to deserialize opportunity with key {}: {}",
+                        key_str,
+                        e
+                    );
                     continue;
                 }
             }
@@ -342,7 +355,11 @@ impl ArbitrageDb {
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to deserialize opportunity with key {}: {}", key_str, e);
+                    log::warn!(
+                        "Failed to deserialize opportunity with key {}: {}",
+                        key_str,
+                        e
+                    );
                     continue;
                 }
             }

@@ -356,7 +356,8 @@ impl MexcClient {
             .context("Failed to get deposit address from MEXC")?;
 
         let json: serde_json::Value = response.json().await?;
-        let address = json.get("address")
+        let address = json
+            .get("address")
             .and_then(|v| v.as_str())
             .context("Failed to extract deposit address from response")?
             .to_string();
@@ -450,7 +451,8 @@ impl MexcClient {
             .context("Failed to submit withdrawal to MEXC")?;
 
         let json: serde_json::Value = response.json().await?;
-        let withdrawal_id = json.get("id")
+        let withdrawal_id = json
+            .get("id")
             .and_then(|v| v.as_str())
             .context("Failed to extract withdrawal ID from response")?
             .to_string();

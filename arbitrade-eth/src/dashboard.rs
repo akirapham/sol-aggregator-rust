@@ -135,7 +135,8 @@ fn generate_dashboard_html(
     let exchange_stats_html: String = if stats.exchange_stats.is_empty() {
         "<p style=\"text-align: center; color: #999; padding: 20px;\">No exchange data available yet</p>".to_string()
     } else {
-        stats.exchange_stats
+        stats
+            .exchange_stats
             .iter()
             .map(|ex| {
                 let win_rate_class = if ex.win_rate >= 50.0 {
@@ -148,7 +149,7 @@ fn generate_dashboard_html(
                 } else {
                     "negative"
                 };
-                
+
                 format!(
                     r#"
                     <div class="exchange-card">

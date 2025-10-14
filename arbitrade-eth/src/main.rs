@@ -23,7 +23,7 @@ mod kyber;
 mod types;
 use db::{ArbitrageDb, ArbitrageOpportunity};
 use dex_price::{DexPriceClient, DexPriceConfig};
-use kyber::KyberClient;
+use kyber::{client::RouteSummary, KyberClient};
 use std::env;
 
 use crate::types::TokenPriceUpdate;
@@ -37,6 +37,8 @@ struct CexProvider {
     kucoin: Option<Arc<KucoinService>>,
     bitget: Option<Arc<BitgetService>>,
     gate: Option<Arc<GateService>>,
+    // Cached deposit address for this CEX (for Ethereum/ERC20 tokens)
+    deposit_address: Option<String>,
 }
 
 /// Structure to hold CEX opportunity with liquidity info
@@ -49,6 +51,27 @@ struct CexOpportunity {
 }
 
 impl CexProvider {
+    /// Get the minimum confirmation time estimate for deposits (in seconds)
+    /// Based on exchange-specific confirmation requirements for ERC20 tokens
+    fn get_min_deposit_time(&self) -> u64 {
+        // Ethereum block time is ~12-15 seconds
+        // Adding 50% buffer for network congestion
+        const BLOCK_TIME_SECONDS: u64 = 13; // Conservative estimate
+        const BUFFER_MULTIPLIER: f64 = 1.0;
+
+        let confirmations = match self.name {
+            "MEXC" => 16,    // MEXC requires 16 confirmations
+            "Bybit" => 6,    // Bybit typically 12 confirmations
+            "KuCoin" => 12,  // KuCoin typically 12 confirmations
+            "Bitget" => 12,  // Bitget typically 12 confirmations
+            "Gate.io" => 12, // Gate.io typically 12 confirmations
+            _ => 12,         // Default to 12
+        };
+
+        let base_time = confirmations * BLOCK_TIME_SECONDS;
+        (base_time as f64 * BUFFER_MULTIPLIER) as u64
+    }
+
     /// Calculate total orderbook liquidity (bid side) in USDT
     async fn get_orderbook_liquidity(
         &self,
@@ -88,6 +111,12 @@ impl CexProvider {
         }
         None
     }
+
+    /// Get the deposit address for this CEX
+    /// Returns the cached deposit address if available
+    fn get_deposit_address(&self) -> Option<&str> {
+        self.deposit_address.as_deref()
+    }
 }
 
 /// Structure to hold the best arbitrage opportunity across CEXes
@@ -102,69 +131,73 @@ struct BestArbitrageOpportunity {
     profit_percent: f64,
 }
 
-/// Simulate arbitrage opportunity and log results
+/// Price trend direction for intelligent selling decisions
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PriceTrend {
+    Rising,  // Price is going up
+    Falling, // Price is going down
+    Stable,  // Price is relatively stable
+}
+
+/// Detect price trend from recent price history
+/// Uses simple linear regression slope to determine trend
+fn detect_price_trend(prices: &[f64]) -> PriceTrend {
+    if prices.len() < 3 {
+        return PriceTrend::Stable;
+    }
+
+    // Calculate simple moving average slope
+    let n = prices.len() as f64;
+    let x_mean = (n - 1.0) / 2.0; // Mean of indices 0, 1, 2, ...
+    let y_mean: f64 = prices.iter().sum::<f64>() / n;
+
+    let mut numerator = 0.0;
+    let mut denominator = 0.0;
+
+    for (i, &price) in prices.iter().enumerate() {
+        let x_diff = i as f64 - x_mean;
+        let y_diff = price - y_mean;
+        numerator += x_diff * y_diff;
+        denominator += x_diff * x_diff;
+    }
+
+    let slope = if denominator != 0.0 {
+        numerator / denominator
+    } else {
+        0.0
+    };
+
+    // Determine trend based on slope
+    // Threshold: if slope change is more than 0.1% per data point, consider it a trend
+    let price_avg = prices.iter().sum::<f64>() / n;
+    let slope_threshold = price_avg * 0.001; // 0.1% threshold
+
+    if slope > slope_threshold {
+        PriceTrend::Rising
+    } else if slope < -slope_threshold {
+        PriceTrend::Falling
+    } else {
+        PriceTrend::Stable
+    }
+}
+
+/// Execute real arbitrage opportunity with actual swap transaction
+/// Takes pre-fetched route data to avoid redundant API calls
 async fn process_arbitrage(
     kyber_client: &KyberClient,
     best_cex: &CexProvider,
     update: &TokenPriceUpdate,
     arb_amount_usdt: f64,
+    gas_fee_usd: f64,
+    tokens_from_dex: f64,
+    route_summary: kyber::client::RouteSummary,
     db: &Arc<ArbitrageDb>,
 ) {
-    log::info!("Processing arbitrage for token: {} with best CEX: {}", update.token_address, best_cex.name);
-    // USDT contract address on Ethereum
-    const USDT_ADDRESS: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
-
-    // Step 1: Get real quote from KyberSwap for USDT → Token swap
-    // Convert USDT amount to wei (USDT has 6 decimals)
-    let usdt_amount_wei = (arb_amount_usdt * 1_000_000.0) as u64;
-    let gas_fee_usd: f64;
-
-    let tokens_from_dex = match kyber_client
-        .estimate_swap_output(
-            USDT_ADDRESS,
-            &update.token_address,
-            &usdt_amount_wei.to_string(),
-        )
-        .await
-    {
-        Ok((amount_out_wei, gas_usd_str)) => {
-            gas_fee_usd = gas_usd_str.parse::<f64>().unwrap_or(0.0);
-            // Convert from wei to token amount using decimals
-            match amount_out_wei.parse::<u128>() {
-                Ok(wei) => {
-                    let divisor = 10_u128.pow(update.decimals as u32);
-                    wei as f64 / divisor as f64
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to parse KyberSwap output amount for {}: {}",
-                        update.token_address,
-                        e
-                    );
-                    return;
-                }
-            }
-        }
-        Err(e) => {
-            log::warn!(
-                "Failed to get KyberSwap quote for {}: {}",
-                update.token_address,
-                e
-            );
-            return;
-        }
-    };
-
-    // waiting 20s to simulate real-world delay for swap execution
-    log::info!("Simulating swap execution delay...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
-
-    // waiting 16 confirmations on ethereum with block time ~13s
-    log::info!("Waiting for 16 confirmations on Ethereum...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(16 * 13)).await;
-
-    // Step 2: Check the best CEX (already pre-selected for deepest liquidity)
-    log::info!("Checking best CEX: {} for final arbitrage...", best_cex.name);
+    log::info!(
+        "🎯 Processing arbitrage for token: {} with best CEX: {}",
+        update.token_address,
+        best_cex.name
+    );
 
     // CRITICAL SAFETY CHECK: Verify token is safe for arbitrage on this CEX
     // This ensures:
@@ -188,85 +221,690 @@ async fn process_arbitrage(
         return;
     }
 
-    log::debug!(
-        "✅ {} - Token {} verified safe for arbitrage",
+    let token_symbol = best_cex
+        .service
+        .get_token_symbol_for_contract_address(&update.token_address)
+        .await
+        .unwrap_or_else(|| update.token_address.clone());
+    log::info!(
+        "✅ {} - Token {}({}) verified safe for arbitrage",
         best_cex.name,
+        token_symbol,
         update.token_address
     );
 
-    // Get final price from the best CEX
-    let price_info = match best_cex
+    // Check if we have a deposit address for this CEX
+    let deposit_address = match best_cex.get_deposit_address() {
+        Some(addr) => addr,
+        None => {
+            log::warn!(
+                "⚠️  {} - No deposit address available. Cannot execute arbitrage. Please configure API credentials.",
+                best_cex.name
+            );
+            return;
+        }
+    };
+
+    log::info!(
+        "✅ Using {} deposit address as recipient: {}",
+        best_cex.name,
+        deposit_address
+    );
+
+    // EXECUTE REAL SWAP: Use pre-fetched route data from screening phase
+    log::info!(
+        "📊 Using swap route: {} USDT → {:.6} tokens (gas: ${:.2})",
+        arb_amount_usdt,
+        tokens_from_dex,
+        gas_fee_usd
+    );
+
+    // Execute the swap with CEX deposit address as recipient
+    log::info!(
+        "🚀 Executing swap transaction to {} deposit address...",
+        best_cex.name
+    );
+    let tx_hash = match kyber_client
+        .execute_swap(
+            &route_summary,
+            deposit_address,
+            50, // 0.5% slippage tolerance
+        )
+        .await
+    {
+        Ok(hash) => {
+            log::info!("✅ Swap transaction successful! TX: {}", hash);
+            hash
+        }
+        Err(e) => {
+            log::error!("❌ Swap transaction failed: {}", e);
+            return;
+        }
+    };
+
+    log::info!(
+        "⏳ Swap executed! Tokens should arrive at {} soon.",
+        best_cex.name
+    );
+    log::info!("   Transaction: https://etherscan.io/tx/{}", tx_hash);
+
+    // Step 2: Wait for deposit confirmation on CEX by polling portfolio
+    // Calculate expected minimum wait time based on exchange confirmation requirements
+    let min_deposit_time = best_cex.get_min_deposit_time();
+    let max_wait_time = (min_deposit_time * 3).max(600); // At least 3x min time or 10 minutes
+
+    log::info!(
+        "⏳ Waiting for token deposit to be confirmed on {}...",
+        best_cex.name
+    );
+    log::info!(
+        "   {} requires confirmations (est. {} seconds minimum)",
+        best_cex.name,
+        min_deposit_time
+    );
+    log::info!(
+        "   Max wait time: {} seconds (~{} minutes)",
+        max_wait_time,
+        max_wait_time / 60
+    );
+    log::info!(
+        "   Checking portfolio every 5 seconds for {} ({})...",
+        token_symbol,
+        update.token_address
+    );
+
+    let mut deposited_token_amount: f64 = 0.0;
+    let mut elapsed_time = 0;
+    let mut first_check_done = false;
+
+    loop {
+        // Don't spam the API immediately - wait at least until minimum confirmation time
+        if !first_check_done && elapsed_time < min_deposit_time {
+            log::debug!(
+                "Waiting for minimum confirmation time... ({}/{} seconds)",
+                elapsed_time,
+                min_deposit_time
+            );
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            elapsed_time += 5;
+            continue;
+        }
+        first_check_done = true;
+
+        // Check portfolio for the deposited token
+        match best_cex.service.get_portfolio().await {
+            Ok(portfolio) => {
+                // Check both trading and funding accounts for the token
+                // NOTE: MEXC and Bitget don't have separate accounts, so they return the same balances
+                // To avoid double-counting, we need to handle this carefully
+                let mut found_amount = 0.0;
+                let mut trading_amount = 0.0;
+                let mut funding_amount = 0.0;
+
+                // Check trading account
+                for balance in &portfolio.trading.balances {
+                    if balance.asset.eq_ignore_ascii_case(&token_symbol) {
+                        trading_amount = balance.free;
+                        log::debug!(
+                            "Found {:.6} {} in trading account",
+                            balance.free,
+                            token_symbol
+                        );
+                    }
+                }
+
+                // Check funding account
+                for balance in &portfolio.funding.balances {
+                    if balance.asset.eq_ignore_ascii_case(&token_symbol) {
+                        funding_amount = balance.free;
+                        log::debug!(
+                            "Found {:.6} {} in funding account",
+                            balance.free,
+                            token_symbol
+                        );
+                    }
+                }
+
+                // For MEXC and Bitget: They don't have separate accounts, so trading = funding
+                // If both amounts are exactly the same, it means they're the same account (don't double count)
+                if trading_amount == funding_amount && trading_amount > 0.0 {
+                    found_amount = trading_amount; // Use one, not both
+                    log::debug!(
+                        "{} has unified accounts (no separation). Using single balance: {:.6} {}",
+                        best_cex.name,
+                        found_amount,
+                        token_symbol
+                    );
+                } else {
+                    // For exchanges with separate accounts (Bybit, KuCoin, Gate.io): Add both
+                    found_amount = trading_amount + funding_amount;
+                    if trading_amount > 0.0 && funding_amount > 0.0 {
+                        log::debug!(
+                            "{} has separate accounts. Total: {:.6} {} (trading: {:.6}, funding: {:.6})",
+                            best_cex.name,
+                            found_amount,
+                            token_symbol,
+                            trading_amount,
+                            funding_amount
+                        );
+                    }
+                }
+
+                // Check if we received at least 99% of the expected token amount
+                let expected_minimum = tokens_from_dex * 0.99;
+
+                if found_amount >= expected_minimum {
+                    deposited_token_amount = found_amount;
+                    let received_percent = (found_amount / tokens_from_dex) * 100.0;
+                    log::info!(
+                        "✅ Token deposit confirmed! Found {:.6} {} on {} ({:.2}% of expected {:.6})",
+                        deposited_token_amount,
+                        token_symbol,
+                        best_cex.name,
+                        received_percent,
+                        tokens_from_dex
+                    );
+                    break;
+                } else if found_amount > 0.0 {
+                    let received_percent = (found_amount / tokens_from_dex) * 100.0;
+                    log::warn!(
+                        "⚠️  Found {:.6} {} but expecting at least {:.6} ({:.2}% received, need 99%+). Waiting...",
+                        found_amount,
+                        token_symbol,
+                        expected_minimum,
+                        received_percent
+                    );
+                } else {
+                    log::debug!(
+                        "Token not yet visible in portfolio, waiting 5 seconds... ({}/{}s elapsed)",
+                        elapsed_time,
+                        max_wait_time
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to get portfolio from {}: {}", best_cex.name, e);
+            }
+        }
+
+        if elapsed_time >= max_wait_time {
+            log::error!(
+                "❌ Timeout waiting for token deposit on {}. Aborting arbitrage.",
+                best_cex.name
+            );
+            return;
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        elapsed_time += 5;
+    }
+
+    // Step 3: Execute sell workflow - Transfer to trading → Sell → Transfer USDT to funding
+    log::info!("💱 Starting sell workflow on {}...", best_cex.name);
+
+    // 3.1: Transfer all tokens to trading account
+    log::info!(
+        "📤 Transferring {:.6} {} to trading account...",
+        deposited_token_amount,
+        token_symbol
+    );
+    match best_cex
+        .service
+        .transfer_all_to_trading(Some(&token_symbol))
+        .await
+    {
+        Ok(transferred_count) => {
+            if transferred_count > 0 {
+                log::info!(
+                    "✅ Transferred {} tokens to trading account",
+                    transferred_count
+                );
+            } else {
+                log::debug!("Token already in trading account or no transfer needed");
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "Transfer to trading failed (may already be in trading): {}",
+                e
+            );
+        }
+    }
+
+    // Wait a bit for transfer to settle
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // 3.2: Get quantity precision and round the amount before selling
+    let quantity_precision = match best_cex.service.get_quantity_precision(&token_symbol).await {
+        Ok(precision) => {
+            log::debug!(
+                "{}: Quantity precision for {} is {} decimals",
+                best_cex.name,
+                token_symbol,
+                precision
+            );
+            precision
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to get quantity precision for {}, using default 8: {}",
+                token_symbol,
+                e
+            );
+            8 // Default to 8 decimal places
+        }
+    };
+
+    // Round the quantity to the correct precision
+    let divisor = 10_f64.powi(quantity_precision as i32);
+    let rounded_amount = (deposited_token_amount * divisor).floor() / divisor;
+
+    // 3.3: Smart profit maximization with price trend tracking
+    log::info!("📊 Starting intelligent price monitoring for optimal sell timing...");
+    let total_cost = arb_amount_usdt + gas_fee_usd;
+    let mut estimated_usdt_output: f64 = 0.0;
+
+    // Price history for trend analysis (timestamp, estimated_output)
+    let mut price_history: Vec<(u64, f64)> = Vec::new();
+
+    // Strategy parameters - OPTIMIZED FOR ARBITRAGE
+    let stop_loss_threshold = total_cost * 0.95; // Max 5% loss (sell immediately if price drops this low)
+
+    // Tiered timeout based on initial opportunity quality
+    // Shorter base timeout = faster capital rotation = more trades per day
+    let base_timeout = 300; // 5 minutes - arbitrage should be quick!
+    let extended_timeout = 600; // 10 minutes - only if recovering well
+    let aggressive_timeout = 180; // 3 minutes - if already profitable
+
+    let mut max_wait_time = base_timeout;
+    let mut price_wait_elapsed = 0;
+    let check_interval = 15; // Check every 15 seconds
+    let mut first_check = true; // Track if this is our first price check
+
+    log::info!(
+        "Strategy: Break-even @ ${:.2}, Stop-loss @ ${:.2} (5% max loss), Base timeout: {}s",
+        total_cost,
+        stop_loss_threshold,
+        base_timeout
+    );
+
+    loop {
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Estimate how much USDT we'll get from selling
+        match best_cex
+            .get_orderbook_liquidity(&update.token_address.to_lowercase(), rounded_amount)
+            .await
+        {
+            Some(estimated_output) => {
+                estimated_usdt_output = estimated_output;
+                let estimated_profit = estimated_output - total_cost;
+                let estimated_profit_percent = (estimated_profit / total_cost) * 100.0;
+
+                // Record price point for trend analysis
+                price_history.push((current_time, estimated_output));
+
+                // Keep only last 5 data points (last ~1 minute of data)
+                if price_history.len() > 5 {
+                    price_history.remove(0);
+                }
+
+                // OPTIMIZED DECISION LOGIC FOR ARBITRAGE:
+
+                // 1. STOP-LOSS: If price dropped too much, sell immediately to prevent further loss
+                if estimated_output < stop_loss_threshold {
+                    log::error!(
+                        "🛑 STOP-LOSS TRIGGERED! Price dropped to ${:.2} (below ${:.2} threshold). Selling immediately to prevent further loss!",
+                        estimated_output,
+                        stop_loss_threshold
+                    );
+                    break;
+                }
+
+                // 2. STRONG PROFIT (>2%): If already very profitable on first check, use aggressive timeout
+                if first_check && estimated_profit_percent > 2.0 {
+                    max_wait_time = aggressive_timeout; // 3 minutes - don't wait, this is a great arb!
+                    log::info!(
+                        "🚀 STRONG ARBITRAGE DETECTED! {:.2}% profit. Using aggressive {}s timeout.",
+                        estimated_profit_percent,
+                        aggressive_timeout
+                    );
+                }
+                first_check = false;
+
+                // 3. PROFITABLE: Price is profitable
+                if estimated_profit > 0.0 {
+                    // Analyze price trend if we have enough history
+                    if price_history.len() >= 3 {
+                        let recent_prices: Vec<f64> =
+                            price_history.iter().map(|(_, p)| *p).collect();
+                        let trend = detect_price_trend(&recent_prices);
+
+                        match trend {
+                            PriceTrend::Rising => {
+                                // Only extend timeout if we're early in the cycle and profit is decent
+                                if price_wait_elapsed < 120 && estimated_profit_percent > 0.5 {
+                                    max_wait_time = extended_timeout; // Extend to 10 min
+                                    log::info!(
+                                        "📈 Price RISING and profitable (${:.2}, {:.2}%). Extended timeout to {}s to capture upside.",
+                                        estimated_profit,
+                                        estimated_profit_percent,
+                                        extended_timeout
+                                    );
+                                } else {
+                                    log::info!(
+                                        "📈 Price RISING and profitable (${:.2}, {:.2}%). Monitoring...",
+                                        estimated_profit,
+                                        estimated_profit_percent
+                                    );
+                                }
+                            }
+                            PriceTrend::Falling => {
+                                log::info!(
+                                    "📉 Price FALLING but still profitable (${:.2}, {:.2}%). Selling now before it drops further!",
+                                    estimated_profit,
+                                    estimated_profit_percent
+                                );
+                                break; // Sell immediately when trending down
+                            }
+                            PriceTrend::Stable => {
+                                log::info!(
+                                    "📊 Price STABLE and profitable (${:.2}, {:.2}%). Selling now!",
+                                    estimated_profit,
+                                    estimated_profit_percent
+                                );
+                                break; // Sell when stable and profitable
+                            }
+                        }
+                    } else {
+                        // Not enough history yet, but it's profitable
+                        log::info!(
+                            "✅ Profitable (${:.2}, {:.2}%). Collecting price data...",
+                            estimated_profit,
+                            estimated_profit_percent
+                        );
+                    }
+                } else {
+                    // 4. UNPROFITABLE: Still at a loss
+                    let loss_percent = (estimated_profit / total_cost) * 100.0;
+
+                    // Analyze trend to decide if we should wait or cut losses
+                    if price_history.len() >= 3 {
+                        let recent_prices: Vec<f64> =
+                            price_history.iter().map(|(_, p)| *p).collect();
+                        let trend = detect_price_trend(&recent_prices);
+
+                        match trend {
+                            PriceTrend::Rising => {
+                                // Price recovering - extend timeout to extended_timeout if loss is small
+                                if loss_percent > -2.0 && price_wait_elapsed < 180 {
+                                    max_wait_time = extended_timeout; // Give it full 10 min if recovering from small loss
+                                    log::info!(
+                                        "📈 Price RISING from small loss (${:.2}, {:.2}%). Extended to {}s for recovery... ({}/{}s)",
+                                        estimated_profit,
+                                        loss_percent,
+                                        extended_timeout,
+                                        price_wait_elapsed,
+                                        max_wait_time
+                                    );
+                                } else {
+                                    log::info!(
+                                        "📈 Price RISING from loss (${:.2}, {:.2}%). Waiting for recovery... ({}/{}s)",
+                                        estimated_profit,
+                                        loss_percent,
+                                        price_wait_elapsed,
+                                        max_wait_time
+                                    );
+                                }
+                            }
+                            PriceTrend::Falling => {
+                                // Price getting worse - aggressively cut timeout
+                                let reduced_timeout =
+                                    (base_timeout / 2).max(price_wait_elapsed + 45);
+                                if max_wait_time > reduced_timeout {
+                                    max_wait_time = reduced_timeout;
+                                    log::warn!(
+                                        "📉 Price FALLING and unprofitable (${:.2}, {:.2}%). Timeout cut to {}s! ({}/{}s)",
+                                        estimated_profit,
+                                        loss_percent,
+                                        max_wait_time,
+                                        price_wait_elapsed,
+                                        max_wait_time
+                                    );
+                                } else {
+                                    log::warn!(
+                                        "📉 Price FALLING and unprofitable (${:.2}, {:.2}%). Preparing to cut losses... ({}/{}s)",
+                                        estimated_profit,
+                                        loss_percent,
+                                        price_wait_elapsed,
+                                        max_wait_time
+                                    );
+                                }
+                            }
+                            PriceTrend::Stable => {
+                                log::warn!(
+                                    "📊 Price STABLE but unprofitable (${:.2} loss, {:.2}%). Waiting... ({}/{}s)",
+                                    estimated_profit,
+                                    loss_percent,
+                                    price_wait_elapsed,
+                                    max_wait_time
+                                );
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "⚠️  Currently unprofitable: ${:.2} loss ({:.2}%). Collecting price data... ({}/{}s)",
+                            estimated_profit,
+                            loss_percent,
+                            price_wait_elapsed,
+                            max_wait_time
+                        );
+                    }
+                }
+            }
+            None => {
+                log::warn!(
+                    "Failed to estimate sell output from {}, retrying in {}s...",
+                    best_cex.name,
+                    check_interval
+                );
+            }
+        }
+
+        // Check timeout
+        if price_wait_elapsed >= max_wait_time {
+            let final_profit = estimated_usdt_output - total_cost;
+            if final_profit > 0.0 {
+                log::info!(
+                    "⏰ Timeout reached but price is profitable (${:.2}). Selling now!",
+                    final_profit
+                );
+            } else {
+                log::error!(
+                    "⏰ Timeout reached. Selling at loss (${:.2}) to recover funds. Final: ${:.2} USDT",
+                    final_profit,
+                    estimated_usdt_output
+                );
+            }
+            break;
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(check_interval)).await;
+        price_wait_elapsed += check_interval;
+    }
+
+    // 3.4: Execute the sell in 4 smaller chunks
+    let num_chunks = 4;
+    let chunk_amount = rounded_amount / num_chunks as f64;
+    let mut total_sold = 0.0;
+    let mut total_usdt = 0.0;
+    let mut order_ids = Vec::new();
+
+    log::info!(
+        "💰 Selling {:.6} {} for USDT in {} chunks (each {:.6})...",
+        rounded_amount,
+        token_symbol,
+        num_chunks,
+        chunk_amount
+    );
+
+    for i in 0..num_chunks {
+        let sell_amount = if i == num_chunks - 1 {
+            // Last chunk: sell remaining to avoid rounding errors
+            rounded_amount - total_sold
+        } else {
+            chunk_amount
+        };
+        log::info!(
+            "Chunk {}: Selling {:.6} {} for USDT...",
+            i + 1,
+            sell_amount,
+            token_symbol
+        );
+        match best_cex
+            .service
+            .sell_token_for_usdt(&token_symbol, sell_amount)
+            .await
+        {
+            Ok((order_id, sold_amount, usdt_amount)) => {
+                log::info!(
+                    "✅ Sold {:.6} {} for {:.2} USDT (Order: {})",
+                    sold_amount,
+                    token_symbol,
+                    usdt_amount,
+                    order_id
+                );
+                total_sold += sold_amount;
+                total_usdt += usdt_amount;
+                order_ids.push(order_id);
+            }
+            Err(e) => {
+                log::error!(
+                    "❌ Failed to sell chunk {} of {} for USDT: {}",
+                    i + 1,
+                    token_symbol,
+                    e
+                );
+                // Optionally: break or continue
+                break;
+            }
+        }
+        // Wait a bit for each chunk to settle
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+
+    let (order_id, actual_sold_amount, usdt_received) =
+        (order_ids.join(","), total_sold, total_usdt);
+
+    // 3.5: Transfer USDT back to funding account
+    log::info!(
+        "📥 Transferring {:.2} USDT back to funding account...",
+        usdt_received
+    );
+    match best_cex.service.transfer_all_to_funding(Some("USDT")).await {
+        Ok(transferred_count) => {
+            if transferred_count > 0 {
+                log::info!(
+                    "✅ Transferred USDT to funding account ({} transfers)",
+                    transferred_count
+                );
+            } else {
+                log::debug!("USDT transfer to funding completed");
+            }
+        }
+        Err(e) => {
+            log::warn!("Transfer USDT to funding failed: {}", e);
+        }
+    }
+
+    // Step 4: Calculate actual profit and effective sell price
+    let effective_sell_price = usdt_received / actual_sold_amount;
+    let actual_profit = usdt_received - arb_amount_usdt - gas_fee_usd;
+    let profit_percent = (actual_profit / (arb_amount_usdt + gas_fee_usd)) * 100.0;
+
+    log::info!("📊 Arbitrage Results:");
+    log::info!(
+        "   Deposited: {:.6} {} (expected: {:.6})",
+        deposited_token_amount,
+        token_symbol,
+        tokens_from_dex
+    );
+    log::info!("   USDT Received: {:.2} USDT", usdt_received);
+    log::info!(
+        "   Effective Sell Price: ${:.6} per {}",
+        effective_sell_price,
+        token_symbol
+    );
+    log::info!(
+        "   Actual Profit: ${:.2} USDT ({:.2}%)",
+        actual_profit,
+        profit_percent
+    );
+
+    // Get current CEX price for comparison (optional, just for logging)
+    let _current_cex_price = best_cex
         .service
         .get_price(&update.token_address.to_lowercase())
         .await
-    {
-        Some(price) => price,
-        None => {
-            log::warn!("Failed to get price from {} for {}", best_cex.name, update.token_address);
-            return;
-        }
-    };
+        .map(|p| p.price);
 
     let price_diff_percent =
-        ((update.price_in_usd - price_info.price) / price_info.price) * 100.0;
-
-    // Get final orderbook liquidity
-    let liquidity_usdt = match best_cex
-        .get_orderbook_liquidity(&update.token_address.to_lowercase(), tokens_from_dex)
-        .await
-    {
-        Some(liq) => liq,
-        None => {
-            log::warn!("Failed to get orderbook liquidity from {} for {}", best_cex.name, update.token_address);
-            return;
-        }
-    };
-
-    // Calculate final profit
-    let profit = liquidity_usdt - arb_amount_usdt - gas_fee_usd;
-    let profit_percent = (profit / (arb_amount_usdt + gas_fee_usd)) * 100.0;
+        ((update.price_in_usd - effective_sell_price) / effective_sell_price) * 100.0;
 
     let best = BestArbitrageOpportunity {
         cex_name: best_cex.name.to_string(),
-        cex_price: price_info.price,
-        cex_symbol: price_info.symbol.clone(),
+        cex_price: effective_sell_price,
+        cex_symbol: token_symbol.clone(),
         price_diff_percent,
-        liquidity_usdt,
-        usdt_from_cex: liquidity_usdt,
-        profit,
+        liquidity_usdt: usdt_received,
+        usdt_from_cex: usdt_received,
+        profit: actual_profit,
         profit_percent,
     };
 
     // Log and save the opportunity
     if best.profit > 0.0 {
         log::info!(
-            "🎯 BEST ARBITRAGE OPPORTUNITY - Token: {}, CEX: {} (Deepest Liquidity), Symbol: {}",
+            "🎯 ✅ ARBITRAGE EXECUTED SUCCESSFULLY - Token: {} ({}), CEX: {}",
+            best.cex_symbol,
             update.token_address,
-            best.cex_name,
-            best.cex_symbol
+            best.cex_name
         );
         log::info!(
-            "  DEX Price: ${:.6}, CEX Price: ${:.6}, Price Diff: {:.2}%",
+            "  💵 Investment: ${:.2} USDT + ${:.2} gas = ${:.2} total",
+            arb_amount_usdt,
+            gas_fee_usd,
+            arb_amount_usdt + gas_fee_usd
+        );
+        log::info!(
+            "  📈 DEX Buy: ${:.2} USDT → {:.6} {} @ ${:.6} per token",
+            arb_amount_usdt,
+            deposited_token_amount,
+            best.cex_symbol,
+            arb_amount_usdt / deposited_token_amount
+        );
+        log::info!(
+            "  📉 CEX Sell: {:.6} {} → ${:.2} USDT @ ${:.6} per token",
+            actual_sold_amount,
+            best.cex_symbol,
+            best.usdt_from_cex,
+            best.cex_price
+        );
+        log::info!(
+            "  💰 PROFIT: ${:.2} USDT ({:.2}%)",
+            best.profit,
+            best.profit_percent
+        );
+        log::info!(
+            "  � Price Difference: DEX ${:.6} vs CEX ${:.6} ({:.2}%)",
             update.price_in_usd,
             best.cex_price,
             best.price_diff_percent
         );
-        log::info!(
-            "  Orderbook Depth: ${:.2} USDT available",
-            best.liquidity_usdt
-        );
-        log::info!(
-            "  Simulation: ${:.2} USDT → {:.6} tokens (KyberSwap) → ${:.2} USDT ({})",
-            arb_amount_usdt,
-            tokens_from_dex,
-            best.usdt_from_cex,
-            best.cex_name
-        );
-        log::info!(
-            "  💰 Final Profit: ${:.2} USDT ({:.2}%)",
-            best.profit,
-            best.profit_percent
-        );
+        log::info!("  🔗 TX: https://etherscan.io/tx/{}", tx_hash);
 
         // Save to database
         let opportunity = ArbitrageOpportunity {
@@ -275,7 +913,7 @@ async fn process_arbitrage(
                 .unwrap()
                 .as_secs() as i64,
             token_address: update.token_address.clone(),
-            token_symbol: update.token_address.clone(), // TODO: Get actual symbol
+            token_symbol: best.cex_symbol.clone(),
             dex_price: update.price_in_usd,
             cex_name: best.cex_name.clone(),
             cex_price: best.cex_price,
@@ -285,21 +923,54 @@ async fn process_arbitrage(
             profit_usdt: best.profit,
             profit_percent: best.profit_percent,
             arb_amount_usdt,
-            tokens_from_dex,
+            tokens_from_dex: deposited_token_amount,
             gas_fee_usd,
         };
 
         if let Err(e) = db.save_opportunity(&opportunity) {
             log::error!("Failed to save opportunity to database: {}", e);
         } else {
-            log::debug!("Saved opportunity to database");
+            log::info!("✅ Arbitrage opportunity saved to database");
         }
     } else {
         log::warn!(
-            "⚠️  Arbitrage became unprofitable after simulation delays for token: {} on {}",
+            "⚠️  Arbitrage execution resulted in LOSS: ${:.2} USDT ({:.2}%) for token: {} on {}",
+            best.profit,
+            best.profit_percent,
             update.token_address,
             best.cex_name
         );
+        log::warn!(
+            "   Spent: ${:.2} USDT + ${:.2} gas, Received: ${:.2} USDT",
+            arb_amount_usdt,
+            gas_fee_usd,
+            best.usdt_from_cex
+        );
+
+        // Still save to database for tracking
+        let opportunity = ArbitrageOpportunity {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+            token_address: update.token_address.clone(),
+            token_symbol: best.cex_symbol.clone(),
+            dex_price: update.price_in_usd,
+            cex_name: best.cex_name.clone(),
+            cex_price: best.cex_price,
+            cex_symbol: best.cex_symbol.clone(),
+            price_diff_percent: best.price_diff_percent,
+            liquidity_usdt: best.liquidity_usdt,
+            profit_usdt: best.profit,
+            profit_percent: best.profit_percent,
+            arb_amount_usdt,
+            tokens_from_dex: deposited_token_amount,
+            gas_fee_usd,
+        };
+
+        if let Err(e) = db.save_opportunity(&opportunity) {
+            log::error!("Failed to save opportunity to database: {}", e);
+        }
     }
 }
 
@@ -364,12 +1035,52 @@ async fn main() -> Result<()> {
         }
     };
 
-    let kucoin_service = Arc::new(KucoinService::new(
-        cex_price_provider::FilterAddressType::Ethereum,
-    ));
-    let bitget_service = Arc::new(BitgetService::new(
-        cex_price_provider::FilterAddressType::Ethereum,
-    ));
+    // Initial kucoin with credentials
+    let kucoin_service = match (
+        env::var("KUCOIN_API_KEY"),
+        env::var("KUCOIN_API_SECRET"),
+        env::var("KUCOIN_API_PASSPHRASE"),
+    ) {
+        (Ok(api_key), Ok(api_secret), Ok(api_passphrase)) => {
+            info!("KuCoin API credentials found, initializing with authentication");
+            Arc::new(KucoinService::with_credentials(
+                cex_price_provider::FilterAddressType::Ethereum,
+                api_key,
+                api_secret,
+                api_passphrase,
+            ))
+        }
+        _ => {
+            info!("KuCoin API credentials not found, initializing without authentication (limited functionality)");
+            Arc::new(KucoinService::new(
+                cex_price_provider::FilterAddressType::Ethereum,
+            ))
+        }
+    };
+
+    // Initialize Bitget with credentials
+    let bitget_service = match (
+        env::var("BITGET_API_KEY"),
+        env::var("BITGET_API_SECRET"),
+        env::var("BITGET_API_PASSPHRASE"),
+    ) {
+        (Ok(api_key), Ok(api_secret), Ok(api_passphrase)) => {
+            info!("Bitget API credentials found, initializing with authentication");
+            Arc::new(BitgetService::with_credentials(
+                cex_price_provider::FilterAddressType::Ethereum,
+                api_key,
+                api_secret,
+                api_passphrase,
+            ))
+        }
+        _ => {
+            info!("Bitget API credentials not found, initializing without authentication (limited functionality)");
+            Arc::new(BitgetService::new(
+                cex_price_provider::FilterAddressType::Ethereum,
+            ))
+        }
+    };
+
     let gate_service = Arc::new(GateService::new(
         cex_price_provider::FilterAddressType::Ethereum,
     ));
@@ -385,6 +1096,19 @@ async fn main() -> Result<()> {
     let kyber_client = Arc::new(KyberClient::new());
     info!("KyberSwap client initialized successfully");
 
+    // Fetch deposit addresses for each CEX (for a common token like USDT to get the ERC20 deposit address)
+    // We use "USDT" as the symbol since all exchanges support it and it gives us the Ethereum deposit address
+    info!("Fetching deposit addresses for CEX exchanges...");
+    let mexc_deposit_addr = env::var("MEXC_ERC20_DEPOSIT_ADDRESS").ok();
+
+    let bybit_deposit_addr = env::var("BYBIT_ERC20_DEPOSIT_ADDRESS").ok();
+
+    let kucoin_deposit_addr = env::var("KUCOIN_ERC20_DEPOSIT_ADDRESS").ok();
+
+    let bitget_deposit_addr = env::var("BITGET_ERC20_DEPOSIT_ADDRESS").ok();
+
+    let gate_deposit_addr = None;
+
     // Create a vector of CEX providers for arbitrage checking
     let cex_providers: Vec<CexProvider> = vec![
         CexProvider {
@@ -395,6 +1119,7 @@ async fn main() -> Result<()> {
             kucoin: None,
             bitget: None,
             gate: None,
+            deposit_address: mexc_deposit_addr,
         },
         CexProvider {
             name: "Bybit",
@@ -404,6 +1129,7 @@ async fn main() -> Result<()> {
             kucoin: None,
             bitget: None,
             gate: None,
+            deposit_address: bybit_deposit_addr,
         },
         CexProvider {
             name: "KuCoin",
@@ -413,6 +1139,7 @@ async fn main() -> Result<()> {
             kucoin: Some(kucoin_service.clone()),
             bitget: None,
             gate: None,
+            deposit_address: kucoin_deposit_addr,
         },
         CexProvider {
             name: "Bitget",
@@ -422,6 +1149,7 @@ async fn main() -> Result<()> {
             kucoin: None,
             bitget: Some(bitget_service.clone()),
             gate: None,
+            deposit_address: bitget_deposit_addr,
         },
         CexProvider {
             name: "Gate.io",
@@ -431,6 +1159,7 @@ async fn main() -> Result<()> {
             kucoin: None,
             bitget: None,
             gate: Some(gate_service.clone()),
+            deposit_address: gate_deposit_addr,
         },
     ];
     let cex_providers = Arc::new(cex_providers);
@@ -556,7 +1285,7 @@ async fn main() -> Result<()> {
             );
 
             // Read arbitrage simulation amount from environment (default: 400 USDT)
-            let arb_amount_usdt: f64 = std::env::var("ARB_SIMULATION_USDT")
+            let arb_amount_usdt: f64 = std::env::var("ARB_AMOUNT_USDT")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(400.0);
@@ -668,83 +1397,54 @@ async fn main() -> Result<()> {
                                     "Step 2: Getting Kyber swap estimate for {} USDT",
                                     arb_amount_usdt
                                 );
-                                let (tokens_from_dex, gas_fee_usd, route_response) = match kyber_client
-                                    .get_swap_route(
-                                        USDT_ADDRESS,
-                                        &update.token_address,
-                                        &usdt_amount_wei.to_string(),
-                                    )
-                                    .await
-                                {
-                                    Ok(route_resp) => {
-                                        let gas_usd = route_resp.data.route_summary.gas_usd.parse::<f64>().unwrap_or(0.0);
-                                        match route_resp.data.route_summary.amount_out.parse::<u128>() {
-                                            Ok(wei) => {
-                                                let divisor = 10_u128.pow(update.decimals as u32);
-                                                let tokens = wei as f64 / divisor as f64;
-                                                log::debug!(
+                                let (tokens_from_dex, gas_fee_usd, route_response) =
+                                    match kyber_client
+                                        .get_swap_route(
+                                            USDT_ADDRESS,
+                                            &update.token_address,
+                                            &usdt_amount_wei.to_string(),
+                                        )
+                                        .await
+                                    {
+                                        Ok(route_resp) => {
+                                            let gas_usd = route_resp
+                                                .data
+                                                .route_summary
+                                                .gas_usd
+                                                .parse::<f64>()
+                                                .unwrap_or(0.0);
+                                            match route_resp
+                                                .data
+                                                .route_summary
+                                                .amount_out
+                                                .parse::<u128>()
+                                            {
+                                                Ok(wei) => {
+                                                    let divisor =
+                                                        10_u128.pow(update.decimals as u32);
+                                                    let tokens = wei as f64 / divisor as f64;
+                                                    log::debug!(
                                                     "  Kyber estimate: {} USDT → {:.6} tokens (gas: ${:.2})",
                                                     arb_amount_usdt,
                                                     tokens,
                                                     gas_usd
                                                 );
-                                                (tokens, gas_usd, route_resp)
+                                                    (tokens, gas_usd, route_resp)
+                                                }
+                                                Err(e) => {
+                                                    log::warn!(
+                                                        "Failed to parse Kyber output amount: {}",
+                                                        e
+                                                    );
+                                                    return;
+                                                }
                                             }
-                                            Err(e) => {
-                                                log::warn!(
-                                                    "Failed to parse Kyber output amount: {}",
-                                                    e
-                                                );
-                                                return;
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::warn!("Failed to get Kyber quote: {}", e);
-                                        return;
-                                    }
-                                };
-
-                                // Step 2.5: Simulate the transaction on-chain to verify it would succeed (optional)
-                                // Only run simulation if ETH_RPC_URL and ETH_PRIVATE_KEY are configured
-                                if env::var("ETH_RPC_URL").is_ok() && env::var("ETH_PRIVATE_KEY").is_ok() {
-                                    log::debug!(
-                                        "Step 2.5: Simulating on-chain transaction with eth_estimateGas..."
-                                    );
-                                    match kyber_client
-                                        .simulate_swap_transaction(&route_response.data.route_summary)
-                                        .await
-                                    {
-                                        Ok(gas_estimate) => {
-                                            log::info!(
-                                                "✅ On-chain simulation SUCCESS! Transaction would succeed (estimated gas: {})",
-                                                gas_estimate
-                                            );
                                         }
                                         Err(e) => {
-                                            // Check if it's a Cloudflare block
-                                            let err_str = e.to_string();
-                                            if err_str.contains("Cloudflare") || err_str.contains("403") {
-                                                log::warn!(
-                                                    "⚠️ KyberSwap API blocked by Cloudflare for {}. Skipping simulation but continuing with arbitrage estimation.",
-                                                    update.token_address
-                                                );
-                                                // Continue with arbitrage - don't return early
-                                            } else {
-                                                log::warn!(
-                                                    "❌ On-chain simulation FAILED for {}: {} - Transaction would revert, skipping arbitrage",
-                                                    update.token_address,
-                                                    e
-                                                );
-                                                return;
-                                            }
+                                            log::warn!("Failed to get Kyber quote: {}", e);
+                                            return;
                                         }
-                                    }
-                                } else {
-                                    log::debug!(
-                                        "Step 2.5: Skipping on-chain simulation (ETH_RPC_URL or ETH_PRIVATE_KEY not configured)"
-                                    );
-                                }
+                                    };
 
                                 // Step 3: Estimate output USDT from each CEX using their orderbook
                                 log::debug!(
@@ -778,18 +1478,27 @@ async fn main() -> Result<()> {
                                 }
 
                                 // Step 4: Only proceed with full arbitrage simulation if we have positive profit
-                                if let (Some(profit), Some(cex_idx)) = (best_profit, best_cex_index) {
+                                if let (Some(profit), Some(cex_idx)) = (best_profit, best_cex_index)
+                                {
                                     if profit > 0.0 {
                                         let best_cex = &cex_providers[cex_idx];
+                                        let token_symbol = best_cex
+                                            .service
+                                            .get_token_symbol_for_contract_address(
+                                                &update.token_address,
+                                            )
+                                            .await
+                                            .unwrap_or_else(|| update.token_address.clone());
                                         log::info!(
-                                            "✅ Positive profit potential detected for {}: ${:.2} on {}",
+                                            "✅ Positive profit potential detected for {} ({}): ${:.2} on {}",
+                                            token_symbol,
                                             update.token_address,
                                             profit,
                                             best_cex.name
                                         );
-                                        log::info!("Proceeding with full arbitrage simulation...");
+                                        log::info!("Proceeding with full arbitrage execution...");
 
-                                        // Run full arbitrage simulation with delays
+                                        // Run full arbitrage execution with pre-fetched route data
                                         // (Token already marked as processed before spawning this task)
                                         // Pass ONLY the best CEX provider, not all of them
                                         process_arbitrage(
@@ -797,6 +1506,9 @@ async fn main() -> Result<()> {
                                             best_cex,
                                             &update,
                                             arb_amount_usdt,
+                                            gas_fee_usd,
+                                            tokens_from_dex,
+                                            route_response.data.route_summary,
                                             &db,
                                         )
                                         .await;
@@ -808,8 +1520,8 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                 } else {
-                                    log::debug!(
-                                        "❌ No CEX liquidity found for {}, skipping",
+                                    log::info!(
+                                        "❌ No profitable CEX outputs found for {}, skipping arbitrage",
                                         update.token_address
                                     );
                                 }

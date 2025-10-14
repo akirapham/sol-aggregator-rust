@@ -617,45 +617,55 @@ impl KyberClient {
         // For arbitrage, we want to know if it succeeded, so we wait
         log::info!("Waiting for transaction confirmation (timeout: 180s)...");
 
-        // Wait for 1 confirmation with timeout
-        let receipt_result = tokio::time::timeout(
-            Duration::from_secs(180), // 3 minutes timeout
-            pending_tx.confirmations(1)
-        ).await;
+        // Parse the transaction hash for querying
+        let tx_hash_bytes: H256 = tx_hash.parse().context("Failed to parse transaction hash")?;
 
-        match receipt_result {
-            Ok(Ok(Some(receipt))) => {
-                if receipt.status == Some(U64::from(1)) {
-                    log::info!("✅ Transaction confirmed successfully!");
-                    log::info!("   Gas used: {}", receipt.gas_used.unwrap_or_default());
-                    log::info!(
-                        "   Block number: {}",
-                        receipt.block_number.unwrap_or_default()
-                    );
-                    log::info!(
-                        "   Actual gas cost: {:.6} ETH",
-                        receipt.gas_used.unwrap_or_default().as_u64() as f64 * gas_price as f64 / 1e18
-                    );
-                } else {
-                    log::error!("❌ Transaction failed on-chain (reverted)");
-                    return Err(anyhow::anyhow!("Transaction reverted on-chain. Check Etherscan: https://etherscan.io/tx/{}", tx_hash));
+        // Poll for transaction receipt directly (more reliable than pending_tx.confirmations)
+        let start_time = std::time::Instant::now();
+        let timeout_duration = Duration::from_secs(180);
+        let poll_interval = Duration::from_secs(3); // Check every 3 seconds
+
+        let mut receipt_found = false;
+
+        while start_time.elapsed() < timeout_duration {
+            match provider.get_transaction_receipt(tx_hash_bytes).await {
+                Ok(Some(receipt)) => {
+                    receipt_found = true;
+                    if receipt.status == Some(U64::from(1)) {
+                        log::info!("✅ Transaction confirmed successfully!");
+                        log::info!("   Gas used: {}", receipt.gas_used.unwrap_or_default());
+                        log::info!(
+                            "   Block number: {}",
+                            receipt.block_number.unwrap_or_default()
+                        );
+                        log::info!(
+                            "   Actual gas cost: {:.6} ETH",
+                            receipt.gas_used.unwrap_or_default().as_u64() as f64 * gas_price as f64 / 1e18
+                        );
+                        break;
+                    } else {
+                        log::error!("❌ Transaction failed on-chain (reverted)");
+                        return Err(anyhow::anyhow!("Transaction reverted on-chain. Check Etherscan: https://etherscan.io/tx/{}", tx_hash));
+                    }
+                }
+                Ok(None) => {
+                    // Transaction not mined yet, keep waiting
+                    log::debug!("Transaction not mined yet, waiting... ({:.0}s elapsed)", start_time.elapsed().as_secs_f64());
+                    tokio::time::sleep(poll_interval).await;
+                }
+                Err(e) => {
+                    log::warn!("Error querying transaction receipt (will retry): {}", e);
+                    tokio::time::sleep(poll_interval).await;
                 }
             }
-            Ok(Ok(None)) => {
-                log::error!("❌ Transaction receipt not found after confirmation");
-                return Err(anyhow::anyhow!("Transaction receipt not available. TX: {}", tx_hash));
-            }
-            Ok(Err(e)) => {
-                log::error!("❌ Error while waiting for transaction confirmation: {}", e);
-                return Err(anyhow::anyhow!("Error waiting for confirmation: {}. TX: {}", e, tx_hash));
-            }
-            Err(_) => {
-                log::warn!("⏰ Transaction confirmation timeout after 180s");
-                log::warn!("   Transaction may still be pending. Check Etherscan: https://etherscan.io/tx/{}", tx_hash);
-                log::warn!("   Continuing anyway - transaction was successfully submitted");
-                // Don't fail - transaction was sent, just taking longer to confirm
-                // The CEX deposit check will verify if tokens arrived
-            }
+        }
+
+        if !receipt_found {
+            log::warn!("⏰ Transaction confirmation timeout after 180s");
+            log::warn!("   Transaction may still be pending. Check Etherscan: https://etherscan.io/tx/{}", tx_hash);
+            log::warn!("   Continuing anyway - transaction was successfully submitted");
+            // Don't fail - transaction was sent, just taking longer to confirm
+            // The CEX deposit check will verify if tokens arrived
         }
 
         Ok(tx_hash)

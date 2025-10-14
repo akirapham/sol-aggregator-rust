@@ -618,7 +618,9 @@ impl KyberClient {
         log::info!("Waiting for transaction confirmation (timeout: 180s)...");
 
         // Parse the transaction hash for querying
-        let tx_hash_bytes: H256 = tx_hash.parse().context("Failed to parse transaction hash")?;
+        let tx_hash_bytes: H256 = tx_hash
+            .parse()
+            .context("Failed to parse transaction hash")?;
 
         // Poll for transaction receipt directly (more reliable than pending_tx.confirmations)
         let start_time = std::time::Instant::now();
@@ -640,7 +642,8 @@ impl KyberClient {
                         );
                         log::info!(
                             "   Actual gas cost: {:.6} ETH",
-                            receipt.gas_used.unwrap_or_default().as_u64() as f64 * gas_price as f64 / 1e18
+                            receipt.gas_used.unwrap_or_default().as_u64() as f64 * gas_price as f64
+                                / 1e18
                         );
                         break;
                     } else {
@@ -650,7 +653,10 @@ impl KyberClient {
                 }
                 Ok(None) => {
                     // Transaction not mined yet, keep waiting
-                    log::debug!("Transaction not mined yet, waiting... ({:.0}s elapsed)", start_time.elapsed().as_secs_f64());
+                    log::debug!(
+                        "Transaction not mined yet, waiting... ({:.0}s elapsed)",
+                        start_time.elapsed().as_secs_f64()
+                    );
                     tokio::time::sleep(poll_interval).await;
                 }
                 Err(e) => {
@@ -662,7 +668,10 @@ impl KyberClient {
 
         if !receipt_found {
             log::warn!("⏰ Transaction confirmation timeout after 180s");
-            log::warn!("   Transaction may still be pending. Check Etherscan: https://etherscan.io/tx/{}", tx_hash);
+            log::warn!(
+                "   Transaction may still be pending. Check Etherscan: https://etherscan.io/tx/{}",
+                tx_hash
+            );
             log::warn!("   Continuing anyway - transaction was successfully submitted");
             // Don't fail - transaction was sent, just taking longer to confirm
             // The CEX deposit check will verify if tokens arrived

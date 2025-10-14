@@ -16,8 +16,12 @@ pub struct ArbitrageOpportunity {
     pub liquidity_usdt: f64,
     pub profit_usdt: f64,
     pub profit_percent: f64,
+    // These fields were added later, so make them optional for backward compatibility
+    #[serde(default)]
     pub arb_amount_usdt: f64,
+    #[serde(default)]
     pub tokens_from_dex: f64,
+    #[serde(default)]
     pub gas_fee_usd: f64,
 }
 

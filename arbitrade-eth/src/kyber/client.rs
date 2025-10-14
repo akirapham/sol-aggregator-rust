@@ -556,8 +556,8 @@ impl KyberClient {
         // Use simulated gas estimate if it's higher (add 10% buffer for safety)
         let final_gas_limit = std::cmp::max(gas_limit, (gas_estimate.as_u64() as f64 * 1.1) as u64);
 
-        // Increase gas price by 20% for faster execution
-        let gas_price = (base_gas_price as f64 * 1.2) as u64;
+        // Increase gas price by 50% for faster execution (arbitrage needs speed!)
+        let gas_price = (base_gas_price as f64 * 1.5) as u64;
 
         log::info!("Gas parameters for execution:");
         log::info!("  KyberSwap Gas Limit: {}", gas_limit);
@@ -573,7 +573,7 @@ impl KyberClient {
             base_gas_price as f64 / 1e9
         );
         log::info!(
-            "  Boosted Gas Price (+20%): {} wei ({:.2} gwei)",
+            "  Boosted Gas Price (+50%): {} wei ({:.2} gwei)",
             gas_price,
             gas_price as f64 / 1e9
         );
@@ -613,22 +613,49 @@ impl KyberClient {
         log::info!("✅ Transaction sent! Hash: {}", tx_hash);
         log::info!("   View on Etherscan: https://etherscan.io/tx/{}", tx_hash);
 
-        // Wait for confirmation (optional - can be removed if you want fire-and-forget)
-        log::info!("Waiting for transaction confirmation...");
-        let receipt = pending_tx
-            .await?
-            .context("Transaction failed - no receipt")?;
+        // Wait for confirmation with a reasonable timeout
+        // For arbitrage, we want to know if it succeeded, so we wait
+        log::info!("Waiting for transaction confirmation (timeout: 180s)...");
 
-        if receipt.status == Some(U64::from(1)) {
-            log::info!("✅ Transaction confirmed successfully!");
-            log::info!("   Gas used: {}", receipt.gas_used.unwrap_or_default());
-            log::info!(
-                "   Block number: {}",
-                receipt.block_number.unwrap_or_default()
-            );
-        } else {
-            log::error!("❌ Transaction failed on-chain");
-            return Err(anyhow::anyhow!("Transaction reverted on-chain"));
+        // Wait for 1 confirmation with timeout
+        let receipt_result = tokio::time::timeout(
+            Duration::from_secs(180), // 3 minutes timeout
+            pending_tx.confirmations(1)
+        ).await;
+
+        match receipt_result {
+            Ok(Ok(Some(receipt))) => {
+                if receipt.status == Some(U64::from(1)) {
+                    log::info!("✅ Transaction confirmed successfully!");
+                    log::info!("   Gas used: {}", receipt.gas_used.unwrap_or_default());
+                    log::info!(
+                        "   Block number: {}",
+                        receipt.block_number.unwrap_or_default()
+                    );
+                    log::info!(
+                        "   Actual gas cost: {:.6} ETH",
+                        receipt.gas_used.unwrap_or_default().as_u64() as f64 * gas_price as f64 / 1e18
+                    );
+                } else {
+                    log::error!("❌ Transaction failed on-chain (reverted)");
+                    return Err(anyhow::anyhow!("Transaction reverted on-chain. Check Etherscan: https://etherscan.io/tx/{}", tx_hash));
+                }
+            }
+            Ok(Ok(None)) => {
+                log::error!("❌ Transaction receipt not found after confirmation");
+                return Err(anyhow::anyhow!("Transaction receipt not available. TX: {}", tx_hash));
+            }
+            Ok(Err(e)) => {
+                log::error!("❌ Error while waiting for transaction confirmation: {}", e);
+                return Err(anyhow::anyhow!("Error waiting for confirmation: {}. TX: {}", e, tx_hash));
+            }
+            Err(_) => {
+                log::warn!("⏰ Transaction confirmation timeout after 180s");
+                log::warn!("   Transaction may still be pending. Check Etherscan: https://etherscan.io/tx/{}", tx_hash);
+                log::warn!("   Continuing anyway - transaction was successfully submitted");
+                // Don't fail - transaction was sent, just taking longer to confirm
+                // The CEX deposit check will verify if tokens arrived
+            }
         }
 
         Ok(tx_hash)

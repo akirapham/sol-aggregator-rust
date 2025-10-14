@@ -752,12 +752,18 @@ async fn process_arbitrage(
     );
 
     for i in 0..num_chunks {
-        let sell_amount = if i == num_chunks - 1 {
+        let mut sell_amount = if i == num_chunks - 1 {
             // Last chunk: sell remaining to avoid rounding errors
             rounded_amount - total_sold
         } else {
             chunk_amount
         };
+
+        // Round each chunk to the correct precision (same as we did for the total amount)
+        // This ensures each chunk meets exchange requirements
+        let divisor = 10_f64.powi(quantity_precision as i32);
+        sell_amount = (sell_amount * divisor).floor() / divisor;
+
         log::info!(
             "Chunk {}: Selling {:.6} {} for USDT...",
             i + 1,

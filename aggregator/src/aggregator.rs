@@ -430,16 +430,49 @@ impl DexAggregator {
         for i in 0..len {
             let mut combined_output_amount = 0;
             let mut current_paths = vec![];
+
+            // Check if we can combine these paths (they shouldn't share pools)
+            let mut can_combine = true;
+            let mut used_pools = HashSet::new();
+
             if let Some(direct_path) = &splits_with_distributions[0][i] {
                 if direct_path.output_amount > 0 {
+                    // Collect pools from this path
+                    for step in &direct_path.steps {
+                        used_pools.insert(step.pool_address);
+                    }
                     current_paths.push(direct_path.clone());
                     combined_output_amount += direct_path.output_amount;
                 }
             }
+
             if let Some(hop_path) = &splits_with_distributions[1][len - 1 - i] {
                 if hop_path.output_amount > 0 {
-                    current_paths.push(hop_path.clone());
-                    combined_output_amount += hop_path.output_amount;
+                    // Check if this path shares any pools with already added paths
+                    for step in &hop_path.steps {
+                        if used_pools.contains(&step.pool_address) {
+                            can_combine = false;
+                            break;
+                        }
+                    }
+
+                    if can_combine {
+                        current_paths.push(hop_path.clone());
+                        combined_output_amount += hop_path.output_amount;
+                    } else {
+                        // If we can't combine, just use the path with better output
+                        if let Some(direct_path) = &splits_with_distributions[0][i] {
+                            if hop_path.output_amount > direct_path.output_amount {
+                                current_paths.clear();
+                                current_paths.push(hop_path.clone());
+                                combined_output_amount = hop_path.output_amount;
+                            }
+                            // Otherwise keep the direct path we already added
+                        } else {
+                            current_paths.push(hop_path.clone());
+                            combined_output_amount = hop_path.output_amount;
+                        }
+                    }
                 }
             }
 

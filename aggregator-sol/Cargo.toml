@@ -51,6 +51,9 @@ env_logger = { workspace = true}
 # Base58 encoding for Solana addresses
 bs58 = { workspace = true}
 
+# Base64 encoding for auth
+base64 = { workspace = true}
+
 # Borsh serialization (used by many Solana programs)
 borsh = { workspace = true}
 

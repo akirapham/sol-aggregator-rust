@@ -324,7 +324,7 @@ impl PoolStateManager {
         let token_cache_clone = Arc::clone(&self.token_cache);
 
         tokio::spawn(async move {
-            let mut save_ticker = interval(Duration::from_secs(15)); // 15 minutes
+            let mut save_ticker = interval(Duration::from_secs(6 * 60 * 60)); // 6h
             loop {
                 save_ticker.tick().await;
                 // measure time to save
@@ -488,7 +488,7 @@ impl PoolStateManager {
         let arbitrage_monitored_tokens = Arc::clone(&self.arbitrage_monitored_tokens);
 
         tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_millis(400));
+            let mut ticker = interval(Duration::from_millis(100));
             loop {
                 ticker.tick().await;
 
@@ -1276,6 +1276,11 @@ impl PoolStateManager {
     }
 
     /// Save in-memory data to RocksDB
+    pub async fn save_pools(&self) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Saving pools to database...");
+        Self::save_to_db(&self.db, &self.pools, &self.token_cache).await
+    }
+
     async fn save_to_db(
         db: &Arc<DB>,
         pools: &PoolStorage,

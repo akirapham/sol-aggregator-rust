@@ -2,17 +2,19 @@ use crate::aggregator::DexAggregator;
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
+use rocksdb::{DB, Options};
+use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
+use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 
-#[allow(unused)]
 /// Detected arbitrage opportunity
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArbitrageOpportunity {
     pub pair_name: String,
-    pub token_a: Pubkey,
-    pub token_b: Pubkey,
+    pub token_a: String,
+    pub token_b: String,
     pub profit_amount: u64,
     pub profit_percent: f64,
     pub input_amount: u64,
@@ -25,23 +27,24 @@ pub struct ArbitrageOpportunity {
 pub struct ArbitrageMonitor {
     aggregator: Arc<DexAggregator>,
     config: ArbitrageConfig,
-    opportunity_tx: mpsc::UnboundedSender<ArbitrageOpportunity>,
+    db: Arc<DB>,
 }
 
 impl ArbitrageMonitor {
     pub fn new(
         aggregator: Arc<DexAggregator>,
         config: ArbitrageConfig,
-    ) -> (Self, mpsc::UnboundedReceiver<ArbitrageOpportunity>) {
-        let (opportunity_tx, opportunity_rx) = mpsc::unbounded_channel();
+        db_path: impl AsRef<Path>,
+    ) -> Result<Self, rocksdb::Error> {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        let db = DB::open(&opts, db_path)?;
 
-        let monitor = Self {
+        Ok(Self {
             aggregator,
             config,
-            opportunity_tx,
-        };
-
-        (monitor, opportunity_rx)
+            db: Arc::new(db),
+        })
     }
 
     /// Subscribe to pool update events from the pool manager
@@ -173,8 +176,8 @@ impl ArbitrageMonitor {
                 if profit_bps >= self.config.settings.min_profit_bps {
                     let opportunity = ArbitrageOpportunity {
                         pair_name: format!("{}-{}", token_a, token_b),
-                        token_a,
-                        token_b,
+                        token_a: token_a.to_string(),
+                        token_b: token_b.to_string(),
                         profit_amount: profit,
                         profit_percent,
                         input_amount: self.config.settings.base_amount,
@@ -194,9 +197,9 @@ impl ArbitrageMonitor {
                         profit
                     );
 
-                    // Send opportunity to channel
-                    if let Err(e) = self.opportunity_tx.send(opportunity) {
-                        log::error!("Failed to send arbitrage opportunity: {}", e);
+                    // Save opportunity to RocksDB
+                    if let Err(e) = self.save_opportunity(&opportunity) {
+                        log::error!("Failed to save arbitrage opportunity: {}", e);
                     }
                 }
             }
@@ -205,5 +208,80 @@ impl ArbitrageMonitor {
                 log::debug!("No profitable arbitrage for {} -> {}", token_a, token_b);
             }
         }
+    }
+
+    /// Save an opportunity to RocksDB
+    fn save_opportunity(&self, opportunity: &ArbitrageOpportunity) -> Result<(), String> {
+        let key = format!("opp:{}:{}", opportunity.detected_at, opportunity.pair_name);
+        let value = serde_json::to_vec(opportunity)
+            .map_err(|e| format!("Failed to serialize opportunity: {}", e))?;
+        self.db.put(key.as_bytes(), value)
+            .map_err(|e| format!("Failed to save to DB: {}", e))?;
+        Ok(())
+    }
+
+    /// Get recent opportunities (last N)
+    pub fn get_recent_opportunities(&self, limit: usize) -> Vec<ArbitrageOpportunity> {
+        let mut opportunities = Vec::new();
+        let mut iter = self.db.raw_iterator();
+
+        // Seek to the last key with "opp:" prefix
+        iter.seek_to_last();
+
+        while iter.valid() {
+            if let Some(key) = iter.key() {
+                if let Ok(key_str) = std::str::from_utf8(key) {
+                    if key_str.starts_with("opp:") {
+                        if let Some(value) = iter.value() {
+                            if let Ok(opp) = serde_json::from_slice::<ArbitrageOpportunity>(value) {
+                                opportunities.push(opp);
+                                if opportunities.len() >= limit {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        break; // No more opportunities
+                    }
+                }
+            }
+            iter.prev();
+        }
+
+        opportunities
+    }
+
+    /// Clear old opportunities (older than N seconds)
+    pub fn cleanup_old_opportunities(&self, max_age_seconds: u64) -> Result<usize, String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let cutoff_time = now - max_age_seconds;
+        let mut deleted_count = 0;
+
+        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
+        let mut keys_to_delete = Vec::new();
+
+        for item in iter.flatten() {
+            let (key, value) = item;
+            if let Ok(key_str) = std::str::from_utf8(&key) {
+                if key_str.starts_with("opp:") {
+                    if let Ok(opp) = serde_json::from_slice::<ArbitrageOpportunity>(&value) {
+                        if opp.detected_at < cutoff_time {
+                            keys_to_delete.push(key.to_vec());
+                        }
+                    }
+                }
+            }
+        }
+
+        for key in &keys_to_delete {
+            self.db.delete(key).map_err(|e| format!("Failed to delete key: {}", e))?;
+            deleted_count += 1;
+        }
+
+        Ok(deleted_count)
     }
 }

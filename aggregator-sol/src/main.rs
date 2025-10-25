@@ -18,6 +18,7 @@ use dotenv::dotenv;
 use env_logger::Env;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::signal;
 
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
@@ -38,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Start the pool manager and gRPC streaming
     log::info!("Starting pool manager and gRPC streaming...");
-    let (grpc_service, batch_rx) = create_grpc_service(50, 500).await?;
+    let (grpc_service, batch_rx) = create_grpc_service(50, 100).await?;
     let pool_manager = Arc::new(PoolStateManager::new(grpc_service, price_service.clone()).await);
 
     // Start background event processing
@@ -66,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arb_config_path = std::env::var("ARBITRAGE_CONFIG_PATH")
         .unwrap_or_else(|_| "arbitrage_config.toml".to_string());
 
-    let arb_config_arc = if let Ok(mut arb_config) = ArbitrageConfig::from_file(&arb_config_path) {
+    let (arb_config_arc, arbitrage_monitor) = if let Ok(mut arb_config) = ArbitrageConfig::from_file(&arb_config_path) {
         log::info!("Arbitrage configuration loaded from {}", arb_config_path);
 
         // Load tokens from DB and merge with TOML config
@@ -118,8 +119,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
 
         let aggregator_clone = aggregator.clone();
-        let (monitor, mut opportunity_rx) =
-            ArbitrageMonitor::new(aggregator_clone, arb_config.clone());
+        let monitor = ArbitrageMonitor::new(
+            aggregator_clone,
+            arb_config.clone(),
+            "rocksdb_data/arbitrage_opportunities",
+        ).expect("Failed to create arbitrage monitor");
 
         // Wrap monitor in Arc for sharing across tasks
         let monitor = Arc::new(monitor);
@@ -129,32 +133,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let monitor_for_events = monitor.clone();
         monitor_for_events.subscribe_to_pool_updates(pool_update_rx);
 
-        // Handle detected arbitrage opportunities
+        // Spawn a cleanup task to remove old opportunities periodically
+        let monitor_for_cleanup = monitor.clone();
         tokio::spawn(async move {
-            while let Some(opportunity) = opportunity_rx.recv().await {
-                log::info!(
-                    "🎯 Arbitrage opportunity detected: {} | Profit: {} ({:.2}%) | Input: {} -> Forward: {} -> Reverse: {}",
-                    opportunity.pair_name,
-                    opportunity.profit_amount,
-                    opportunity.profit_percent,
-                    opportunity.input_amount,
-                    opportunity.forward_output,
-                    opportunity.reverse_output
-                );
-                // TODO: Implement execution logic here
-                // For now, just logging the opportunities
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
+            loop {
+                interval.tick().await;
+                match monitor_for_cleanup.cleanup_old_opportunities(86400) {
+                    // Keep last 24 hours
+                    Ok(count) => {
+                        if count > 0 {
+                            log::info!("Cleaned up {} old arbitrage opportunities", count);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to cleanup old opportunities: {}", e);
+                    }
+                }
             }
         });
 
         log::info!("Arbitrage monitoring started successfully (broadcast mode)");
-        Some(Arc::new(std::sync::RwLock::new(arb_config)))
+        (Some(Arc::new(std::sync::RwLock::new(arb_config))), Some(monitor))
     } else {
         log::warn!(
             "Arbitrage configuration not found at {}. Arbitrage monitoring disabled.",
             arb_config_path
         );
         // Create a default config for API to work
-        None
+        (None, None)
     };
 
     // 3. Create and start the REST API server
@@ -164,7 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create router with aggregator and arbitrage config
     let app = if let Some(arb_config) = arb_config_arc {
-        api::create_router(aggregator, arb_config)
+        api::create_router(aggregator, arb_config, arbitrage_monitor)
     } else {
         // Create a default empty config if not available
         let default_config = ArbitrageConfig {
@@ -177,7 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             monitored_tokens: vec![],
         };
-        api::create_router(aggregator, Arc::new(std::sync::RwLock::new(default_config)))
+        api::create_router(aggregator, Arc::new(std::sync::RwLock::new(default_config)), None)
     };
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
@@ -188,8 +195,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");
     log::info!("  GET  /health - Health check");
 
-    // 4. Start serving
-    serve(listener, app).await?;
+    // 4. Start serving with graceful shutdown
+    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+
+    // Setup signal handlers for graceful shutdown
+    let shutdown_tx_ctrl_c = shutdown_tx.clone();
+    tokio::spawn(async move {
+        match signal::ctrl_c().await {
+            Ok(()) => {
+                log::info!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
+                let _ = shutdown_tx_ctrl_c.send(());
+            }
+            Err(err) => {
+                log::error!("Failed to listen for SIGINT: {}", err);
+            }
+        }
+    });
+
+    // Setup signal handlers for SIGTERM
+    let shutdown_tx_sigterm = shutdown_tx.clone();
+    tokio::spawn(async move {
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+                log::info!("Received SIGTERM, initiating graceful shutdown...");
+                let _ = shutdown_tx_sigterm.send(());
+            }
+            Err(err) => {
+                log::error!("Failed to listen for SIGTERM: {}", err);
+            }
+        }
+    });
+
+    // Create a task that listens for shutdown signal
+    let pool_manager_shutdown = pool_manager.clone();
+    let shutdown_handle = tokio::spawn(async move {
+        let mut rx = shutdown_rx;
+        rx.recv().await.ok();
+
+        log::info!("Saving pools to database before shutdown...");
+        if let Err(e) = pool_manager_shutdown.save_pools().await {
+            log::error!("Failed to save pools: {}", e);
+        } else {
+            log::info!("Pools saved successfully");
+        }
+    });
+
+    // Run the server
+    let server_result = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let mut rx = shutdown_tx.subscribe();
+            rx.recv().await.ok();
+        })
+        .await;
+
+    // Wait for shutdown handler to complete
+    let _ = tokio::time::timeout(
+        tokio::time::Duration::from_secs(30),
+        shutdown_handle,
+    ).await;
+
+    server_result?;
 
     Ok(())
 }

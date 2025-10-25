@@ -6,6 +6,7 @@ use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
+#[allow(unused)]
 /// Detected arbitrage opportunity
 #[derive(Debug, Clone)]
 pub struct ArbitrageOpportunity {
@@ -18,14 +19,6 @@ pub struct ArbitrageOpportunity {
     pub forward_output: u64,
     pub reverse_output: u64,
     pub detected_at: u64,
-}
-
-/// Price comparison result
-#[derive(Debug, Clone)]
-struct PriceComparison {
-    forward_price: f64,    // Price of token_b in token_a (token_a -> token_b)
-    reverse_price: f64,    // Price of token_a in token_b (token_b -> token_a)
-    price_difference: f64, // (forward_price * reverse_price - 1) * 100 as percentage
 }
 
 /// Active arbitrage monitor that watches pool updates

@@ -16,6 +16,7 @@ const TICK_ARRAY_BITMAP_SIZE: i32 = 512;
 const TICK_ARRAY_SEED: &str = "tick_array";
 const EXTENSION_TICKARRAY_BITMAP_SIZE: usize = 14;
 
+#[allow(unused)]
 #[derive(Clone, Debug)]
 pub struct TickArrayInfo {
     pub start_tick_index: i32,
@@ -51,6 +52,7 @@ pub struct TickArrayFetcher {
     pub program_id: Pubkey,
 }
 
+#[allow(unused)]
 impl TickArrayFetcher {
     pub fn new(rpc_client: Arc<RpcClient>, program_id: Pubkey) -> Self {
         Self {

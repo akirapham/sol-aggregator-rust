@@ -8,6 +8,8 @@ use crate::pool_data_types::{DexType, GetAmmConfig, PoolState};
 use crate::pool_manager::PoolStateManager;
 use crate::types::{AggregatorConfig, SwapParams};
 use crate::utils::{calculate_min_output_amount, tokens_equal};
+
+#[allow(unused)]
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
     config: AggregatorConfig,
@@ -26,6 +28,7 @@ pub struct SwapStepInternal {
     pub percent: u64,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct SwapPath {
     pub steps: Vec<SwapStepInternal>,
@@ -33,6 +36,7 @@ pub struct SwapPath {
     pub output_amount: u64,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct SwapRoute {
     pub paths: Vec<SwapPath>,
@@ -572,6 +576,7 @@ impl DexAggregator {
         }
     }
 
+    #[allow(unused)]
     /// Get configuration
     pub fn get_config(&self) -> &AggregatorConfig {
         &self.config

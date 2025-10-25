@@ -276,7 +276,7 @@ pub fn pool_update_event_to_pool_state(
 
             (Some(PoolState::RadyiumClmm(pool_state)), true)
         }
-        PoolUpdateEvent::MeteoraDbc(dbc_pool_update) => todo!(),
+        PoolUpdateEvent::MeteoraDbc(_dbc_pool_update) => todo!(),
     }
 }
 
@@ -565,8 +565,8 @@ pub fn update_pool_state_by_event(
                 }
             }
         }
-        PoolUpdateEvent::MeteoraDbc(dbc_pool_update) => {
-            if let PoolState::MeteoraDbc(state) = &mut **existing_state {}
+        PoolUpdateEvent::MeteoraDbc(_dbc_pool_update) => {
+            if let PoolState::MeteoraDbc(_state) = &mut **existing_state {}
         }
     }
     is_pool_with_ticks

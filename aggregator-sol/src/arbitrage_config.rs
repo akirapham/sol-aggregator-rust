@@ -123,6 +123,7 @@ impl ArbitrageConfig {
         Ok(self.monitored_tokens.remove(pos))
     }
 
+    #[allow(unused)]
     /// Enable or disable a token
     pub fn set_token_enabled(&mut self, address: &str, enabled: bool) -> Result<(), String> {
         let token = self

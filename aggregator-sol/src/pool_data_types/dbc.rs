@@ -131,8 +131,8 @@ impl DbcPoolState {
     /// Calculate output amount for PumpFun bonding curve
     pub fn calculate_output_amount(
         &self,
-        input_token: &Pubkey,
-        input_amount: u64,
+        _input_token: &Pubkey,
+        _input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
     ) -> u64 {
         // let is_buy = tokens_equal(input_token, &get_sol_mint());

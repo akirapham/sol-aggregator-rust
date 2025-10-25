@@ -411,7 +411,6 @@ impl PoolStateManager {
                             let pool_state = (*pool_guard).clone();
                             match pool_state {
                                 PoolState::RadyiumClmm(ref clmm_pool_state) => {
-                                    let start_time = std::time::Instant::now();
                                     let tick_array_state_result = fetcher_c.fetch_all_tick_arrays(pool_id, Arc::new(clmm_pool_state)).await;
                                     // get recv_us as time receive the tick arrays
                                     let recv_us = get_high_perf_clock();

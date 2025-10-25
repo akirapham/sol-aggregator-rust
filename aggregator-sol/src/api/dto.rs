@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 // Ensure serde is imported for Json serialization
 use axum::{http::StatusCode, Json};
-use validator::{Validate, ValidationError};
+use validator::Validate;
 
 use crate::{
     aggregator::DexAggregator,
@@ -112,37 +112,6 @@ pub struct ArbitrageResponse {
     pub reverse_output: u64,
     pub time_taken_ms: u64,
     pub context_slot: u64,
-}
-
-// Custom validation function for Solana pubkeys
-fn validate_solana_pubkey(pubkey_str: &str) -> Result<(), ValidationError> {
-    match bs58::decode(pubkey_str).into_vec() {
-        Ok(bytes) if bytes.len() == 32 => Ok(()),
-        _ => Err(ValidationError::new("Invalid Solana public key format")),
-    }
-}
-
-// If you want more specific pubkey validation, you can add a custom validator
-#[derive(Deserialize, Serialize, Validate)]
-pub struct EnhancedQuoteRequest {
-    #[validate(custom(function = "validate_solana_pubkey"))]
-    pub input_token: String,
-
-    #[validate(custom(function = "validate_solana_pubkey"))]
-    pub output_token: String,
-
-    #[validate(custom(function = "validate_solana_pubkey"))]
-    pub user_wallet: String,
-
-    #[validate(range(min = 1, message = "Input amount must be greater than 0"))]
-    pub input_amount: u64,
-
-    #[validate(range(
-        min = 0,
-        max = 10000,
-        message = "Slippage must be between 0 and 10000 basis points (0-100%)"
-    ))]
-    pub slippage_bps: u16,
 }
 
 #[derive(Serialize)]

@@ -25,6 +25,7 @@ pub struct MathUtil {}
 
 pub struct LiquidityMath {}
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct SwapComputeResult {
     pub all_trade: bool,
@@ -498,6 +499,7 @@ fn mul_right_shift(val: &Integer, mul_by: &Integer) -> Integer {
     signed_right_shift(product, 64, 256)
 }
 
+#[allow(unused)]
 impl SqrtPriceMath {
     pub fn price_to_sqrt_price_x64(price: &rug::Float, decimals_a: u8, decimals_b: u8) -> u128 {
         let prec = price.prec();
@@ -764,6 +766,7 @@ impl SqrtPriceMath {
     }
 }
 
+#[allow(unused)]
 impl MathUtil {
     pub fn decimal_to_x64(num: &rug::Float) -> rug::Integer {
         num.mul(2_i32.pow(64)).complete(0).to_integer().unwrap()

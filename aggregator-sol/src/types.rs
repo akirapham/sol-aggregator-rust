@@ -133,6 +133,7 @@ pub struct SmartRoutingConfig {
     pub enable_dynamic_slippage: bool,
 }
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum PoolUpdateEvent {
     Pumpfun(PumpfunPoolUpdate),

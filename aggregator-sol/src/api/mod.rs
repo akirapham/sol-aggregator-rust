@@ -1,4 +1,5 @@
 // src/api/mod.rs
+pub mod dashboard;
 pub mod dto;
 pub mod handlers;
 
@@ -26,6 +27,8 @@ pub fn create_router(
     };
 
     Router::new()
+        .route("/", get(dashboard::dashboard_page))
+        .route("/dashboard", get(dashboard::dashboard_page))
         .route("/health", get(handlers::health_check))
         .route("/quote", post(handlers::get_quote))
         .route("/arbitrage", post(handlers::check_arbitrage))
@@ -38,5 +41,5 @@ pub fn create_router(
         // .route("/routes", post(handlers::get_routes))
         .route("/pools/:token0/:token1", get(handlers::get_pools))
         .route("/stats", get(handlers::get_pool_stats))
-        .with_state(state)
+        .with_state(Arc::new(state))
 }

@@ -4,8 +4,8 @@
 [settings]
 min_profit_bps = 50  # 0.5% minimum profit (50 basis points)
 base_token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC - always start with this
-base_amount = 100000000  # 100 USDC (6 decimals)
-slippage_bps = 50  # 0.5% slippage tolerance
+base_amount = 200000000  # 200 USDC (6 decimals)
+slippage_bps = 20  # 0.2% slippage tolerance
 max_concurrent_checks = 10  # Maximum concurrent arbitrage checks
 
 # Safety settings (future use)

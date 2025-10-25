@@ -15,6 +15,7 @@ use axum::{
 };
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Instant;
 use validator::Validate;
 
@@ -23,7 +24,7 @@ pub async fn health_check() -> &'static str {
 }
 
 pub async fn get_pool_stats(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<PoolManagerStats>, StatusCode> {
     // Placeholder implementation
     let stats = state.aggregator.get_pool_manager().get_stats().await;
@@ -31,7 +32,7 @@ pub async fn get_pool_stats(
 }
 
 pub async fn get_quote(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<QuoteRequest>,
 ) -> Result<Json<QuoteResponse>, (StatusCode, Json<ErrorResponse>)> {
     let start_time = Instant::now();
@@ -159,7 +160,7 @@ pub async fn get_quote(
 }
 
 pub async fn get_pools(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path((token0, token1)): Path<(String, String)>,
 ) -> Result<Json<Vec<PoolInfoResponse>>, StatusCode> {
     // check if token0 and token1 are valid pubkeys
@@ -196,7 +197,7 @@ pub async fn get_pools(
 }
 
 pub async fn check_arbitrage(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<ArbitrageRequest>,
 ) -> Result<Json<ArbitrageResponse>, (StatusCode, Json<ErrorResponse>)> {
     let start_time = Instant::now();
@@ -321,7 +322,7 @@ pub async fn check_arbitrage(
 
 /// Get all monitored arbitrage tokens
 pub async fn get_arbitrage_tokens(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<ArbitrageTokensResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Get arbitrage config
     let arb_config = state.arbitrage_config.read().unwrap();
@@ -355,7 +356,7 @@ pub async fn get_arbitrage_tokens(
 
 /// Add a token to arbitrage monitoring
 pub async fn add_arbitrage_token(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<AddTokenRequest>,
 ) -> Result<Json<TokenOperationResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Validate the request
@@ -432,7 +433,7 @@ pub async fn add_arbitrage_token(
 
 /// Remove a token from arbitrage monitoring
 pub async fn remove_arbitrage_token(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<RemoveTokenRequest>,
 ) -> Result<Json<TokenOperationResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Validate the request

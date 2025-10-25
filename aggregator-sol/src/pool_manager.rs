@@ -65,6 +65,14 @@ type BatchEventReceiver = mpsc::UnboundedReceiver<
         HashMap<String, SimplifiedTokenBalance>,
     )>,
 >;
+/// Pool address with its DEX type for tick array fetching
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PoolForTickFetching {
+    pub address: Pubkey,
+    pub dex_type: DexType,
+}
+/// Type alias for pending pools to fetch tick arrays (pool address + DEX type)
+type PendingPoolsForTickFetching = Arc<Mutex<HashSet<PoolForTickFetching>>>;
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
@@ -88,7 +96,7 @@ pub struct PoolStateManager {
     pending_updates: PendingUpdatesMap,
     /// Coalescing buffer: latest update per pool address
     pending_updates_account_event: PendingUpdatesMap,
-    pending_pools_to_fetch_tick_arrays: Arc<Mutex<HashSet<Pubkey>>>,
+    pending_pools_to_fetch_tick_arrays: PendingPoolsForTickFetching,
     tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
     /// RocksDB instance for persistence
     db: Arc<DB>,
@@ -354,15 +362,15 @@ impl PoolStateManager {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_millis(1000));
             // raydium clmm fetcher
-            let fetcher = Arc::new(TickArrayFetcher::new(
-                rpc_client,
+            let raydium_clmm_fetcher = Arc::new(TickArrayFetcher::new(
+                rpc_client.clone(),
                 RaydiumClmmPoolState::get_program_id(),
             ));
             loop {
                 ticker.tick().await;
 
                 // drain pending pools to fetch tick arrays
-                let draineds: Vec<Pubkey> = {
+                let draineds: Vec<PoolForTickFetching> = {
                     let mut buf = pending_pools_to_fetch_tick_arrays.lock().await;
                     if buf.is_empty() {
                         Vec::new()
@@ -386,12 +394,15 @@ impl PoolStateManager {
                 // bounded concurrency
                 let concurrency_limit = 5usize;
                 // Process the drained pools in parallel using join!
-                stream::iter(draineds.into_iter().map(|pool_id| {
+                stream::iter(draineds.into_iter().map(|pool_for_fetch| {
                     let pools_c: PoolStorage = Arc::clone(&pools);
                     let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
                     let pool_update_tx_clone = pool_update_tx.clone();
-                    let fetcher_c = fetcher.clone();
+                    let raydium_clmm_fetcher_c = raydium_clmm_fetcher.clone();
                     async move {
+                        let pool_id = pool_for_fetch.address;
+                        let dex_type = pool_for_fetch.dex_type;
+
                         // fetch tick arrays for this pool
                         // check if pool_id already synced
                         {
@@ -411,58 +422,80 @@ impl PoolStateManager {
                         if let Some(pool_mutex) = &pool_mutex {
                             let pool_guard = pool_mutex.lock().await;
                             let pool_state = (*pool_guard).clone();
-                            match pool_state {
-                                PoolState::RadyiumClmm(ref clmm_pool_state) => {
-                                    let tick_array_state_result = fetcher_c.fetch_all_tick_arrays(pool_id, Arc::new(clmm_pool_state)).await;
-                                    // get recv_us as time receive the tick arrays
-                                    let recv_us = get_high_perf_clock();
-                                    match tick_array_state_result {
-                                        Ok(tick_arrays) => {
-                                            // mark ticks synced pools
-                                            {
-                                                let mut tick_synced = tick_synced_pools_c.lock().await;
-                                                tick_synced.insert(pool_id);
-                                            }
-                                            // create raw events and sending it to start_batch_event_processing
 
-                                            tick_arrays.iter().for_each(|tick_array_state| {
-                                                let tick_array_state_event = PoolUpdateEvent::RaydiumClmm(RaydiumClmmPoolUpdate {
-                                                    slot: 0,    // dont care
-                                                    transaction_index: None, // dont care
-                                                    address: pool_id,
-                                                    pool_state_part: None,
-                                                    reserve_part: None,
-                                                    tick_array_state: Some(tick_array_state.clone()),
-                                                    tick_array_bitmap_extension: None,
-                                                    last_updated: recv_us as u64,
-                                                    is_account_state_update: true,
-                                                    pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayStateAccount,
-                                                    additional_event_type: tick_array_state.start_tick_index, // use start tick index as additional event type
+                            match dex_type {
+                                DexType::RaydiumClmm => {
+                                    // Handle Raydium CLMM pools
+                                    if let PoolState::RadyiumClmm(ref clmm_pool_state) = pool_state {
+                                        let tick_array_state_result = raydium_clmm_fetcher_c.fetch_all_tick_arrays(pool_id, Arc::new(clmm_pool_state)).await;
+                                        // get recv_us as time receive the tick arrays
+                                        let recv_us = get_high_perf_clock();
+                                        match tick_array_state_result {
+                                            Ok(tick_arrays) => {
+                                                // mark ticks synced pools
+                                                {
+                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
+                                                    tick_synced.insert(pool_id);
+                                                }
+                                                // create raw events and sending it to start_batch_event_processing
+
+                                                tick_arrays.iter().for_each(|tick_array_state| {
+                                                    let tick_array_state_event = PoolUpdateEvent::RaydiumClmm(RaydiumClmmPoolUpdate {
+                                                        slot: 0,    // dont care
+                                                        transaction_index: None, // dont care
+                                                        address: pool_id,
+                                                        pool_state_part: None,
+                                                        reserve_part: None,
+                                                        tick_array_state: Some(tick_array_state.clone()),
+                                                        tick_array_bitmap_extension: None,
+                                                        last_updated: recv_us as u64,
+                                                        is_account_state_update: true,
+                                                        pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayStateAccount,
+                                                        additional_event_type: tick_array_state.start_tick_index, // use start tick index as additional event type
+                                                    });
+                                                    // send to pool update event processor
+                                                    let _ = pool_update_tx_clone.send(vec![tick_array_state_event]);
                                                 });
-                                                // send to pool update event processor
-                                                let _ = pool_update_tx_clone.send(vec![tick_array_state_event]);
-                                            });
-                                            // log::info!(
-                                            //     "Synced {} tick arrays CLMM pool {:?}",
-                                            //     tick_arrays.len(),
-                                            //     clmm_pool_state.address,
-                                            // );
-                                        }
-                                        Err(e) => {
-                                            log::error!(
-                                                "Failed to fetch tick arrays for CLMM pool {:?}: {:?}",
-                                                clmm_pool_state.address,
-                                                e
-                                            );
+                                            }
+                                            Err(e) => {
+                                                log::error!(
+                                                    "Failed to fetch tick arrays for Raydium CLMM pool {:?}: {:?}",
+                                                    clmm_pool_state.address,
+                                                    e
+                                                );
+                                            }
                                         }
                                     }
                                 }
+                                DexType::Orca => {
+                                    // Handle Orca Whirlpool pools (TODO: implement when OrcaTickArrayFetcher is integrated)
+                                    log::warn!(
+                                        "Orca Whirlpool tick array fetching not yet implemented for pool {:?}",
+                                        pool_id
+                                    );
+                                    // Mark as synced to avoid repeated attempts
+                                    {
+                                        let mut tick_synced = tick_synced_pools_c.lock().await;
+                                        tick_synced.insert(pool_id);
+                                    }
+                                }
                                 _ => {
-                                    // not raydium clmm, skip
+                                    // Other DEX types don't have tick arrays, mark as synced
+                                    log::debug!(
+                                        "Pool {:?} (DEX: {:?}) does not support tick arrays",
+                                        pool_id,
+                                        dex_type
+                                    );
+                                    {
+                                        let mut tick_synced = tick_synced_pools_c.lock().await;
+                                        tick_synced.insert(pool_id);
+                                    }
                                 }
                             }
                         } else {
-                            // pool not found, skip
+                            // pool not found, mark as synced to avoid repeated attempts
+                            let mut tick_synced = tick_synced_pools_c.lock().await;
+                            tick_synced.insert(pool_id);
                         }
                     }
                 }))
@@ -643,8 +676,8 @@ impl PoolStateManager {
 
     // add new pools to pending_pools_to_fetch_tick_arrays
     async fn add_new_pools_for_fetch_ticks(
-        pending_pools_to_fetch_tick_arrays: Arc<Mutex<HashSet<Pubkey>>>,
-        pool_set: HashSet<Pubkey>,
+        pending_pools_to_fetch_tick_arrays: PendingPoolsForTickFetching,
+        pool_set: Vec<PoolForTickFetching>,
     ) {
         let mut pending = pending_pools_to_fetch_tick_arrays.lock().await;
         pool_set.into_iter().for_each(|p| {
@@ -766,7 +799,7 @@ impl PoolStateManager {
         pair_to_pools: PairToPoolsMap,
         dex_pools: DexPoolsMap,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
-        pending_pools_to_fetch_tick_arrays: Arc<Mutex<HashSet<Pubkey>>>,
+        pending_pools_to_fetch_tick_arrays: PendingPoolsForTickFetching,
         tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
         rpc_client: Arc<RpcClient>,
         sol_price: f64,
@@ -775,6 +808,8 @@ impl PoolStateManager {
     ) {
         let pool_address = update.address();
         let mut pool_with_ticks = false;
+        let mut pool_dex_type: Option<DexType> = None;
+
         // check if pool exists
         let pool_exists = {
             let pools_read = pools.read().await;
@@ -790,6 +825,7 @@ impl PoolStateManager {
             if let Some(pool_mutex) = pool_mutex {
                 let mut pool_guard = pool_mutex.lock().await;
                 pool_with_ticks = update_pool_state_by_event(update, &mut pool_guard, sol_price);
+                pool_dex_type = Some(pool_guard.dex());
             }
         } else {
             // Insert new pool
@@ -801,6 +837,7 @@ impl PoolStateManager {
                 if token0 == Pubkey::default() || token1 == Pubkey::default() {
                     return;
                 }
+                pool_dex_type = Some(pool_state.dex());
                 Self::insert_new_pool(
                     pool_state,
                     pools.clone(),
@@ -814,11 +851,16 @@ impl PoolStateManager {
         }
 
         if pool_with_ticks {
-            let tick_synced = tick_synced_pools.lock().await;
-            if !tick_synced.contains(&pool_address) {
-                drop(tick_synced); // release lock early
-                let mut pending_fetch = pending_pools_to_fetch_tick_arrays.lock().await;
-                pending_fetch.insert(pool_address);
+            if let Some(dex_type) = pool_dex_type {
+                let tick_synced = tick_synced_pools.lock().await;
+                if !tick_synced.contains(&pool_address) {
+                    drop(tick_synced); // release lock early
+                    let mut pending_fetch = pending_pools_to_fetch_tick_arrays.lock().await;
+                    pending_fetch.insert(PoolForTickFetching {
+                        address: pool_address,
+                        dex_type,
+                    });
+                }
             }
         }
 
@@ -1159,9 +1201,10 @@ impl PoolStateManager {
             let pool_cloned = (*pool_guard).clone();
             let (token_a, token_b) = pool_cloned.get_tokens();
             if (&token_a == token_address || &token_b == token_address)
-                && !self.is_pool_stale(&pool_cloned) {
-                    results.push(pool_cloned);
-                }
+                && !self.is_pool_stale(&pool_cloned)
+            {
+                results.push(pool_cloned);
+            }
         }
         results
     }
@@ -1243,7 +1286,10 @@ impl PoolStateManager {
                 PoolState::RadyiumClmm(clmm_pool_state) => {
                     // add pool to pending pools to fetch tick arrays
                     let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
-                    pending.insert(*pool_address);
+                    pending.insert(PoolForTickFetching {
+                        address: *pool_address,
+                        dex_type: DexType::RaydiumClmm,
+                    });
                     drop(pending); // release lock early
 
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);

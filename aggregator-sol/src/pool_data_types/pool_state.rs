@@ -27,22 +27,6 @@ macro_rules! pool_state_delegate {
     };
 }
 
-/// Macro to delegate method calls with arguments across all PoolState variants
-/// Usage: pool_state_method_delegate!(self, method_name(arg1, arg2))
-macro_rules! pool_state_method_delegate {
-    ($self:expr, $method:ident($($arg:expr),*)) => {
-        match $self {
-            PoolState::Pumpfun(state) => state.$method($($arg),*),
-            PoolState::PumpSwap(state) => state.$method($($arg),*),
-            PoolState::RaydiumAmmV4(state) => state.$method($($arg),*),
-            PoolState::RaydiumCpmm(state) => state.$method($($arg),*),
-            PoolState::Bonk(state) => state.$method($($arg),*),
-            PoolState::RadyiumClmm(state) => state.$method($($arg),*),
-            PoolState::MeteoraDbc(state) => state.$method($($arg),*),
-        }
-    };
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PoolState {
     Pumpfun(PumpfunPoolState),
@@ -212,7 +196,34 @@ impl PoolState {
         }
     }
 
-    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
-        pool_state_method_delegate!(self, calculate_token_prices(sol_price))
+    pub fn calculate_token_prices(
+        &self,
+        sol_price: f64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> (f64, f64) {
+        match self {
+            PoolState::Pumpfun(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::PumpSwap(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::RaydiumAmmV4(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::RaydiumCpmm(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::Bonk(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::RadyiumClmm(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::MeteoraDbc(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+        }
     }
 }

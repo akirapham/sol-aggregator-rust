@@ -74,7 +74,24 @@ impl PumpfunPoolState {
         }
     }
 
-    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
-        (0.0, 0.0) // TODO
+    pub fn calculate_token_prices(
+        &self,
+        sol_price: f64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> (f64, f64) {
+        // For Pumpfun: mint price in USD, sol price in USD
+        // Price ratio needs to account for decimal scaling:
+        // token_price_usd = (sol_reserve / token_reserve) * (10^base_decimals / 10^quote_decimals) * sol_price_usd
+
+        if self.token_reserve == 0 {
+            return (0.0, sol_price);
+        }
+
+        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
+        let token_price =
+            (self.sol_reserve as f64 / self.token_reserve as f64) * decimal_scale * sol_price;
+
+        (token_price, sol_price)
     }
 }

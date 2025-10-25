@@ -2,7 +2,7 @@
 # This file configures the arbitrage settings and tokens to monitor
 
 [settings]
-min_profit_bps = 50  # 0.5% minimum profit (50 basis points)
+min_profit_bps = 10  # 0.5% minimum profit (50 basis points)
 base_token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC - always start with this
 base_amount = 200000000  # 200 USDC (6 decimals)
 slippage_bps = 20  # 0.2% slippage tolerance

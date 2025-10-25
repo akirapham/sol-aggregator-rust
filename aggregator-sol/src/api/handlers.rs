@@ -1,7 +1,8 @@
 use crate::api::dto::{
     get_token_with_error, parse_pubkey_with_error, AddTokenRequest, ArbitrageRequest,
     ArbitrageResponse, ArbitrageTokenResponse, ArbitrageTokensResponse, ErrorResponse,
-    PoolInfoResponse, QuoteRequest, QuoteResponse, RemoveTokenRequest, TokenOperationResponse,
+    PoolInfoResponse, PoolsResponse, QuoteRequest, QuoteResponse, RemoveTokenRequest,
+    TokenOperationResponse,
 };
 use crate::api::AppState;
 use crate::pool_manager::PoolManagerStats;
@@ -162,10 +163,28 @@ pub async fn get_quote(
 pub async fn get_pools(
     State(state): State<Arc<AppState>>,
     Path((token0, token1)): Path<(String, String)>,
-) -> Result<Json<Vec<PoolInfoResponse>>, StatusCode> {
+) -> Result<Json<PoolsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let start_time = Instant::now();
+
     // check if token0 and token1 are valid pubkeys
-    let token0_key = Pubkey::try_from(token0.as_str()).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let token1_key = Pubkey::try_from(token1.as_str()).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let token0_key = Pubkey::try_from(token0.as_str()).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid token0 address".to_string(),
+                details: vec!["token0 must be a valid Solana public key".to_string()],
+            }),
+        )
+    })?;
+    let token1_key = Pubkey::try_from(token1.as_str()).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid token1 address".to_string(),
+                details: vec!["token1 must be a valid Solana public key".to_string()],
+            }),
+        )
+    })?;
 
     // Get pool information for a token pair
     let pools = state
@@ -189,11 +208,17 @@ pub async fn get_pools(
                 quote_reserve,
                 slot: pool.get_metadata().slot,
                 liquidity: pool.get_liquidity_usd(),
+                time_taken_ms: 0, // Will be set in wrapper response
             }
         })
         .collect();
 
-    Ok(Json(pools_response))
+    let time_taken_ms = start_time.elapsed().as_millis() as u64;
+
+    Ok(Json(PoolsResponse {
+        pools: pools_response,
+        time_taken_ms,
+    }))
 }
 
 pub async fn check_arbitrage(
@@ -503,5 +528,95 @@ pub async fn remove_arbitrage_token(
             symbol: t.symbol,
             enabled: t.enabled,
         }),
+    }))
+}
+
+pub async fn get_token_pools(
+    State(state): State<Arc<AppState>>,
+    Path(token_address): Path<String>,
+) -> Result<Json<crate::api::dto::TokenPoolsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let start_time = Instant::now();
+    use crate::api::dto::TokenPoolInfo;
+
+    // Parse token address
+    let token_pubkey = parse_pubkey_with_error(&token_address, "token address")?;
+
+    // Get pool manager
+    let pool_manager = state.aggregator.get_pool_manager();
+
+    // Get all pools containing this token (pass Pubkey)
+    let pools_for_token = pool_manager.get_pools_for_token(&token_pubkey).await;
+
+    // Get SOL price for price calculations via pool manager
+    let sol_price = pool_manager.get_sol_price();
+
+    // Get token decimals
+    let input_token =
+        get_token_with_error(&state.aggregator, &token_pubkey, &token_address, "Token").await?;
+
+    let mut pools = Vec::new();
+
+    // Iterate through pools containing this token
+    for pool in pools_for_token {
+        let (token_a, token_b) = pool.get_tokens();
+        let paired_token = if token_a.to_string() == token_address {
+            token_b
+        } else {
+            token_a
+        };
+
+        // Get paired token info
+        let paired_token_info = state
+            .aggregator
+            .get_pool_manager()
+            .get_token(&paired_token)
+            .await;
+
+        let paired_decimals = paired_token_info.map(|t| t.decimals).unwrap_or(6);
+
+        // Calculate prices with correct decimals
+        let (price_a, price_b) =
+            pool.calculate_token_prices(sol_price, input_token.decimals, paired_decimals);
+
+        let (token_price, paired_token_price) = if token_a.to_string() == token_address {
+            (price_a, price_b)
+        } else {
+            (price_b, price_a)
+        };
+
+        let (reserve_a, reserve_b) = pool.get_reserves();
+        let reserves = if token_a.to_string() == token_address {
+            (reserve_a, reserve_b)
+        } else {
+            (reserve_b, reserve_a)
+        };
+
+        pools.push(TokenPoolInfo {
+            pool_address: pool.address().to_string(),
+            dex: pool.dex().to_string(),
+            paired_token: paired_token.to_string(),
+            token_price,
+            paired_token_price,
+            liquidity_usd: pool.get_liquidity_usd(),
+            last_updated: pool.last_updated(),
+            reserves,
+        });
+    }
+
+    // Sort by liquidity descending
+    pools.sort_by(|a, b| {
+        b.liquidity_usd
+            .partial_cmp(&a.liquidity_usd)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let total_pools = pools.len();
+    let time_taken_ms = start_time.elapsed().as_millis() as u64;
+
+    Ok(Json(crate::api::dto::TokenPoolsResponse {
+        token: token_address,
+        pools,
+        total_pools,
+        time_taken_ms,
     }))
 }

@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
+    constants::is_base_token,
     pool_data_types::{
         clmm::{pool::PoolUtils, tpe::ComputeClmmPoolInfo},
         GetAmmConfig, PoolUpdateEventType,
@@ -200,7 +201,57 @@ impl RaydiumClmmPoolState {
         }
     }
 
-    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
-        (0.0, 0.0) // TODO
+    pub fn calculate_token_prices(
+        &self,
+        sol_price: f64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> (f64, f64) {
+        // For concentrated liquidity (CLMM), price is derived from sqrt_price_x64
+        // sqrt_price_x64 is in Q64 format (fixed point with 64 fractional bits)
+        // price = (sqrt_price_x64 / 2^64)^2 * (10^(quote_decimals - base_decimals))
+
+        if self.sqrt_price_x64 == 0 {
+            return (0.0, 0.0);
+        }
+
+        let token0_str = self.token_mint0.to_string();
+        let token1_str = self.token_mint1.to_string();
+
+        let is_token0_a_base_token = is_base_token(&token0_str);
+        let is_token1_a_base_token = is_base_token(&token1_str);
+
+        // Convert sqrt_price_x64 from Q64 to float (Q64 == 2^64)
+        let q64 = 2f64.powi(64);
+        let sqrt_price = self.sqrt_price_x64 as f64 / q64;
+
+        // Price = sqrt_price^2 * (10^(quote_decimals - base_decimals))
+        let decimal_scale = 10_f64.powi(quote_decimals as i32 - base_decimals as i32);
+        let price_ratio = sqrt_price * sqrt_price * decimal_scale;
+
+        // If token1 is a base token (like USDC, SOL), use its price
+        if is_token1_a_base_token {
+            let token1_price = if token1_str == "So11111111111111111111111111111111111111112" {
+                sol_price // SOL
+            } else {
+                1.0 // Assume USDC/USDT are ~$1
+            };
+
+            let token0_price = price_ratio * token1_price;
+            (token0_price, token1_price)
+        } else if is_token0_a_base_token {
+            // If token0 is a base token, use its price
+            let token0_price = if token0_str == "So11111111111111111111111111111111111111112" {
+                sol_price // SOL
+            } else {
+                1.0 // Assume USDC/USDT are ~$1
+            };
+
+            let token1_price = token0_price / price_ratio;
+            (token0_price, token1_price)
+        } else {
+            // Neither token is a base token, assume relative pricing
+            (price_ratio, 1.0)
+        }
     }
 }

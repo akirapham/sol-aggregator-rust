@@ -806,7 +806,7 @@ impl PoolStateManager {
                     pools.clone(),
                     pair_to_pools,
                     dex_pools,
-                    token_cache,
+                    token_cache.clone(),
                     rpc_client,
                 )
                 .await;
@@ -835,7 +835,20 @@ impl PoolStateManager {
                 if arbitrage_monitored_tokens.contains(&token_a)
                     || arbitrage_monitored_tokens.contains(&token_b)
                 {
-                    let (price_a, price_b) = pool_guard.calculate_token_prices(sol_price);
+                    // Get decimals from token cache
+                    let token_cache_read = token_cache.read().await;
+                    let decimals_a = token_cache_read
+                        .get(&token_a)
+                        .map(|t| t.decimals)
+                        .unwrap_or(6);
+                    let decimals_b = token_cache_read
+                        .get(&token_b)
+                        .map(|t| t.decimals)
+                        .unwrap_or(9);
+                    drop(token_cache_read);
+
+                    let (price_a, price_b) =
+                        pool_guard.calculate_token_prices(sol_price, decimals_a, decimals_b);
 
                     // Calculate prices in both directions
                     let (forward_price, reverse_price) =
@@ -1130,6 +1143,27 @@ impl PoolStateManager {
                 .map(|(dex, pools)| (*dex, pools.len()))
                 .collect(),
         }
+    }
+
+    /// Get all pools containing a specific token
+    pub async fn get_pools_for_token(&self, token_address: &Pubkey) -> Vec<PoolState> {
+        // Collect all pool mutexes first under read lock
+        let pool_mutexes = {
+            let pools = self.pools.read().await;
+            pools.values().cloned().collect::<Vec<_>>()
+        };
+
+        let mut results = Vec::new();
+        for mutex in pool_mutexes {
+            let pool_guard = mutex.lock().await;
+            let pool_cloned = (*pool_guard).clone();
+            let (token_a, token_b) = pool_cloned.get_tokens();
+            if (&token_a == token_address || &token_b == token_address)
+                && !self.is_pool_stale(&pool_cloned) {
+                    results.push(pool_cloned);
+                }
+        }
+        results
     }
 
     /// Load data from RocksDB into in-memory structures

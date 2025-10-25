@@ -21,6 +21,13 @@ pub struct PoolInfoResponse {
     pub quote_reserve: u64,
     pub slot: u64,
     pub liquidity: f64,
+    pub time_taken_ms: u64,
+}
+
+#[derive(Serialize)]
+pub struct PoolsResponse {
+    pub pools: Vec<PoolInfoResponse>,
+    pub time_taken_ms: u64,
 }
 
 #[derive(Deserialize, Serialize, Validate)]
@@ -199,4 +206,24 @@ pub struct TokenOperationResponse {
     pub success: bool,
     pub message: String,
     pub token: Option<ArbitrageTokenResponse>,
+}
+
+#[derive(Serialize)]
+pub struct TokenPoolInfo {
+    pub pool_address: String,
+    pub dex: String,
+    pub paired_token: String,
+    pub token_price: f64,
+    pub paired_token_price: f64,
+    pub liquidity_usd: f64,
+    pub last_updated: u64,
+    pub reserves: (u64, u64),
+}
+
+#[derive(Serialize)]
+pub struct TokenPoolsResponse {
+    pub token: String,
+    pub pools: Vec<TokenPoolInfo>,
+    pub total_pools: usize,
+    pub time_taken_ms: u64,
 }

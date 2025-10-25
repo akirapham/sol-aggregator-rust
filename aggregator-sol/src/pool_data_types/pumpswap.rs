@@ -5,6 +5,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::parser::PUMPSWAP_PROGRAM_ID;
 
 use crate::{
+    constants::is_base_token,
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
     utils::tokens_equal,
 };
@@ -73,7 +74,55 @@ impl PumpSwapPoolState {
         output_amount * 997 / 1000 // Apply 0.3% fee
     }
 
-    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
-        (0.0, 0.0) // TODO
+    pub fn calculate_token_prices(
+        &self,
+        sol_price: f64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> (f64, f64) {
+        if self.quote_reserve == 0 || self.base_reserve == 0 {
+            return (0.0, 0.0);
+        }
+
+        let base_token_str = self.base_mint.to_string();
+        let quote_token_str = self.quote_mint.to_string();
+
+        let is_base_a_base_token = is_base_token(&base_token_str);
+        let is_quote_a_base_token = is_base_token(&quote_token_str);
+
+        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
+
+        // If quote is a base token (like USDC, SOL), use its price
+        if is_quote_a_base_token {
+            let quote_price = if is_quote_a_base_token
+                && quote_token_str == "So11111111111111111111111111111111111111112"
+            {
+                sol_price // SOL
+            } else {
+                1.0 // Assume USDC/USDT are ~$1
+            };
+
+            let base_price = (self.quote_reserve as f64 / self.base_reserve as f64)
+                * decimal_scale
+                * quote_price;
+            (base_price, quote_price)
+        } else if is_base_a_base_token {
+            // If base is a base token, use its price
+            let base_price = if base_token_str == "So11111111111111111111111111111111111111112" {
+                sol_price // SOL
+            } else {
+                1.0 // Assume USDC/USDT are ~$1
+            };
+
+            let quote_price = (self.base_reserve as f64 / self.quote_reserve as f64)
+                * (1.0 / decimal_scale)
+                * base_price;
+            (base_price, quote_price)
+        } else {
+            // Neither token is a base token, assume quote_reserve is the pricing reference
+            let base_price =
+                (self.quote_reserve as f64 / self.base_reserve as f64) * decimal_scale * 1.0;
+            (base_price, 1.0)
+        }
     }
 }

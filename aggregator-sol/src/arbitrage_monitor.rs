@@ -83,7 +83,7 @@ impl ArbitrageMonitor {
     /// Check arbitrage when a broadcast pool update is received
     /// This is triggered by real-time pool updates from the broadcast channel
     async fn on_broadcast_pool_update(&self, pool_update: &ArbitragePoolUpdate) {
-        log::debug!(
+        log::info!(
             "🔄 Broadcast pool update: {} | {} <-> {} | Forward price: {:.8}, Reverse price: {:.8}",
             pool_update.pool_address,
             pool_update.token_a,

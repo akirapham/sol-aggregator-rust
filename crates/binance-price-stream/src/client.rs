@@ -205,10 +205,11 @@ impl BinancePriceStream {
 
         // Update cache
         price_cache.insert(price_update.symbol.clone(), price_update.clone());
-
-        // Send to channel
-        if let Err(e) = tx.send(price_update) {
-            error!("Failed to send price update: {}", e);
+        // Send to channel if not closed
+        if !tx.is_closed() {
+            if let Err(e) = tx.send(price_update) {
+                error!("Failed to send price update: {}", e);
+            }
         }
 
         Ok(())

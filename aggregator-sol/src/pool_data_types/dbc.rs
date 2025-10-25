@@ -159,7 +159,20 @@ impl DbcPoolState {
         0
     }
 
-    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
-        (0.0, 0.0) // TODO
+    pub fn calculate_token_prices(
+        &self,
+        sol_price: f64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> (f64, f64) {
+        if self.quote_reserve == 0 || self.base_reserve == 0 {
+            return (0.0, sol_price);
+        }
+
+        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
+        let base_price =
+            (self.quote_reserve as f64 / self.base_reserve as f64) * decimal_scale * sol_price;
+
+        (base_price, sol_price)
     }
 }

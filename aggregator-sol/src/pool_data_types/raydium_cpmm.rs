@@ -6,6 +6,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID;
 
 use crate::{
+    constants::is_base_token,
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
     utils::tokens_equal,
 };
@@ -90,7 +91,53 @@ impl RaydiumCpmmPoolState {
         output_amount * 9975 / 10000 // Apply 0.25% fee
     }
 
-    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
-        (0.0, 0.0) // TODO
+    pub fn calculate_token_prices(
+        &self,
+        sol_price: f64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> (f64, f64) {
+        if self.token1_reserve == 0 || self.token0_reserve == 0 {
+            return (0.0, 0.0);
+        }
+
+        let token0_str = self.token0.to_string();
+        let token1_str = self.token1.to_string();
+
+        let is_token0_a_base_token = is_base_token(&token0_str);
+        let is_token1_a_base_token = is_base_token(&token1_str);
+
+        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
+
+        // If token1 is a base token (like USDC, SOL), use its price
+        if is_token1_a_base_token {
+            let token1_price = if token1_str == "So11111111111111111111111111111111111111112" {
+                sol_price // SOL
+            } else {
+                1.0 // Assume USDC/USDT are ~$1
+            };
+
+            let token0_price = (self.token1_reserve as f64 / self.token0_reserve as f64)
+                * decimal_scale
+                * token1_price;
+            (token0_price, token1_price)
+        } else if is_token0_a_base_token {
+            // If token0 is a base token, use its price
+            let token0_price = if token0_str == "So11111111111111111111111111111111111111112" {
+                sol_price // SOL
+            } else {
+                1.0 // Assume USDC/USDT are ~$1
+            };
+
+            let token1_price = (self.token0_reserve as f64 / self.token1_reserve as f64)
+                * (1.0 / decimal_scale)
+                * token0_price;
+            (token0_price, token1_price)
+        } else {
+            // Neither token is a base token, assume relative pricing
+            let token0_price =
+                (self.token1_reserve as f64 / self.token0_reserve as f64) * decimal_scale * 1.0;
+            (token0_price, 1.0)
+        }
     }
 }

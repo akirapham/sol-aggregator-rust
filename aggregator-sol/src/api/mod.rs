@@ -58,6 +58,10 @@ pub fn create_router(
         .route("/health", get(handlers::health_check))
         .route("/quote", post(handlers::get_quote))
         .route("/pools/:token0/:token1", get(handlers::get_pools))
+        .route(
+            "/token/:token_address/pools",
+            get(handlers::get_token_pools),
+        )
         .route("/stats", get(handlers::get_pool_stats))
         .with_state(state)
         .merge(protected_routes)

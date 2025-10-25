@@ -98,7 +98,12 @@ impl BonkPoolState {
         }
     }
 
-    pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
+    pub fn calculate_token_prices(
+        &self,
+        _sol_price: f64,
+        _base_decimals: u8,
+        _quote_decimals: u8,
+    ) -> (f64, f64) {
         (0.0, 0.0) // Bonk does not provide reliable price info
     }
 }

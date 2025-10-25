@@ -8,11 +8,10 @@ use crate::pool_data_types::{
 };
 use crate::types::Token;
 use crate::types::{ChainStateUpdate, PoolUpdateEvent};
-use crate::utils::{
-    pool_update_event_to_pool_state, update_pool_state_by_event, BinancePriceService,
-};
+use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
 use anyhow::Result;
 use async_trait::async_trait;
+use binance_price_stream::BinancePriceStream;
 use bincode::config::Configuration;
 use borsh::BorshDeserialize;
 use futures::stream::{self, StreamExt};
@@ -93,7 +92,7 @@ pub struct PoolStateManager {
     tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
     /// RocksDB instance for persistence
     db: Arc<DB>,
-    price_service: Arc<BinancePriceService>,
+    price_service: Arc<BinancePriceStream>,
     chain_state: Arc<Mutex<ChainStateUpdate>>,
     chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     raydium_clmm_amm_config_cache: Arc<RwLock<HashMap<Pubkey, RaydiumClmmAmmConfig>>>,
@@ -113,7 +112,7 @@ struct SerializableTokenCache(HashMap<Pubkey, Token>);
 impl PoolStateManager {
     pub async fn new(
         grpc_service: Arc<GrpcService>,
-        price_service: Arc<BinancePriceService>,
+        price_service: Arc<BinancePriceStream>,
     ) -> Self {
         // Initialize RocksDB
         let db_path = "./rocksdb_data"; // Customize path as needed
@@ -493,7 +492,11 @@ impl PoolStateManager {
                 ticker.tick().await;
 
                 // read sol price
-                let sol_price = price_service.get_sol_price().await.unwrap_or_default();
+                let sol_price = price_service.get_price("SOLUSDT").unwrap_or_default().price;
+                if sol_price == 0.0 {
+                    log::warn!("SOL price is zero, skipping flusher iteration");
+                    continue;
+                }
 
                 // measure drain start
                 let drain_start = std::time::Instant::now();
@@ -1325,8 +1328,11 @@ impl PoolStateManager {
         Ok(())
     }
 
-    pub async fn get_sol_price(&self) -> f64 {
-        self.price_service.get_sol_price().await.unwrap_or_default()
+    pub fn get_sol_price(&self) -> f64 {
+        self.price_service
+            .get_price("SOLUSDT")
+            .unwrap_or_default()
+            .price
     }
 
     pub async fn get_chain_state(&self) -> ChainStateUpdate {

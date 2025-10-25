@@ -38,8 +38,7 @@ pub async fn auth_middleware(
         .and_then(|h| h.to_str().ok());
 
     if let Some(auth_value) = auth_header {
-        if auth_value.starts_with("Basic ") {
-            let encoded = &auth_value[6..];
+        if let Some(encoded) = auth_value.strip_prefix("Basic ") {
             if let Ok(decoded) = general_purpose::STANDARD.decode(encoded) {
                 if let Ok(credentials) = String::from_utf8(decoded) {
                     let parts: Vec<&str> = credentials.splitn(2, ':').collect();

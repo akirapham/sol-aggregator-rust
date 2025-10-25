@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Price update from Binance WebSocket
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PriceUpdate {
     /// Trading symbol (e.g., "ETHUSDT", "BTCUSDT")
     pub symbol: String,

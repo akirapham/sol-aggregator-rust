@@ -1,8 +1,5 @@
 use crate::api::AppState;
-use axum::{
-    extract::State,
-    response::Html,
-};
+use axum::{extract::State, response::Html};
 use std::sync::Arc;
 
 /// GET /dashboard - Solana DEX Arbitrage Dashboard
@@ -22,7 +19,11 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         if let Some(monitor) = &state.arbitrage_monitor {
             let all_opportunities = monitor.get_recent_opportunities(1000);
             let total = all_opportunities.len();
-            let recent_profit: u64 = all_opportunities.iter().take(10).map(|o| o.profit_amount).sum();
+            let recent_profit: u64 = all_opportunities
+                .iter()
+                .take(10)
+                .map(|o| o.profit_amount)
+                .sum();
             let profit_usdc = recent_profit as f64 / 1_000_000.0;
 
             // Calculate all-time profit
@@ -35,8 +36,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             for opp in top_20 {
                 // Format timestamp as human readable
                 let secs = opp.detected_at / 1000; // Convert milliseconds to seconds
-                let timestamp = std::time::UNIX_EPOCH
-                    + std::time::Duration::from_secs(secs);
+                let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
                 let datetime = format!("{:?}", timestamp);
 
                 let profit_pct = if opp.input_amount > 0 {
@@ -56,15 +56,24 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             }
 
             if opp_html.is_empty() {
-                opp_html = "<tr><td colspan='5' class='no-data'>No opportunities found yet</td></tr>".to_string();
+                opp_html =
+                    "<tr><td colspan='5' class='no-data'>No opportunities found yet</td></tr>"
+                        .to_string();
             }
 
             (total, profit_usdc, all_time_profit_usdc, opp_html)
         } else {
-            (0, 0.0, 0.0, "<tr><td colspan='5' class='no-data'>Arbitrage monitor not available</td></tr>".to_string())
+            (
+                0,
+                0.0,
+                0.0,
+                "<tr><td colspan='5' class='no-data'>Arbitrage monitor not available</td></tr>"
+                    .to_string(),
+            )
         };
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -297,4 +306,3 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         top_opportunities_html,
     )
 }
-

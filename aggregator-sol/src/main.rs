@@ -13,7 +13,7 @@ mod pool_manager;
 mod types;
 mod utils;
 
-use axum::serve;
+use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use dotenv::dotenv;
 use env_logger::Env;
 use std::sync::Arc;
@@ -25,7 +25,6 @@ use crate::arbitrage_monitor::ArbitrageMonitor;
 use crate::config::ConfigLoader;
 use crate::grpc::create_grpc_service;
 use crate::pool_manager::PoolStateManager;
-use crate::utils::BinancePriceService;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,8 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 0. Start the price feed service
     log::info!("Starting Binance price feed service...");
-    let price_service = Arc::new(BinancePriceService::new());
-    price_service.start().await;
+    let price_service = Arc::new(BinancePriceStream::new(
+        BinanceConfig::with_stream_type(StreamType::BookTicker),
+        vec!["SOLUSDT".to_string()],
+    ));
+    let _ = price_service.start().await;
 
     // 1. Start the pool manager and gRPC streaming
     log::info!("Starting pool manager and gRPC streaming...");
@@ -67,102 +69,107 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arb_config_path = std::env::var("ARBITRAGE_CONFIG_PATH")
         .unwrap_or_else(|_| "arbitrage_config.toml".to_string());
 
-    let (arb_config_arc, arbitrage_monitor) = if let Ok(mut arb_config) = ArbitrageConfig::from_file(&arb_config_path) {
-        log::info!("Arbitrage configuration loaded from {}", arb_config_path);
+    let (arb_config_arc, arbitrage_monitor) =
+        if let Ok(mut arb_config) = ArbitrageConfig::from_file(&arb_config_path) {
+            log::info!("Arbitrage configuration loaded from {}", arb_config_path);
 
-        // Load tokens from DB and merge with TOML config
-        let db = pool_manager.get_db();
-        if let Ok(db_tokens) = ArbitrageConfig::load_tokens_from_db(&db) {
-            if !db_tokens.is_empty() {
-                log::info!(
-                    "Loaded {} tokens from RocksDB, merging with TOML config",
-                    db_tokens.len()
-                );
-                arb_config = arb_config.merge_with_db_tokens(db_tokens);
-            }
-        }
-
-        log::info!(
-            "Monitoring {} tokens",
-            arb_config.get_enabled_tokens().len()
-        );
-
-        // Collect monitored token pubkeys for the pool manager to filter broadcasts
-        let mut monitored_tokens = std::collections::HashSet::new();
-
-        // Add base token
-        if let Ok(base_token) = arb_config.get_base_token() {
-            monitored_tokens.insert(base_token);
-        }
-
-        // Add all monitored tokens
-        monitored_tokens.extend(arb_config.get_monitored_token_pubkeys());
-
-        log::info!(
-            "Total tokens to monitor in pool manager: {}",
-            monitored_tokens.len()
-        );
-
-        // Also merge with any tokens already loaded from DB by PoolManager
-        let db_loaded_tokens = pool_manager.get_arbitrage_monitored_tokens().await;
-        if !db_loaded_tokens.is_empty() {
-            log::info!(
-                "Pool manager already loaded {} tokens from DB, merging...",
-                db_loaded_tokens.len()
-            );
-            monitored_tokens.extend(db_loaded_tokens);
-        }
-
-        // Tell pool manager which tokens to monitor (will skip save if unchanged)
-        pool_manager
-            .set_arbitrage_monitored_tokens(monitored_tokens)
-            .await;
-
-        let aggregator_clone = aggregator.clone();
-        let monitor = ArbitrageMonitor::new(
-            aggregator_clone,
-            arb_config.clone(),
-            "rocksdb_data/arbitrage_opportunities",
-        ).expect("Failed to create arbitrage monitor");
-
-        // Wrap monitor in Arc for sharing across tasks
-        let monitor = Arc::new(monitor);
-
-        // Subscribe to broadcast pool updates from pool manager
-        let pool_update_rx = pool_manager.subscribe_arbitrage_updates();
-        let monitor_for_events = monitor.clone();
-        monitor_for_events.subscribe_to_pool_updates(pool_update_rx);
-
-        // Spawn a cleanup task to remove old opportunities periodically
-        let monitor_for_cleanup = monitor.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
-            loop {
-                interval.tick().await;
-                match monitor_for_cleanup.cleanup_old_opportunities(86400) {
-                    // Keep last 24 hours
-                    Ok(count) => {
-                        if count > 0 {
-                            log::info!("Cleaned up {} old arbitrage opportunities", count);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to cleanup old opportunities: {}", e);
-                    }
+            // Load tokens from DB and merge with TOML config
+            let db = pool_manager.get_db();
+            if let Ok(db_tokens) = ArbitrageConfig::load_tokens_from_db(&db) {
+                if !db_tokens.is_empty() {
+                    log::info!(
+                        "Loaded {} tokens from RocksDB, merging with TOML config",
+                        db_tokens.len()
+                    );
+                    arb_config = arb_config.merge_with_db_tokens(db_tokens);
                 }
             }
-        });
 
-        log::info!("Arbitrage monitoring started successfully (broadcast mode)");
-        (Some(Arc::new(std::sync::RwLock::new(arb_config))), Some(monitor))
-    } else {
-        log::warn!(
-            "Arbitrage configuration not found at {}. Arbitrage monitoring disabled.",
-            arb_config_path
-        );
-        // Create a default config for API to work
-        (None, None)
-    };
+            log::info!(
+                "Monitoring {} tokens",
+                arb_config.get_enabled_tokens().len()
+            );
+
+            // Collect monitored token pubkeys for the pool manager to filter broadcasts
+            let mut monitored_tokens = std::collections::HashSet::new();
+
+            // Add base token
+            if let Ok(base_token) = arb_config.get_base_token() {
+                monitored_tokens.insert(base_token);
+            }
+
+            // Add all monitored tokens
+            monitored_tokens.extend(arb_config.get_monitored_token_pubkeys());
+
+            log::info!(
+                "Total tokens to monitor in pool manager: {}",
+                monitored_tokens.len()
+            );
+
+            // Also merge with any tokens already loaded from DB by PoolManager
+            let db_loaded_tokens = pool_manager.get_arbitrage_monitored_tokens().await;
+            if !db_loaded_tokens.is_empty() {
+                log::info!(
+                    "Pool manager already loaded {} tokens from DB, merging...",
+                    db_loaded_tokens.len()
+                );
+                monitored_tokens.extend(db_loaded_tokens);
+            }
+
+            // Tell pool manager which tokens to monitor (will skip save if unchanged)
+            pool_manager
+                .set_arbitrage_monitored_tokens(monitored_tokens)
+                .await;
+
+            let aggregator_clone = aggregator.clone();
+            let monitor = ArbitrageMonitor::new(
+                aggregator_clone,
+                arb_config.clone(),
+                "rocksdb_data/arbitrage_opportunities",
+            )
+            .expect("Failed to create arbitrage monitor");
+
+            // Wrap monitor in Arc for sharing across tasks
+            let monitor = Arc::new(monitor);
+
+            // Subscribe to broadcast pool updates from pool manager
+            let pool_update_rx = pool_manager.subscribe_arbitrage_updates();
+            let monitor_for_events = monitor.clone();
+            monitor_for_events.subscribe_to_pool_updates(pool_update_rx);
+
+            // Spawn a cleanup task to remove old opportunities periodically
+            let monitor_for_cleanup = monitor.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
+                loop {
+                    interval.tick().await;
+                    match monitor_for_cleanup.cleanup_old_opportunities(86400) {
+                        // Keep last 24 hours
+                        Ok(count) => {
+                            if count > 0 {
+                                log::info!("Cleaned up {} old arbitrage opportunities", count);
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to cleanup old opportunities: {}", e);
+                        }
+                    }
+                }
+            });
+
+            log::info!("Arbitrage monitoring started successfully (broadcast mode)");
+            (
+                Some(Arc::new(std::sync::RwLock::new(arb_config))),
+                Some(monitor),
+            )
+        } else {
+            log::warn!(
+                "Arbitrage configuration not found at {}. Arbitrage monitoring disabled.",
+                arb_config_path
+            );
+            // Create a default config for API to work
+            (None, None)
+        };
 
     // 3. Create and start the REST API server
     // read port from env or default to 3000
@@ -184,7 +191,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             monitored_tokens: vec![],
         };
-        api::create_router(aggregator, Arc::new(std::sync::RwLock::new(default_config)), None)
+        api::create_router(
+            aggregator,
+            Arc::new(std::sync::RwLock::new(default_config)),
+            None,
+        )
     };
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
@@ -250,10 +261,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
 
     // Wait for shutdown handler to complete
-    let _ = tokio::time::timeout(
-        tokio::time::Duration::from_secs(30),
-        shutdown_handle,
-    ).await;
+    let _ = tokio::time::timeout(tokio::time::Duration::from_secs(30), shutdown_handle).await;
 
     server_result?;
 

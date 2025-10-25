@@ -2,7 +2,7 @@ use crate::aggregator::DexAggregator;
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
-use rocksdb::{DB, Options};
+use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use std::path::Path;
@@ -215,7 +215,8 @@ impl ArbitrageMonitor {
         let key = format!("opp:{}:{}", opportunity.detected_at, opportunity.pair_name);
         let value = serde_json::to_vec(opportunity)
             .map_err(|e| format!("Failed to serialize opportunity: {}", e))?;
-        self.db.put(key.as_bytes(), value)
+        self.db
+            .put(key.as_bytes(), value)
             .map_err(|e| format!("Failed to save to DB: {}", e))?;
         Ok(())
     }
@@ -278,7 +279,9 @@ impl ArbitrageMonitor {
         }
 
         for key in &keys_to_delete {
-            self.db.delete(key).map_err(|e| format!("Failed to delete key: {}", e))?;
+            self.db
+                .delete(key)
+                .map_err(|e| format!("Failed to delete key: {}", e))?;
             deleted_count += 1;
         }
 

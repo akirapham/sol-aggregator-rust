@@ -1,0 +1,72 @@
+# Arbitrage Configuration
+# This file configures the arbitrage settings and tokens to monitor
+
+[settings]
+min_profit_bps = 50  # 0.5% minimum profit
+base_token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC - always start with this
+base_amount = 100000000  # 100 USDC (6 decimals)
+slippage_bps = 50  # 0.5% slippage tolerance
+max_concurrent_checks = 10  # Maximum concurrent arbitrage checks
+
+# Popular Solana tokens to monitor for arbitrage opportunities
+# Arbitrage will check: USDC -> Token -> USDC
+
+[[monitored_tokens]]
+address = "So11111111111111111111111111111111111111112"  # SOL (Wrapped)
+symbol = "SOL"
+enabled = true
+
+[[monitored_tokens]]
+address = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"  # USDT
+symbol = "USDT"
+enabled = true
+
+[[monitored_tokens]]
+address = "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs"  # ETH (Wormhole)
+symbol = "ETH"
+enabled = true
+
+[[monitored_tokens]]
+address = "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh"  # WBTC (Wormhole)
+symbol = "WBTC"
+enabled = true
+
+[[monitored_tokens]]
+address = "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"  # mSOL (Marinade)
+symbol = "mSOL"
+enabled = true
+
+[[monitored_tokens]]
+address = "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj"  # stSOL (Lido)
+symbol = "stSOL"
+enabled = true
+
+[[monitored_tokens]]
+address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+symbol = "BONK"
+enabled = true
+
+[[monitored_tokens]]
+address = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"  # RAY (Raydium)
+symbol = "RAY"
+enabled = true
+
+[[monitored_tokens]]
+address = "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL"  # JTO (Jito)
+symbol = "JTO"
+enabled = true
+
+[[monitored_tokens]]
+address = "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3"  # PYTH
+symbol = "PYTH"
+enabled = true
+
+[[monitored_tokens]]
+address = "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5"  # MEW
+symbol = "MEW"
+enabled = true
+
+[[monitored_tokens]]
+address = "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux"  # HNT (Helium)
+symbol = "HNT"
+enabled = true

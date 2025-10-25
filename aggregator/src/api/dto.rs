@@ -67,6 +67,53 @@ pub struct QuoteResponse {
     pub context_slot: u64,
 }
 
+#[derive(Deserialize, Serialize, Validate)]
+pub struct ArbitrageRequest {
+    #[validate(length(
+        min = 32,
+        max = 44,
+        message = "Token A must be a valid Solana public key (32-44 characters)"
+    ))]
+    pub token_a: String,
+
+    #[validate(length(
+        min = 32,
+        max = 44,
+        message = "Token B must be a valid Solana public key (32-44 characters)"
+    ))]
+    pub token_b: String,
+
+    #[validate(length(
+        min = 32,
+        max = 44,
+        message = "User wallet must be a valid Solana public key (32-44 characters)"
+    ))]
+    pub user_wallet: String,
+
+    #[validate(range(min = 1, message = "Input amount must be greater than 0"))]
+    pub input_amount: u64,
+
+    #[validate(range(
+        min = 0,
+        max = 10000,
+        message = "Slippage must be between 0 and 10000 basis points (0-100%)"
+    ))]
+    pub slippage_bps: u16,
+}
+
+#[derive(Serialize)]
+pub struct ArbitrageResponse {
+    pub profitable: bool,
+    pub profit_amount: u64,
+    pub profit_percent: f64,
+    pub forward_route: Vec<SwapStep>,
+    pub reverse_route: Vec<SwapStep>,
+    pub forward_output: u64,
+    pub reverse_output: u64,
+    pub time_taken_ms: u64,
+    pub context_slot: u64,
+}
+
 // Custom validation function for Solana pubkeys
 fn validate_solana_pubkey(pubkey_str: &str) -> Result<(), ValidationError> {
     match bs58::decode(pubkey_str).into_vec() {
@@ -140,4 +187,47 @@ pub async fn get_token_with_error(
             }),
         )),
     }
+}
+
+// === Arbitrage Token Management DTOs ===
+
+#[derive(Deserialize, Validate)]
+pub struct AddTokenRequest {
+    #[validate(length(
+        min = 32,
+        max = 44,
+        message = "Token address must be a valid Solana public key"
+    ))]
+    pub address: String,
+    pub symbol: String,
+}
+
+#[derive(Deserialize, Validate)]
+pub struct RemoveTokenRequest {
+    #[validate(length(
+        min = 32,
+        max = 44,
+        message = "Token address must be a valid Solana public key"
+    ))]
+    pub address: String,
+}
+
+#[derive(Serialize)]
+pub struct ArbitrageTokenResponse {
+    pub address: String,
+    pub symbol: String,
+    pub enabled: bool,
+}
+
+#[derive(Serialize)]
+pub struct ArbitrageTokensResponse {
+    pub base_token: String,
+    pub monitored_tokens: Vec<ArbitrageTokenResponse>,
+}
+
+#[derive(Serialize)]
+pub struct TokenOperationResponse {
+    pub success: bool,
+    pub message: String,
+    pub token: Option<ArbitrageTokenResponse>,
 }

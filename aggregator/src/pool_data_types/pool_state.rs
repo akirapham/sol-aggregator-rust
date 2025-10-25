@@ -22,6 +22,7 @@ pub enum PoolState {
     MeteoraDbc(DbcPoolState),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum PoolUpdateEventType {
     PumpFunTrade,

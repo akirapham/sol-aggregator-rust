@@ -1,11 +1,13 @@
 use crate::api::dto::{
-    get_token_with_error, parse_pubkey_with_error, ErrorResponse, PoolInfoResponse, QuoteRequest,
-    QuoteResponse,
+    get_token_with_error, parse_pubkey_with_error, AddTokenRequest, ArbitrageRequest,
+    ArbitrageResponse, ArbitrageTokenResponse, ArbitrageTokensResponse, ErrorResponse,
+    PoolInfoResponse, QuoteRequest, QuoteResponse, RemoveTokenRequest, TokenOperationResponse,
 };
+use crate::api::AppState;
 use crate::pool_manager::PoolManagerStats;
+use crate::types::SwapStep;
 use crate::types::{ExecutionPriority, SwapParams};
 use crate::utils::tokens_equal;
-use crate::{aggregator::DexAggregator, types::SwapStep};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -13,7 +15,6 @@ use axum::{
 };
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::time::Instant;
 use validator::Validate;
 
@@ -22,15 +23,15 @@ pub async fn health_check() -> &'static str {
 }
 
 pub async fn get_pool_stats(
-    State(aggregator): State<Arc<DexAggregator>>,
+    State(state): State<AppState>,
 ) -> Result<Json<PoolManagerStats>, StatusCode> {
     // Placeholder implementation
-    let stats = aggregator.get_pool_manager().get_stats().await;
+    let stats = state.aggregator.get_pool_manager().get_stats().await;
     Ok(Json(stats))
 }
 
 pub async fn get_quote(
-    State(aggregator): State<Arc<DexAggregator>>,
+    State(state): State<AppState>,
     Json(request): Json<QuoteRequest>,
 ) -> Result<Json<QuoteResponse>, (StatusCode, Json<ErrorResponse>)> {
     let start_time = Instant::now();
@@ -66,10 +67,15 @@ pub async fn get_quote(
     let user_wallet = parse_pubkey_with_error(request.user_wallet.as_str(), "user_wallet")?;
 
     // Get tokens from pool manager
-    let input_token =
-        get_token_with_error(&aggregator, &input_token_key, &request.input_token, "Input").await?;
+    let input_token = get_token_with_error(
+        &state.aggregator,
+        &input_token_key,
+        &request.input_token,
+        "Input",
+    )
+    .await?;
     let output_token = get_token_with_error(
-        &aggregator,
+        &state.aggregator,
         &output_token_key,
         &request.output_token,
         "Output",
@@ -87,7 +93,7 @@ pub async fn get_quote(
     };
 
     // Get best route using the aggregator
-    match aggregator.get_swap_route(&swap_params).await {
+    match state.aggregator.get_swap_route(&swap_params).await {
         Some(best_route) => {
             // first, get all swap step started from the input token
             let mut swap_routes: Vec<SwapStep> = vec![];
@@ -153,7 +159,7 @@ pub async fn get_quote(
 }
 
 pub async fn get_pools(
-    State(aggregator): State<Arc<DexAggregator>>,
+    State(state): State<AppState>,
     Path((token0, token1)): Path<(String, String)>,
 ) -> Result<Json<Vec<PoolInfoResponse>>, StatusCode> {
     // check if token0 and token1 are valid pubkeys
@@ -161,7 +167,8 @@ pub async fn get_pools(
     let token1_key = Pubkey::try_from(token1.as_str()).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Get pool information for a token pair
-    let pools = aggregator
+    let pools = state
+        .aggregator
         .get_pool_manager()
         .get_pools_for_pair(&token0_key, &token1_key)
         .await;
@@ -186,4 +193,314 @@ pub async fn get_pools(
         .collect();
 
     Ok(Json(pools_response))
+}
+
+pub async fn check_arbitrage(
+    State(state): State<AppState>,
+    Json(request): Json<ArbitrageRequest>,
+) -> Result<Json<ArbitrageResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let start_time = Instant::now();
+
+    // Validate the request
+    if let Err(validation_errors) = request.validate() {
+        let details: Vec<String> = validation_errors
+            .field_errors()
+            .iter()
+            .flat_map(|(field, errors)| {
+                errors.iter().map(move |error| {
+                    format!(
+                        "{}: {}",
+                        field,
+                        error.message.as_deref().unwrap_or("Validation failed")
+                    )
+                })
+            })
+            .collect();
+
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Validation failed".to_string(),
+                details,
+            }),
+        ));
+    }
+
+    // Parse and validate pubkeys
+    let token_a_key = parse_pubkey_with_error(request.token_a.as_str(), "token_a")?;
+    let token_b_key = parse_pubkey_with_error(request.token_b.as_str(), "token_b")?;
+    let user_wallet = parse_pubkey_with_error(request.user_wallet.as_str(), "user_wallet")?;
+
+    // Get token A from pool manager
+    let token_a =
+        get_token_with_error(&state.aggregator, &token_a_key, &request.token_a, "Token A").await?;
+
+    // Create swap params for tokenA -> tokenB
+    let swap_params = SwapParams {
+        input_token: token_a.clone(),
+        output_token: token_a.clone(), // placeholder, will be replaced
+        input_amount: request.input_amount,
+        slippage_bps: request.slippage_bps,
+        user_wallet,
+        priority: ExecutionPriority::Medium,
+    };
+
+    // Calculate arbitrage profit
+    match state
+        .aggregator
+        .calculate_arbitrage_profit(&swap_params, &token_b_key, request.slippage_bps)
+        .await
+    {
+        Some((profit, forward_route, reverse_route)) => {
+            let profit_percent = (profit as f64 / request.input_amount as f64) * 100.0;
+
+            // Extract swap steps from forward route
+            let mut forward_steps: Vec<SwapStep> = vec![];
+            for path in &forward_route.paths {
+                for step in &path.steps {
+                    forward_steps.push(SwapStep {
+                        dex: step.dex,
+                        input_token: step.input_token.to_string(),
+                        output_token: step.output_token.to_string(),
+                        pool_address: step.pool_address.to_string(),
+                        input_amount: step.input_amount,
+                        output_amount: step.output_amount,
+                        percent: step.percent,
+                    });
+                }
+            }
+
+            // Extract swap steps from reverse route
+            let mut reverse_steps: Vec<SwapStep> = vec![];
+            for path in &reverse_route.paths {
+                for step in &path.steps {
+                    reverse_steps.push(SwapStep {
+                        dex: step.dex,
+                        input_token: step.input_token.to_string(),
+                        output_token: step.output_token.to_string(),
+                        pool_address: step.pool_address.to_string(),
+                        input_amount: step.input_amount,
+                        output_amount: step.output_amount,
+                        percent: step.percent,
+                    });
+                }
+            }
+
+            let time_taken_ms = start_time.elapsed().as_millis() as u64;
+            let response = ArbitrageResponse {
+                profitable: true,
+                profit_amount: profit,
+                profit_percent,
+                forward_route: forward_steps,
+                reverse_route: reverse_steps,
+                forward_output: forward_route.output_amount,
+                reverse_output: reverse_route.output_amount,
+                time_taken_ms,
+                context_slot: forward_route.context_slot,
+            };
+            Ok(Json(response))
+        }
+        None => {
+            // No profitable arbitrage found
+            let time_taken_ms = start_time.elapsed().as_millis() as u64;
+            let response = ArbitrageResponse {
+                profitable: false,
+                profit_amount: 0,
+                profit_percent: 0.0,
+                forward_route: vec![],
+                reverse_route: vec![],
+                forward_output: 0,
+                reverse_output: 0,
+                time_taken_ms,
+                context_slot: 0,
+            };
+            Ok(Json(response))
+        }
+    }
+}
+
+/// Get all monitored arbitrage tokens
+pub async fn get_arbitrage_tokens(
+    State(state): State<AppState>,
+) -> Result<Json<ArbitrageTokensResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Get arbitrage config
+    let arb_config = state.arbitrage_config.read().unwrap();
+
+    let base_token = arb_config.get_base_token().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to get base token".to_string(),
+                details: vec![e],
+            }),
+        )
+    })?;
+
+    // Get monitored tokens
+    let monitored_tokens: Vec<ArbitrageTokenResponse> = arb_config
+        .monitored_tokens
+        .iter()
+        .map(|t| ArbitrageTokenResponse {
+            address: t.address.clone(),
+            symbol: t.symbol.clone(),
+            enabled: t.enabled,
+        })
+        .collect();
+
+    Ok(Json(ArbitrageTokensResponse {
+        base_token: base_token.to_string(),
+        monitored_tokens,
+    }))
+}
+
+/// Add a token to arbitrage monitoring
+pub async fn add_arbitrage_token(
+    State(state): State<AppState>,
+    Json(request): Json<AddTokenRequest>,
+) -> Result<Json<TokenOperationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Validate the request
+    if let Err(validation_errors) = request.validate() {
+        let details: Vec<String> = validation_errors
+            .field_errors()
+            .iter()
+            .flat_map(|(field, errors)| {
+                errors.iter().map(move |error| {
+                    format!(
+                        "{}: {}",
+                        field,
+                        error.message.as_deref().unwrap_or("Validation failed")
+                    )
+                })
+            })
+            .collect();
+
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid request".to_string(),
+                details,
+            }),
+        ));
+    }
+
+    // Parse token address
+    let token_pubkey = parse_pubkey_with_error(&request.address, "token address")?;
+
+    // Add to pool manager's monitored list
+    state
+        .aggregator
+        .get_pool_manager()
+        .add_arbitrage_token(token_pubkey)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Failed to add token".to_string(),
+                    details: vec![e],
+                }),
+            )
+        })?;
+
+    // Also update the config (will be saved to DB by pool manager)
+    let mut config = state.arbitrage_config.write().unwrap();
+    if let Err(e) = config.add_token(request.symbol.clone(), request.address.clone()) {
+        log::warn!(
+            "Token added to pool manager but failed to update config: {}",
+            e
+        );
+    }
+
+    // Save updated config to DB
+    let db = state.aggregator.get_pool_manager().get_db();
+    if let Err(e) =
+        crate::arbitrage_config::ArbitrageConfig::save_tokens_to_db(&db, &config.monitored_tokens)
+    {
+        log::error!("Failed to save config to DB: {}", e);
+    }
+
+    Ok(Json(TokenOperationResponse {
+        success: true,
+        message: format!("Token {} added to arbitrage monitoring", request.symbol),
+        token: Some(ArbitrageTokenResponse {
+            address: request.address,
+            symbol: request.symbol,
+            enabled: true,
+        }),
+    }))
+}
+
+/// Remove a token from arbitrage monitoring
+pub async fn remove_arbitrage_token(
+    State(state): State<AppState>,
+    Json(request): Json<RemoveTokenRequest>,
+) -> Result<Json<TokenOperationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Validate the request
+    if let Err(validation_errors) = request.validate() {
+        let details: Vec<String> = validation_errors
+            .field_errors()
+            .iter()
+            .flat_map(|(field, errors)| {
+                errors.iter().map(move |error| {
+                    format!(
+                        "{}: {}",
+                        field,
+                        error.message.as_deref().unwrap_or("Validation failed")
+                    )
+                })
+            })
+            .collect();
+
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid request".to_string(),
+                details,
+            }),
+        ));
+    }
+
+    // Parse token address
+    let token_pubkey = parse_pubkey_with_error(&request.address, "token address")?;
+
+    // Remove from pool manager's monitored list
+    state
+        .aggregator
+        .get_pool_manager()
+        .remove_arbitrage_token(&token_pubkey)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Failed to remove token".to_string(),
+                    details: vec![e],
+                }),
+            )
+        })?;
+
+    // Also update the config (will be saved to DB by pool manager)
+    let mut config = state.arbitrage_config.write().unwrap();
+    let removed_token = config.remove_token(&request.address).ok();
+
+    // Save updated config to DB
+    let db = state.aggregator.get_pool_manager().get_db();
+    if let Err(e) =
+        crate::arbitrage_config::ArbitrageConfig::save_tokens_to_db(&db, &config.monitored_tokens)
+    {
+        log::error!("Failed to save config to DB: {}", e);
+    }
+
+    Ok(Json(TokenOperationResponse {
+        success: true,
+        message: format!(
+            "Token {} removed from arbitrage monitoring",
+            request.address
+        ),
+        token: removed_token.map(|t| ArbitrageTokenResponse {
+            address: t.address,
+            symbol: t.symbol,
+            enabled: t.enabled,
+        }),
+    }))
 }

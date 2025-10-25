@@ -39,17 +39,6 @@ pub enum MevRisk {
     Critical, // Critical MEV risk (very low liquidity, high value)
 }
 
-/// Represents the best route found by the aggregator
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BestRoute {
-    pub swap_plan: Vec<SwapStep>,
-    pub input_amount: u64,
-    pub output_amount: u64,
-    pub price_impact: f64,
-    pub execution_priority: ExecutionPriority,
-    pub max_mev_risk: MevRisk,
-}
-
 /// Split trading configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SplitConfig {

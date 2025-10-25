@@ -118,6 +118,7 @@ pub struct CheckTickArrayIsInitResult {
     pub start_index: i32,
 }
 
+#[allow(unused)]
 pub struct GetBitmapResult {
     offset: u32,
     tick_array_bitmap: [u64; 8],

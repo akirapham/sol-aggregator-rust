@@ -29,10 +29,25 @@ use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types:
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::interval;
+/// Event broadcasted to arbitrage monitors with pool data and token prices
+#[allow(unused)]
+#[derive(Debug, Clone)]
+pub struct ArbitragePoolUpdate {
+    pub pool_address: Pubkey,
+    pub token_a: Pubkey,
+    pub token_b: Pubkey,
+    pub dex: DexType,
+    /// Price of token_b in terms of token_a
+    pub forward_price: f64,
+    /// Price of token_a in terms of token_b
+    pub reverse_price: f64,
+    pub timestamp: u64,
+}
 
 /// Type alias for the complex pool storage type
 type PoolStorage = Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>;
@@ -67,6 +82,9 @@ pub struct PoolStateManager {
     pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
     rpc_client: Arc<RpcClient>,
 
+    /// Broadcast channel for arbitrage pool updates (only relevant pools with monitored tokens)
+    arbitrage_pool_tx: broadcast::Sender<ArbitragePoolUpdate>,
+
     /// Coalescing buffer: latest update per pool address
     pending_updates: PendingUpdatesMap,
     /// Coalescing buffer: latest update per pool address
@@ -80,6 +98,8 @@ pub struct PoolStateManager {
     chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     raydium_clmm_amm_config_cache: Arc<RwLock<HashMap<Pubkey, RaydiumClmmAmmConfig>>>,
     raydium_cpmm_amm_config_cache: Arc<RwLock<HashMap<Pubkey, RaydiumCpmmAmmConfig>>>,
+    /// Tokens to monitor for arbitrage broadcasts
+    arbitrage_monitored_tokens: Arc<RwLock<HashSet<Pubkey>>>,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
@@ -104,6 +124,9 @@ impl PoolStateManager {
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
         let (chain_state_update_tx, chain_state_update_rx) =
             mpsc::unbounded_channel::<ChainStateUpdate>();
+        let (arbitrage_pool_tx, _arbitrage_pool_rx) =
+            broadcast::channel::<ArbitragePoolUpdate>(1000);
+
         let mut instance = Self {
             grpc_service,
             pools: Arc::new(RwLock::new(HashMap::new())),
@@ -115,6 +138,7 @@ impl PoolStateManager {
                 ConfigLoader::load().unwrap().rpc_url.clone(),
                 CommitmentConfig::processed(),
             )),
+            arbitrage_pool_tx,
             pending_updates: Arc::new(Mutex::new(HashMap::new())),
             pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
             db: db.clone(),
@@ -125,6 +149,7 @@ impl PoolStateManager {
             raydium_cpmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
             pending_pools_to_fetch_tick_arrays: Arc::new(Mutex::new(HashSet::new())),
             tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
+            arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
         };
 
         // Load data from RocksDB on startup
@@ -155,6 +180,130 @@ impl PoolStateManager {
 
     pub fn get_chain_state_update_sender(&self) -> mpsc::UnboundedSender<ChainStateUpdate> {
         self.chain_state_update_tx.clone()
+    }
+
+    /// Subscribe to arbitrage pool updates
+    /// Returns a receiver that will get pool updates with prices for monitored token pairs
+    pub fn subscribe_arbitrage_updates(&self) -> broadcast::Receiver<ArbitragePoolUpdate> {
+        self.arbitrage_pool_tx.subscribe()
+    }
+
+    /// Set the monitored tokens for arbitrage broadcasting
+    /// This allows the pool manager to filter broadcasts to only relevant pools
+    /// Only saves to DB if the token set has changed
+    pub async fn set_arbitrage_monitored_tokens(&self, tokens: HashSet<Pubkey>) {
+        let needs_save = {
+            let mut monitored = self.arbitrage_monitored_tokens.write().await;
+            // Check if the set is different
+            if *monitored == tokens {
+                false // No change, don't save
+            } else {
+                *monitored = tokens.clone();
+                log::info!("Arbitrage monitoring {} tokens", monitored.len());
+                true // Changed, needs save
+            }
+        };
+
+        // Save to DB if changed
+        if needs_save {
+            let db = Arc::clone(&self.db);
+            tokio::spawn(async move {
+                if let Err(e) = Self::save_arbitrage_tokens_to_db(&db, &tokens) {
+                    log::error!("Failed to save arbitrage tokens to DB: {}", e);
+                } else {
+                    log::info!("Saved arbitrage monitored tokens to DB");
+                }
+            });
+        }
+    }
+
+    /// Get current monitored tokens for arbitrage
+    pub async fn get_arbitrage_monitored_tokens(&self) -> HashSet<Pubkey> {
+        let monitored = self.arbitrage_monitored_tokens.read().await;
+        monitored.clone()
+    }
+
+    /// Add a token to arbitrage monitoring and save to DB
+    pub async fn add_arbitrage_token(&self, token: Pubkey) -> Result<(), String> {
+        {
+            let mut monitored = self.arbitrage_monitored_tokens.write().await;
+            if monitored.contains(&token) {
+                return Err("Token already monitored".to_string());
+            }
+            monitored.insert(token);
+            log::info!("Added token {} to arbitrage monitoring", token);
+        }
+
+        // Save to DB asynchronously
+        let db = Arc::clone(&self.db);
+        let tokens = self.get_arbitrage_monitored_tokens().await;
+        tokio::spawn(async move {
+            if let Err(e) = Self::save_arbitrage_tokens_to_db(&db, &tokens) {
+                log::error!("Failed to save arbitrage tokens to DB: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Remove a token from arbitrage monitoring and save to DB
+    pub async fn remove_arbitrage_token(&self, token: &Pubkey) -> Result<(), String> {
+        {
+            let mut monitored = self.arbitrage_monitored_tokens.write().await;
+            if !monitored.remove(token) {
+                return Err("Token not found in monitored list".to_string());
+            }
+            log::info!("Removed token {} from arbitrage monitoring", token);
+        }
+
+        // Save to DB asynchronously
+        let db = Arc::clone(&self.db);
+        let tokens = self.get_arbitrage_monitored_tokens().await;
+        tokio::spawn(async move {
+            if let Err(e) = Self::save_arbitrage_tokens_to_db(&db, &tokens) {
+                log::error!("Failed to save arbitrage tokens to DB: {}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Save arbitrage monitored token addresses to DB
+    fn save_arbitrage_tokens_to_db(db: &Arc<DB>, tokens: &HashSet<Pubkey>) -> Result<(), String> {
+        const ARBITRAGE_TOKEN_ADDRS_KEY: &[u8] = b"arbitrage_monitored_token_addresses";
+
+        let addrs: Vec<String> = tokens.iter().map(|p| p.to_string()).collect();
+        let json = serde_json::to_string(&addrs)
+            .map_err(|e| format!("Failed to serialize token addresses: {}", e))?;
+
+        db.put(ARBITRAGE_TOKEN_ADDRS_KEY, json.as_bytes())
+            .map_err(|e| format!("Failed to save token addresses to DB: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Load arbitrage monitored token addresses from DB
+    pub fn load_arbitrage_tokens_from_db(db: &Arc<DB>) -> Result<HashSet<Pubkey>, String> {
+        const ARBITRAGE_TOKEN_ADDRS_KEY: &[u8] = b"arbitrage_monitored_token_addresses";
+
+        match db.get(ARBITRAGE_TOKEN_ADDRS_KEY) {
+            Ok(Some(bytes)) => {
+                let json = String::from_utf8(bytes.to_vec())
+                    .map_err(|e| format!("Invalid UTF-8 in DB: {}", e))?;
+
+                let addrs: Vec<String> = serde_json::from_str(&json)
+                    .map_err(|e| format!("Failed to deserialize token addresses: {}", e))?;
+
+                addrs
+                    .iter()
+                    .map(|s| {
+                        Pubkey::from_str(s).map_err(|e| format!("Invalid pubkey in DB: {}", e))
+                    })
+                    .collect()
+            }
+            Ok(None) => Ok(HashSet::new()), // No tokens saved yet
+            Err(e) => Err(format!("Failed to load token addresses from DB: {}", e)),
+        }
     }
 
     pub async fn start(&self) {
@@ -336,6 +485,8 @@ impl PoolStateManager {
         let token_cache = Arc::clone(&self.token_cache);
         let rpc_client = self.rpc_client.clone();
         let price_service = Arc::clone(&self.price_service);
+        let arbitrage_pool_tx = self.arbitrage_pool_tx.clone();
+        let arbitrage_monitored_tokens = Arc::clone(&self.arbitrage_monitored_tokens);
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_millis(400));
@@ -382,6 +533,12 @@ impl PoolStateManager {
                 // bounded concurrency (hybrid)
                 let concurrency_limit = 64usize;
 
+                // Get a snapshot of monitored tokens
+                let monitored_tokens_snapshot = {
+                    let tokens = arbitrage_monitored_tokens.read().await;
+                    tokens.clone()
+                };
+
                 // Process account events and normal events in parallel using join!
                 let apply_start = std::time::Instant::now();
                 let (_, _) = tokio::join!(
@@ -397,6 +554,8 @@ impl PoolStateManager {
                             let pending_pools_to_fetch_tick_arrays_c =
                                 Arc::clone(&pending_pools_to_fetch_tick_arrays);
                             let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
+                            let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
+                            let monitored_tokens_c = monitored_tokens_snapshot.clone();
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -408,6 +567,8 @@ impl PoolStateManager {
                                     tick_synced_pools_c,
                                     rpc_client_c,
                                     sol_price,
+                                    &arbitrage_pool_tx_c,
+                                    &monitored_tokens_c,
                                 )
                                 .await;
                             }
@@ -429,6 +590,8 @@ impl PoolStateManager {
                             let pending_pools_to_fetch_tick_arrays_c =
                                 Arc::clone(&pending_pools_to_fetch_tick_arrays);
                             let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
+                            let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
+                            let monitored_tokens_c = monitored_tokens_snapshot.clone();
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -440,6 +603,8 @@ impl PoolStateManager {
                                     tick_synced_pools_c,
                                     rpc_client_c,
                                     sol_price,
+                                    &arbitrage_pool_tx_c,
+                                    &monitored_tokens_c,
                                 )
                                 .await;
                             }
@@ -600,6 +765,8 @@ impl PoolStateManager {
         tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
         rpc_client: Arc<RpcClient>,
         sol_price: f64,
+        arbitrage_pool_tx: &broadcast::Sender<ArbitragePoolUpdate>,
+        arbitrage_monitored_tokens: &HashSet<Pubkey>,
     ) {
         let pool_address = update.address();
         let mut pool_with_ticks = false;
@@ -631,7 +798,7 @@ impl PoolStateManager {
                 }
                 Self::insert_new_pool(
                     pool_state,
-                    pools,
+                    pools.clone(),
                     pair_to_pools,
                     dex_pools,
                     token_cache,
@@ -647,6 +814,50 @@ impl PoolStateManager {
                 drop(tick_synced); // release lock early
                 let mut pending_fetch = pending_pools_to_fetch_tick_arrays.lock().await;
                 pending_fetch.insert(pool_address);
+            }
+        }
+
+        // Broadcast arbitrage update if pool contains monitored tokens
+        if !arbitrage_monitored_tokens.is_empty() {
+            if let Some(pool_mutex) = {
+                let pools_read = pools.read().await;
+                pools_read.get(&pool_address).cloned()
+            } {
+                let pool_guard = pool_mutex.lock().await;
+                let (token_a, token_b) = pool_guard.get_tokens();
+
+                // Check if this pool involves any monitored tokens
+                if arbitrage_monitored_tokens.contains(&token_a)
+                    || arbitrage_monitored_tokens.contains(&token_b)
+                {
+                    let (price_a, price_b) = pool_guard.calculate_token_prices(sol_price);
+
+                    // Calculate prices in both directions
+                    let (forward_price, reverse_price) =
+                        if arbitrage_monitored_tokens.contains(&token_a) {
+                            // Forward: token_a -> token_b, Reverse: token_b -> token_a
+                            (price_b, price_a)
+                        } else {
+                            // Swap if token_b is primary
+                            (price_b, price_a)
+                        };
+
+                    let broadcast_event = ArbitragePoolUpdate {
+                        pool_address,
+                        token_a,
+                        token_b,
+                        dex: pool_guard.dex(),
+                        forward_price,
+                        reverse_price,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                    };
+
+                    // Broadcast to all subscribers (ignore if no receivers)
+                    let _ = arbitrage_pool_tx.send(broadcast_event);
+                }
             }
         }
     }
@@ -796,6 +1007,11 @@ impl PoolStateManager {
         }
     }
 
+    /// Get access to the underlying RocksDB instance
+    pub fn get_db(&self) -> Arc<DB> {
+        Arc::clone(&self.db)
+    }
+
     pub async fn get_pool_addresses_for_pair(
         &self,
         token_a: &Pubkey,
@@ -927,6 +1143,23 @@ impl PoolStateManager {
             }
         }
 
+        // Load arbitrage monitored tokens from DB
+        match Self::load_arbitrage_tokens_from_db(&self.db) {
+            Ok(tokens) => {
+                if !tokens.is_empty() {
+                    let mut monitored = self.arbitrage_monitored_tokens.write().await;
+                    *monitored = tokens.clone();
+                    log::info!(
+                        "Loaded {} arbitrage monitored tokens from RocksDB",
+                        tokens.len()
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to load arbitrage tokens from DB: {}", e);
+            }
+        }
+
         // Rebuild pair_to_pools and dex_pools mappings from loaded pools
         self.rebuild_mappings_from_pools().await;
     }
@@ -940,7 +1173,7 @@ impl PoolStateManager {
         let mut raydium_cpmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
 
         log::info!("Rebuilding mappings from {} pools...", pools_read.len());
-        let tick_fetcher = TickArrayFetcher::new(
+        let _tick_fetcher = TickArrayFetcher::new(
             self.rpc_client.clone(),
             RaydiumClmmPoolState::get_program_id(),
         );

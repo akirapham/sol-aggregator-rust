@@ -22,6 +22,7 @@ pub struct TickState {
     pub liquidity_gross: u128,
 }
 
+#[allow(unused)]
 #[derive(Clone, Debug)]
 pub struct TickArrayState {
     pub start_tick_index: i32,
@@ -136,18 +137,6 @@ pub struct RaydiumClmmPoolUpdate {
     pub is_account_state_update: bool,
     pub pool_update_event_type: PoolUpdateEventType,
     pub additional_event_type: i32, // for tick array index tracking, 0 for others
-}
-
-#[derive(Debug)]
-pub struct SwapComputeResult {
-    pub all_trade: bool,
-    pub amount_specified_remaining: i64,
-    pub amount_calculated: i64,
-    pub fee_amount: u64,
-    pub sqrt_price_x64: u128,
-    pub liquidity: i128,
-    pub tick_current: i32,
-    pub accounts: Vec<Pubkey>,
 }
 
 impl RaydiumClmmPoolState {

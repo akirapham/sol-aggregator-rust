@@ -68,6 +68,19 @@ impl DexAggregator {
     }
 
     pub async fn get_swap_route(&self, swap_param: &SwapParams) -> Option<SwapRoute> {
+        // Preserve backward compatibility: call new implementation with empty exclude set
+        let exclude_pools: HashSet<Pubkey> = HashSet::new();
+        self.get_swap_route_with_exclude(swap_param, &exclude_pools, false)
+            .await
+    }
+
+    /// Get swap route with ability to exclude a set of pools (by address)
+    pub async fn get_swap_route_with_exclude(
+        &self,
+        swap_param: &SwapParams,
+        exclude_pools: &HashSet<Pubkey>,
+        direct_only: bool,
+    ) -> Option<SwapRoute> {
         let self_arc: Arc<dyn GetAmmConfig> = self.pool_manager.clone();
         let min_liquidity_usd = 1000.0_f64;
         // First, direct path
@@ -125,6 +138,12 @@ impl DexAggregator {
             .chain(input_to_base_pools.iter())
             .chain(base_to_output_pools.iter())
         {
+            // Skip pools in the exclude list
+            if exclude_pools.contains(pool_address) {
+                log::debug!("Skipping excluded pool: {}", pool_address);
+                continue;
+            }
+
             if let Some(pool_state) = self
                 .pool_manager
                 .get_pool_state_by_address(pool_address)
@@ -188,115 +207,118 @@ impl DexAggregator {
         }
 
         // 2. Find routes with 1 hop (2 pools)
-        for base_token in BASE_TOKENS.iter() {
-            let base_token_key = Pubkey::from_str(base_token).unwrap();
+        // Skip hop routes if direct_only is true
+        if !direct_only {
+            for base_token in BASE_TOKENS.iter() {
+                let base_token_key = Pubkey::from_str(base_token).unwrap();
 
-            // Skip if base token is same as input or output
-            if tokens_equal(&base_token_key, &swap_param.input_token.address)
-                || tokens_equal(&base_token_key, &swap_param.output_token.address)
-            {
-                continue;
-            }
+                // Skip if base token is same as input or output
+                if tokens_equal(&base_token_key, &swap_param.input_token.address)
+                    || tokens_equal(&base_token_key, &swap_param.output_token.address)
+                {
+                    continue;
+                }
 
-            // Find best pool for input -> base
-            let input_to_base_pools: Vec<(&Pubkey, &Arc<PoolState>)> =
-                input_to_base_pool_addresses_by_pair
-                    .get(&(swap_param.input_token.address, base_token_key))
-                    .map(|addrs| {
-                        addrs
-                            .iter()
-                            .filter_map(|pool_addr| {
-                                all_pool_state
-                                    .get(pool_addr)
-                                    .map(|pool_state| (pool_addr, pool_state))
-                            })
-                            .filter(|(_, pool_state)| {
-                                // Filter out pools with very low liquidity
-                                pool_state.get_liquidity_usd() > min_liquidity_usd
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                // Find best pool for input -> base
+                let input_to_base_pools: Vec<(&Pubkey, &Arc<PoolState>)> =
+                    input_to_base_pool_addresses_by_pair
+                        .get(&(swap_param.input_token.address, base_token_key))
+                        .map(|addrs| {
+                            addrs
+                                .iter()
+                                .filter_map(|pool_addr| {
+                                    all_pool_state
+                                        .get(pool_addr)
+                                        .map(|pool_state| (pool_addr, pool_state))
+                                })
+                                .filter(|(_, pool_state)| {
+                                    // Filter out pools with very low liquidity
+                                    pool_state.get_liquidity_usd() > min_liquidity_usd
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
-            // Find best pool for base -> output
-            let base_to_output_pools: Vec<(&Pubkey, &Arc<PoolState>)> =
-                base_to_output_pool_addresses_by_pair
-                    .get(&(base_token_key, swap_param.output_token.address))
-                    .map(|addrs| {
-                        addrs
-                            .iter()
-                            .filter_map(|pool_addr| {
-                                all_pool_state
-                                    .get(pool_addr)
-                                    .map(|pool_state| (pool_addr, pool_state))
-                            })
-                            .filter(|(_, pool_state)| {
-                                // Filter out pools with very low liquidity
-                                pool_state.get_liquidity_usd() > min_liquidity_usd
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                // Find best pool for base -> output
+                let base_to_output_pools: Vec<(&Pubkey, &Arc<PoolState>)> =
+                    base_to_output_pool_addresses_by_pair
+                        .get(&(base_token_key, swap_param.output_token.address))
+                        .map(|addrs| {
+                            addrs
+                                .iter()
+                                .filter_map(|pool_addr| {
+                                    all_pool_state
+                                        .get(pool_addr)
+                                        .map(|pool_state| (pool_addr, pool_state))
+                                })
+                                .filter(|(_, pool_state)| {
+                                    // Filter out pools with very low liquidity
+                                    pool_state.get_liquidity_usd() > min_liquidity_usd
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
-            if input_to_base_pools.is_empty() || base_to_output_pools.is_empty() {
-                continue;
-            }
+                if input_to_base_pools.is_empty() || base_to_output_pools.is_empty() {
+                    continue;
+                }
 
-            // Try all combinations of input->base and base->output pools
-            for (input_to_base_pool_addr, input_to_base_pool) in &input_to_base_pools {
-                for (base_to_output_pool_addr, base_to_output_pool) in &base_to_output_pools {
-                    // Calculate intermediate amount (input -> base)
-                    let intermediate_amount = input_to_base_pool
-                        .calculate_output_amount(
-                            &swap_param.input_token.address,
-                            swap_param.input_amount,
-                            self_arc.clone(),
-                        )
-                        .await;
+                // Try all combinations of input->base and base->output pools
+                for (input_to_base_pool_addr, input_to_base_pool) in &input_to_base_pools {
+                    for (base_to_output_pool_addr, base_to_output_pool) in &base_to_output_pools {
+                        // Calculate intermediate amount (input -> base)
+                        let intermediate_amount = input_to_base_pool
+                            .calculate_output_amount(
+                                &swap_param.input_token.address,
+                                swap_param.input_amount,
+                                self_arc.clone(),
+                            )
+                            .await;
 
-                    if intermediate_amount == 0 {
-                        continue;
-                    }
+                        if intermediate_amount == 0 {
+                            continue;
+                        }
 
-                    // Calculate final output amount (base -> output)
-                    let final_output_amount = base_to_output_pool
-                        .calculate_output_amount(
-                            &base_token_key,
-                            intermediate_amount,
-                            self_arc.clone(),
-                        )
-                        .await;
+                        // Calculate final output amount (base -> output)
+                        let final_output_amount = base_to_output_pool
+                            .calculate_output_amount(
+                                &base_token_key,
+                                intermediate_amount,
+                                self_arc.clone(),
+                            )
+                            .await;
 
-                    if final_output_amount > 0 {
-                        all_routes_with_out_amounts.push((
-                            vec![
-                                SwapStepInternal {
-                                    dex: input_to_base_pool.dex(),
-                                    input_token: swap_param.input_token.address,
-                                    output_token: base_token_key,
-                                    pool_address: **input_to_base_pool_addr,
-                                    pool_state: (*input_to_base_pool).clone(),
-                                    input_amount: swap_param.input_amount,
-                                    output_amount: intermediate_amount,
-                                    percent: 100,
-                                },
-                                SwapStepInternal {
-                                    dex: base_to_output_pool.dex(),
-                                    input_token: base_token_key,
-                                    output_token: swap_param.output_token.address,
-                                    pool_address: **base_to_output_pool_addr,
-                                    pool_state: (*base_to_output_pool).clone(),
-                                    input_amount: intermediate_amount,
-                                    output_amount: final_output_amount,
-                                    percent: 100,
-                                },
-                            ],
-                            final_output_amount,
-                        ));
+                        if final_output_amount > 0 {
+                            all_routes_with_out_amounts.push((
+                                vec![
+                                    SwapStepInternal {
+                                        dex: input_to_base_pool.dex(),
+                                        input_token: swap_param.input_token.address,
+                                        output_token: base_token_key,
+                                        pool_address: **input_to_base_pool_addr,
+                                        pool_state: (*input_to_base_pool).clone(),
+                                        input_amount: swap_param.input_amount,
+                                        output_amount: intermediate_amount,
+                                        percent: 100,
+                                    },
+                                    SwapStepInternal {
+                                        dex: base_to_output_pool.dex(),
+                                        input_token: base_token_key,
+                                        output_token: swap_param.output_token.address,
+                                        pool_address: **base_to_output_pool_addr,
+                                        pool_state: (*base_to_output_pool).clone(),
+                                        input_amount: intermediate_amount,
+                                        output_amount: final_output_amount,
+                                        percent: 100,
+                                    },
+                                ],
+                                final_output_amount,
+                            ));
+                        }
                     }
                 }
             }
-        }
+        } // End of if !direct_only block
 
         // filter top 2 routes by output amount
         all_routes_with_out_amounts.sort_by(|a, b| b.1.cmp(&a.1));
@@ -486,6 +508,68 @@ impl DexAggregator {
             calculate_min_output_amount(swap_route.output_amount, swap_param.slippage_bps as u64);
         // Return smart route with split paths
         Some(swap_route)
+    }
+
+    /// Calculate arbitrage profit for a round-trip swap: tokenA -> tokenB -> tokenA
+    /// Forward route finds best price (may split if one pool is mispriced)
+    /// Reverse route uses best available route (direct or multi-hop)
+    /// Returns (profit_amount, forward_route, reverse_route) if profitable, None otherwise
+    pub async fn calculate_arbitrage_profit(
+        &self,
+        token_a: &SwapParams,
+        token_b_address: &Pubkey,
+        slippage_bps: u16,
+    ) -> Option<(u64, SwapRoute, SwapRoute)> {
+        let exclude_pools: HashSet<Pubkey> = HashSet::new();
+
+        // Step 1: Get best forward route from tokenA -> tokenB
+        // Allow splits to detect when one pool has mispricing vs others
+        // But limit to direct paths only (no multi-hop) to keep it simple
+        let forward_route = self
+            .get_swap_route_with_exclude(token_a, &exclude_pools, true)
+            .await?;
+
+        // Check if we got a valid route (1 or 2 paths max for potential split)
+        if forward_route.paths.is_empty() || forward_route.paths.len() > 2 {
+            return None;
+        }
+
+        // Ensure all paths are direct (single pool each)
+        for path in &forward_route.paths {
+            if path.steps.len() != 1 {
+                return None;
+            }
+        }
+
+        let token_b_amount = forward_route.output_amount;
+
+        // Step 2: Get the tokenB info from pool manager
+        let token_b = self.pool_manager.get_token(token_b_address).await?;
+
+        // Step 3: Create reverse swap params (tokenB -> tokenA)
+        let reverse_params = SwapParams {
+            input_token: token_b,
+            output_token: token_a.input_token.clone(),
+            input_amount: token_b_amount,
+            slippage_bps,
+            user_wallet: token_a.user_wallet,
+            priority: token_a.priority,
+        };
+
+        // Step 4: Get BEST reverse route (allow multi-hop for best price back)
+        let reverse_route = self
+            .get_swap_route_with_exclude(&reverse_params, &exclude_pools, false)
+            .await?;
+
+        let final_token_a_amount = reverse_route.output_amount;
+
+        // Step 5: Calculate profit
+        if final_token_a_amount > token_a.input_amount {
+            let profit = final_token_a_amount - token_a.input_amount;
+            Some((profit, forward_route, reverse_route))
+        } else {
+            None
+        }
     }
 
     /// Get configuration

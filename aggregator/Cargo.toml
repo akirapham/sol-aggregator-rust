@@ -83,6 +83,7 @@ validator = { workspace = true, features = ["derive"] }
 sol-trade-sdk = { workspace = true }
 rug = { workspace = true }
 serde-big-array = { workspace = true }
+toml = { workspace = true }
 
 [features]
 default = ["bincode"]  # Enable bincode by default (or add it to default features)

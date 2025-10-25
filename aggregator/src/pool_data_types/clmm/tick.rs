@@ -11,6 +11,7 @@ pub const TICK_ARRAY_BITMAP_SIZE: u16 = 512;
 
 pub struct TickUtils {}
 
+#[allow(unused)]
 impl TickUtils {
     pub fn next_init_tick(
         tick_array_current: &TickArrayState,

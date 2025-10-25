@@ -13,6 +13,7 @@ use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::ops::Neg;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct GetInputAmountAndRemainAccountsResult {
     pub expected_amount_in: rug::Integer,
@@ -21,6 +22,7 @@ pub struct GetInputAmountAndRemainAccountsResult {
     pub fee_amount: rug::Integer,
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct GetOutputAmountAndRemainAccountsResult {
     pub expected_amount_out: rug::Integer,
@@ -219,7 +221,7 @@ impl PoolUtils {
             fee_amount: swap_compute.fee_amount,
         })
     }
-
+    #[allow(unused)]
     pub fn get_input_amount_and_remain_accounts(
         pool_info: &ComputeClmmPoolInfo,
         tick_array_cache: &HashMap<i32, TickArrayState>,

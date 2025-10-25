@@ -62,6 +62,7 @@ pub struct DbcPoolState {
     pub last_updated: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DbcPoolUpdate {
     pub slot: u64,

@@ -30,7 +30,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::time::interval;
 /// Event broadcasted to arbitrage monitors with pool data and token prices
@@ -99,6 +99,8 @@ pub struct PoolStateManager {
     raydium_cpmm_amm_config_cache: Arc<RwLock<HashMap<Pubkey, RaydiumCpmmAmmConfig>>>,
     /// Tokens to monitor for arbitrage broadcasts
     arbitrage_monitored_tokens: Arc<RwLock<HashSet<Pubkey>>>,
+    /// Timestamp when the application started (used to filter stale pools)
+    startup_time: SystemTime,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
@@ -149,6 +151,7 @@ impl PoolStateManager {
             pending_pools_to_fetch_tick_arrays: Arc::new(Mutex::new(HashSet::new())),
             tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
             arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
+            startup_time: SystemTime::now(),
         };
 
         // Load data from RocksDB on startup
@@ -940,6 +943,13 @@ impl PoolStateManager {
         }
     }
 
+    /// Check if a pool is stale (hasn't been updated since app startup)
+    /// Returns true if the pool's last update was before the application started
+    fn is_pool_stale(&self, pool: &PoolState) -> bool {
+        let pool_last_update = SystemTime::UNIX_EPOCH + Duration::from_micros(pool.last_updated());
+        pool_last_update < self.startup_time
+    }
+
     /// Get pool state by address
     pub async fn get_pool(&self, pool_address: &Pubkey) -> Option<PoolState> {
         let pools = self.pools.read().await;
@@ -951,7 +961,7 @@ impl PoolStateManager {
         }
     }
 
-    /// Get all pools for a token pair
+    /// Get all pools for a token pair (excluding stale pools)
     pub async fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState> {
         // Step 1: Get pool addresses (quick map read)
         let pool_addresses = {
@@ -969,11 +979,15 @@ impl PoolStateManager {
                 .collect::<Vec<_>>()
         };
 
-        // Step 3: Read pools concurrently (no map lock held)
+        // Step 3: Read pools concurrently and filter out stale ones
         let mut results = Vec::new();
         for mutex in pool_mutexes {
             let pool_guard = mutex.lock().await; // Only locks this specific pool
-            results.push((*pool_guard).clone());
+            let pool_state = (*pool_guard).clone();
+            // Exclude stale pools
+            if !self.is_pool_stale(&pool_state) {
+                results.push(pool_state);
+            }
         }
         results
     }
@@ -994,7 +1008,10 @@ impl PoolStateManager {
         for mutex in pool_mutexes {
             let pool_guard = mutex.lock().await; // Only locks this specific pool
             let pool_cloned = (*pool_guard).clone();
-            results.insert(pool_cloned.address(), pool_cloned);
+            // Exclude stale pools
+            if !self.is_pool_stale(&pool_cloned) {
+                results.insert(pool_cloned.address(), pool_cloned);
+            }
         }
         results
     }
@@ -1042,7 +1059,7 @@ impl PoolStateManager {
         cache.insert(token.address, token);
     }
 
-    /// Get pools for a specific DEX
+    /// Get pools for a specific DEX (excluding stale pools)
     pub async fn get_pools_for_dex(&self, dex: DexType) -> Vec<PoolState> {
         // Step 1: Get pool addresses for this DEX
         let pool_addresses = {
@@ -1059,7 +1076,7 @@ impl PoolStateManager {
                 .collect::<Vec<_>>()
         };
 
-        // Step 3: Read all pools concurrently
+        // Step 3: Read all pools concurrently and filter out stale ones
         let tasks: Vec<_> = pool_mutexes
             .into_iter()
             .map(|mutex| {
@@ -1073,7 +1090,10 @@ impl PoolStateManager {
         let mut results = Vec::new();
         for task in tasks {
             if let Ok(pool) = task.await {
-                results.push(pool);
+                // Exclude stale pools
+                if !self.is_pool_stale(&pool) {
+                    results.push(pool);
+                }
             }
         }
         results

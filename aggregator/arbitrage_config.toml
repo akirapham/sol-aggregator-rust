@@ -2,14 +2,20 @@
 # This file configures the arbitrage settings and tokens to monitor
 
 [settings]
-min_profit_bps = 50  # 0.5% minimum profit
+min_profit_bps = 50  # 0.5% minimum profit (50 basis points)
 base_token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC - always start with this
 base_amount = 100000000  # 100 USDC (6 decimals)
 slippage_bps = 50  # 0.5% slippage tolerance
 max_concurrent_checks = 10  # Maximum concurrent arbitrage checks
 
+# Safety settings (future use)
+# max_price_deviation_bps = 1000  # 10% max deviation from oracle
+# min_pool_liquidity_usd = 10000.0  # $10k minimum liquidity
+# estimated_tx_fee_lamports = 10000  # ~0.00001 SOL tx cost
+
 # Popular Solana tokens to monitor for arbitrage opportunities
-# Arbitrage will check: USDC -> Token -> USDC
+# Strategy: USDC -> Token -> USDC (round-trip arbitrage)
+# Tokens selected based on: liquidity, volume, and volatility
 
 [[monitored_tokens]]
 address = "So11111111111111111111111111111111111111112"  # SOL (Wrapped)
@@ -69,4 +75,72 @@ enabled = true
 [[monitored_tokens]]
 address = "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux"  # HNT (Helium)
 symbol = "HNT"
+enabled = true
+
+# High-Volume Tokens (Added for better arbitrage opportunities)
+
+[[monitored_tokens]]
+address = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"  # JUP (Jupiter Aggregator)
+symbol = "JUP"
+enabled = true
+
+[[monitored_tokens]]
+address = "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"  # WIF (dogwifhat)
+symbol = "WIF"
+enabled = true
+
+[[monitored_tokens]]
+address = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"  # jitoSOL (Jito Staked SOL)
+symbol = "jitoSOL"
+enabled = true
+
+[[monitored_tokens]]
+address = "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE"  # ORCA (Orca DEX)
+symbol = "ORCA"
+enabled = true
+
+[[monitored_tokens]]
+address = "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1"  # bSOL (BlazeStake Staked SOL)
+symbol = "bSOL"
+enabled = true
+
+# High Volume Meme Coins (Volatile = Arbitrage Opportunities)
+
+[[monitored_tokens]]
+address = "3S8qX1MsMqRbiwKg2cQyx7nis1oHMgaCuc9c4VfvVdPN"  # MOTHER
+symbol = "MOTHER"
+enabled = true
+
+[[monitored_tokens]]
+address = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"  # POPCAT
+symbol = "POPCAT"
+enabled = true
+
+[[monitored_tokens]]
+address = "5z3EqYQo9HiCEs3R84RCDMu2n7anpDMxRhdK8PSWmrRC"  # PONKE
+symbol = "PONKE"
+enabled = true
+
+# Additional DeFi & Infrastructure
+
+[[monitored_tokens]]
+address = "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof"  # RENDER
+symbol = "RENDER"
+enabled = true
+
+[[monitored_tokens]]
+address = "85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ"  # W (Wormhole)
+symbol = "W"
+enabled = true
+
+# Stablecoins (for tight spread arbitrage)
+
+[[monitored_tokens]]
+address = "EjmyN6qEC1Tf1JxiG1ae7UTJhUxSwk1TCWNWqxWV4J6o"  # DAI
+symbol = "DAI"
+enabled = true
+
+[[monitored_tokens]]
+address = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"  # PYUSD (PayPal USD)
+symbol = "PYUSD"
 enabled = true

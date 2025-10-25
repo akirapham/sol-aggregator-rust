@@ -19,6 +19,7 @@ services:
       - ./.env:/app/.env:ro
       # Optional: Mount logs directory
       - ./logs:/app/logs
+      - ./rocksdb_data:/app/rocksdb_data
     networks:
       - aggregator-network
     # healthcheck:

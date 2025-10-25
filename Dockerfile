@@ -26,16 +26,32 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy crate manifests for dependency caching
 COPY crates/solana-streamer/Cargo.toml ./crates/solana-streamer/
+COPY crates/mexc-proto/Cargo.toml ./crates/mexc-proto/
+COPY crates/binance-price-stream/Cargo.toml ./crates/binance-price-stream/
+COPY crates/cex-price-provider/Cargo.toml ./crates/cex-price-provider/
 COPY aggregator/Cargo.toml ./aggregator/
+COPY arbitrade/Cargo.toml ./arbitrade/
+COPY amm-eth/Cargo.toml ./amm-eth/
+COPY arbitrade-eth/Cargo.toml ./arbitrade-eth/
 
 # Create dummy source files to cache dependencies
-RUN mkdir -p crates/solana-streamer/src aggregator/src && \
+RUN mkdir -p crates/solana-streamer/src crates/mexc-proto/src crates/binance-price-stream/src \
+  crates/cex-price-provider/src aggregator/src arbitrade/src amm-eth/src arbitrade-eth/src && \
     echo "fn main() {}" > aggregator/src/main.rs && \
-    echo "// dummy" > crates/solana-streamer/src/lib.rs
+  echo "fn main() {}" > arbitrade/src/main.rs && \
+  echo "fn main() {}" > amm-eth/src/main.rs && \
+  echo "fn main() {}" > arbitrade-eth/src/main.rs && \
+  echo "// dummy" > crates/solana-streamer/src/lib.rs && \
+  echo "// dummy" > crates/mexc-proto/src/lib.rs && \
+  echo "// dummy" > crates/binance-price-stream/src/lib.rs && \
+  echo "// dummy" > crates/cex-price-provider/src/lib.rs
 
 # Copy all source code
 COPY crates/ ./crates/
 COPY aggregator/ ./aggregator/
+COPY arbitrade/ ./arbitrade/
+COPY amm-eth/ ./amm-eth/
+COPY arbitrade-eth/ ./arbitrade-eth/
 
 # Build the application in release mode
 RUN cargo build --release --package aggregator

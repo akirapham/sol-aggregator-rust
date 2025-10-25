@@ -3,14 +3,14 @@ resolver = "2"
 members = [
   "crates/solana-streamer",
   "crates/mexc-proto",
-  "aggregator",
+  "aggregator-sol",
   "arbitrade",
   "amm-eth",
   "crates/binance-price-stream",
   "arbitrade-eth",
   "crates/cex-price-provider"
 ]
-default-members = ["aggregator"]
+default-members = ["aggregator-sol"]
 
 [workspace.package]
 version = "0.1.0"

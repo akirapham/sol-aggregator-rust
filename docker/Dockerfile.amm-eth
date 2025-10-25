@@ -19,7 +19,7 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy all workspace members for dependency resolution
 COPY crates/ ./crates/
-COPY aggregator/ ./aggregator/
+COPY aggregator-sol/ ./aggregator-sol/
 COPY arbitrade/ ./arbitrade/
 COPY arbitrade-eth/ ./arbitrade-eth/
 COPY amm-eth/Cargo.toml ./amm-eth/
@@ -32,7 +32,7 @@ RUN mkdir -p amm-eth/src && \
 RUN cargo build --release --package amm-eth --bin amm-eth
 
 # Copy all source code
-COPY aggregator/ ./aggregator/
+COPY aggregator-sol/ ./aggregator-sol/
 COPY arbitrade/ ./arbitrade/
 COPY arbitrade-eth/ ./arbitrade-eth/
 COPY amm-eth/ ./amm-eth/

@@ -955,10 +955,10 @@ pub fn handle_dex_event(
                 // log::info!("WhirlpoolCollectProtocolFeesV2Event");
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
-                log::info!("DbcVirtualPoolAccountEvent, pool config {}", e.virtual_pool.config);
+                // log::info!("DbcVirtualPoolAccountEvent, pool config {}", e.virtual_pool.config);
             },
             DbcPoolConfigAccountEvent => |e: DbcPoolConfigAccountEvent| {
-                log::info!("DbcPoolConfigAccountEvent pool config {}", e.pubkey);
+                // log::info!("DbcPoolConfigAccountEvent pool config {}", e.pubkey);
             },
         });
     }

@@ -29,15 +29,15 @@ COPY crates/solana-streamer/Cargo.toml ./crates/solana-streamer/
 COPY crates/mexc-proto/Cargo.toml ./crates/mexc-proto/
 COPY crates/binance-price-stream/Cargo.toml ./crates/binance-price-stream/
 COPY crates/cex-price-provider/Cargo.toml ./crates/cex-price-provider/
-COPY aggregator/Cargo.toml ./aggregator/
+COPY aggregator-sol/Cargo.toml ./aggregator-sol/
 COPY arbitrade/Cargo.toml ./arbitrade/
 COPY amm-eth/Cargo.toml ./amm-eth/
 COPY arbitrade-eth/Cargo.toml ./arbitrade-eth/
 
 # Create dummy source files to cache dependencies
 RUN mkdir -p crates/solana-streamer/src crates/mexc-proto/src crates/binance-price-stream/src \
-  crates/cex-price-provider/src aggregator/src arbitrade/src amm-eth/src arbitrade-eth/src && \
-    echo "fn main() {}" > aggregator/src/main.rs && \
+  crates/cex-price-provider/src aggregator-sol/src arbitrade/src amm-eth/src arbitrade-eth/src && \
+  echo "fn main() {}" > aggregator-sol/src/main.rs && \
   echo "fn main() {}" > arbitrade/src/main.rs && \
   echo "fn main() {}" > amm-eth/src/main.rs && \
   echo "fn main() {}" > arbitrade-eth/src/main.rs && \
@@ -48,13 +48,13 @@ RUN mkdir -p crates/solana-streamer/src crates/mexc-proto/src crates/binance-pri
 
 # Copy all source code
 COPY crates/ ./crates/
-COPY aggregator/ ./aggregator/
+COPY aggregator-sol/ ./aggregator-sol/
 COPY arbitrade/ ./arbitrade/
 COPY amm-eth/ ./amm-eth/
 COPY arbitrade-eth/ ./arbitrade-eth/
 
 # Build the application in release mode
-RUN cargo build --release --package aggregator
+RUN cargo build --release --package aggregator-sol --bin aggregator-sol
 
 # Stage 2: Create the runtime image
 FROM ubuntu:24.04
@@ -75,7 +75,7 @@ RUN useradd -r -u 1001 -m -c "aggregator user" -s /bin/bash aggregator && \
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /usr/src/app/target/release/aggregator /app/aggregator
+COPY --from=builder /usr/src/app/target/release/aggregator-sol /app/aggregator-sol
 
 # Copy environment template (will be overridden by mounted .env)
 COPY .env.example /app/.env.example
@@ -87,4 +87,4 @@ RUN chown -R aggregator:aggregator /app
 USER aggregator
 
 # Run the application
-CMD ["./aggregator"]
+CMD ["./aggregator-sol"]

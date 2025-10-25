@@ -9,7 +9,7 @@ services:
     container_name: solana-aggregator
     restart: unless-stopped
     ports:
-      - "${API_PORT:-3000}:3000"
+      - "${API_PORT:-3000}:${API_PORT:-3000}"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
     env_file:

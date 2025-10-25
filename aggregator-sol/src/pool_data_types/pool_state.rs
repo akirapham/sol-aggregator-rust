@@ -11,6 +11,38 @@ use crate::{
     },
 };
 
+/// Macro to delegate simple field access across all PoolState variants
+/// Usage: pool_state_delegate!(self, field_name)
+macro_rules! pool_state_delegate {
+    ($self:expr, $field:ident) => {
+        match $self {
+            PoolState::Pumpfun(state) => state.$field,
+            PoolState::PumpSwap(state) => state.$field,
+            PoolState::RaydiumAmmV4(state) => state.$field,
+            PoolState::RaydiumCpmm(state) => state.$field,
+            PoolState::Bonk(state) => state.$field,
+            PoolState::RadyiumClmm(state) => state.$field,
+            PoolState::MeteoraDbc(state) => state.$field,
+        }
+    };
+}
+
+/// Macro to delegate method calls with arguments across all PoolState variants
+/// Usage: pool_state_method_delegate!(self, method_name(arg1, arg2))
+macro_rules! pool_state_method_delegate {
+    ($self:expr, $method:ident($($arg:expr),*)) => {
+        match $self {
+            PoolState::Pumpfun(state) => state.$method($($arg),*),
+            PoolState::PumpSwap(state) => state.$method($($arg),*),
+            PoolState::RaydiumAmmV4(state) => state.$method($($arg),*),
+            PoolState::RaydiumCpmm(state) => state.$method($($arg),*),
+            PoolState::Bonk(state) => state.$method($($arg),*),
+            PoolState::RadyiumClmm(state) => state.$method($($arg),*),
+            PoolState::MeteoraDbc(state) => state.$method($($arg),*),
+        }
+    };
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PoolState {
     Pumpfun(PumpfunPoolState),
@@ -67,27 +99,11 @@ pub struct PoolStateMetadata {
 
 impl PoolState {
     pub fn last_updated(&self) -> u64 {
-        match self {
-            PoolState::Pumpfun(state) => state.last_updated,
-            PoolState::PumpSwap(state) => state.last_updated,
-            PoolState::RaydiumAmmV4(state) => state.last_updated,
-            PoolState::RaydiumCpmm(state) => state.last_updated,
-            PoolState::Bonk(state) => state.last_updated,
-            PoolState::RadyiumClmm(state) => state.last_updated,
-            PoolState::MeteoraDbc(state) => state.last_updated,
-        }
+        pool_state_delegate!(self, last_updated)
     }
 
     pub fn address(&self) -> Pubkey {
-        match self {
-            PoolState::Pumpfun(state) => state.address,
-            PoolState::PumpSwap(state) => state.address,
-            PoolState::RaydiumAmmV4(state) => state.address,
-            PoolState::RaydiumCpmm(state) => state.address,
-            PoolState::Bonk(state) => state.address,
-            PoolState::RadyiumClmm(state) => state.address,
-            PoolState::MeteoraDbc(state) => state.address,
-        }
+        pool_state_delegate!(self, address)
     }
 
     pub fn get_tokens(&self) -> (Pubkey, Pubkey) {
@@ -146,6 +162,7 @@ impl PoolState {
             },
         }
     }
+
     pub fn get_reserves(&self) -> (u64, u64) {
         match self {
             PoolState::Pumpfun(state) => (state.token_reserve, state.sol_reserve),
@@ -159,15 +176,7 @@ impl PoolState {
     }
 
     pub fn get_liquidity_usd(&self) -> f64 {
-        match self {
-            PoolState::Pumpfun(state) => state.liquidity_usd,
-            PoolState::PumpSwap(state) => state.liquidity_usd,
-            PoolState::RaydiumAmmV4(state) => state.liquidity_usd,
-            PoolState::RaydiumCpmm(state) => state.liquidity_usd,
-            PoolState::Bonk(state) => state.liquidity_usd,
-            PoolState::RadyiumClmm(state) => state.liquidity_usd,
-            PoolState::MeteoraDbc(state) => state.liquidity_usd,
-        }
+        pool_state_delegate!(self, liquidity_usd)
     }
 
     pub async fn calculate_output_amount(
@@ -204,14 +213,6 @@ impl PoolState {
     }
 
     pub fn calculate_token_prices(&self, sol_price: f64) -> (f64, f64) {
-        match self {
-            PoolState::Pumpfun(state) => state.calculate_token_prices(sol_price),
-            PoolState::PumpSwap(state) => state.calculate_token_prices(sol_price),
-            PoolState::RaydiumAmmV4(state) => state.calculate_token_prices(sol_price),
-            PoolState::RaydiumCpmm(state) => state.calculate_token_prices(sol_price),
-            PoolState::Bonk(state) => state.calculate_token_prices(sol_price),
-            PoolState::RadyiumClmm(state) => state.calculate_token_prices(sol_price),
-            PoolState::MeteoraDbc(state) => state.calculate_token_prices(sol_price),
-        }
+        pool_state_method_delegate!(self, calculate_token_prices(sol_price))
     }
 }

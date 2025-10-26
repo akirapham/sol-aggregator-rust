@@ -363,7 +363,7 @@ impl PoolStateManager {
         let pool_update_tx = self.get_pool_update_sender();
 
         tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_millis(1000));
+            let mut ticker = interval(Duration::from_millis(200));
             // raydium clmm fetcher
             let raydium_clmm_fetcher = Arc::new(TickArrayFetcher::new(
                 rpc_client.clone(),

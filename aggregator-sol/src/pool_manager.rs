@@ -487,11 +487,6 @@ impl PoolStateManager {
                                                     let mut tick_synced = tick_synced_pools_c.lock().await;
                                                     tick_synced.insert(pool_id);
                                                 }
-                                                log::info!(
-                                                    "Fetched {} tick arrays for Whirlpool pool {:?}",
-                                                    tick_arrays.len(),
-                                                    whirlpool_pool_state.address
-                                                );
                                                 // create raw events and sending it to start_batch_event_processing
 
                                                 tick_arrays.iter().for_each(|tick_array_state| {
@@ -583,6 +578,14 @@ impl PoolStateManager {
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_millis(100));
+
+            // Windowed aggregation for flusher metrics (10s window)
+            let mut window_start = std::time::Instant::now();
+            let mut window_total_events: u64 = 0;
+            let mut window_total_apply_duration = Duration::ZERO;
+            let mut window_iterations: u64 = 0;
+            let mut last_concurrency: usize = 0;
+
             loop {
                 ticker.tick().await;
 
@@ -715,19 +718,36 @@ impl PoolStateManager {
 
                 let total_apply_ns = apply_start.elapsed();
 
-                // log summary / throughput
-                if total_count > 0 {
-                    let avg_per_update_ms =
-                        (total_apply_ns.as_millis() as f64) / (total_count as f64);
+                // Aggregate metrics into sliding 10s window
+                window_total_events = window_total_events.saturating_add(total_count as u64);
+                window_total_apply_duration =
+                    window_total_apply_duration.saturating_add(total_apply_ns);
+                window_iterations = window_iterations.saturating_add(1);
+                last_concurrency = concurrency_limit;
+
+                // Emit aggregated log once every 10s summarizing the last window
+                if window_start.elapsed() >= Duration::from_secs(10) {
+                    let avg_per_update_ms = if window_total_events > 0 {
+                        (window_total_apply_duration.as_millis() as f64)
+                            / (window_total_events as f64)
+                    } else {
+                        0.0
+                    };
+
                     log::info!(
-                        "Flusher apply (parallel): total_event_count {:?}, handle time {:?}, avg {:.3} ms/update, concurrency={}",
-                        total_count,
-                        total_apply_ns,
+                        "Flusher apply (parallel) last_10s: total_event_count {}, handle time {:?}, avg {:.3} ms/update, iterations {}, concurrency={}",
+                        window_total_events,
+                        window_total_apply_duration,
                         avg_per_update_ms,
-                        concurrency_limit
+                        window_iterations,
+                        last_concurrency
                     );
-                } else {
-                    log::info!("Flusher apply: nothing to apply");
+
+                    // reset window
+                    window_start = std::time::Instant::now();
+                    window_total_events = 0;
+                    window_total_apply_duration = Duration::ZERO;
+                    window_iterations = 0;
                 }
             }
         });
@@ -1353,7 +1373,7 @@ impl PoolStateManager {
 
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);
                 }
-                PoolState::OrcaWhirlpool(whirlpool_pool_state) => {
+                PoolState::OrcaWhirlpool(_) => {
                     // add pool to pending pools to fetch tick arrays
                     let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
                     pending.insert(PoolForTickFetching {

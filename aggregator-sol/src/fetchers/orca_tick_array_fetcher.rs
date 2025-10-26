@@ -82,6 +82,7 @@ pub struct FixedOrcaTickArrayState {
 
 /// Represents a dynamic tick array in Orca Whirlpool (variable size with bitmap)
 /// Note: We don't use BorshDeserialize for the whole struct because ticks need custom parsing
+#[allow(unused)]
 #[derive(Clone, Debug)]
 pub struct DynamicOrcaTickArrayState {
     pub discriminator: [u8; 8],

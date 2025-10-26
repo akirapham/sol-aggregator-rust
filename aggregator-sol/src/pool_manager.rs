@@ -1,10 +1,12 @@
 use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
+use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{
     DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig,
-    RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig,
+    RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig, WhirlpoolPoolState,
+    WhirlpoolPoolUpdate,
 };
 use crate::types::Token;
 use crate::types::{ChainStateUpdate, PoolUpdateEvent};
@@ -25,6 +27,7 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig;
+use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools;
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -366,6 +369,10 @@ impl PoolStateManager {
                 rpc_client.clone(),
                 RaydiumClmmPoolState::get_program_id(),
             ));
+            let whirlpool_fetcher = Arc::new(OrcaTickArrayFetcher::new(
+                rpc_client.clone(),
+                WhirlpoolPoolState::get_program_id(),
+            ));
             loop {
                 ticker.tick().await;
 
@@ -399,6 +406,7 @@ impl PoolStateManager {
                     let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
                     let pool_update_tx_clone = pool_update_tx.clone();
                     let raydium_clmm_fetcher_c = raydium_clmm_fetcher.clone();
+                    let whirlpool_fetcher_c = whirlpool_fetcher.clone();
                     async move {
                         let pool_id = pool_for_fetch.address;
                         let dex_type = pool_for_fetch.dex_type;
@@ -427,7 +435,7 @@ impl PoolStateManager {
                                 DexType::RaydiumClmm => {
                                     // Handle Raydium CLMM pools
                                     if let PoolState::RadyiumClmm(ref clmm_pool_state) = pool_state {
-                                        let tick_array_state_result = raydium_clmm_fetcher_c.fetch_all_tick_arrays(pool_id, Arc::new(clmm_pool_state)).await;
+                                        let tick_array_state_result = raydium_clmm_fetcher_c.fetch_all_tick_arrays(pool_id, clmm_pool_state).await;
                                         // get recv_us as time receive the tick arrays
                                         let recv_us = get_high_perf_clock();
                                         match tick_array_state_result {
@@ -440,7 +448,7 @@ impl PoolStateManager {
                                                 // create raw events and sending it to start_batch_event_processing
 
                                                 tick_arrays.iter().for_each(|tick_array_state| {
-                                                    let tick_array_state_event = PoolUpdateEvent::RaydiumClmm(RaydiumClmmPoolUpdate {
+                                                    let tick_array_state_event = PoolUpdateEvent::RaydiumClmm(Box::new(RaydiumClmmPoolUpdate {
                                                         slot: 0,    // dont care
                                                         transaction_index: None, // dont care
                                                         address: pool_id,
@@ -452,7 +460,7 @@ impl PoolStateManager {
                                                         is_account_state_update: true,
                                                         pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayStateAccount,
                                                         additional_event_type: tick_array_state.start_tick_index, // use start tick index as additional event type
-                                                    });
+                                                    }));
                                                     // send to pool update event processor
                                                     let _ = pool_update_tx_clone.send(vec![tick_array_state_event]);
                                                 });
@@ -468,15 +476,66 @@ impl PoolStateManager {
                                     }
                                 }
                                 DexType::Orca => {
-                                    // Handle Orca Whirlpool pools (TODO: implement when OrcaTickArrayFetcher is integrated)
-                                    log::warn!(
-                                        "Orca Whirlpool tick array fetching not yet implemented for pool {:?}",
-                                        pool_id
-                                    );
-                                    // Mark as synced to avoid repeated attempts
-                                    {
-                                        let mut tick_synced = tick_synced_pools_c.lock().await;
-                                        tick_synced.insert(pool_id);
+                                    if let PoolState::OrcaWhirlpool(ref whirlpool_pool_state) = pool_state {
+                                        let tick_array_state_result = whirlpool_fetcher_c.fetch_all_tick_arrays(pool_id, whirlpool_pool_state).await;
+                                        // get recv_us as time receive the tick arrays
+                                        let recv_us = get_high_perf_clock();
+                                        match tick_array_state_result {
+                                            Ok(tick_arrays) => {
+                                                // mark ticks synced pools
+                                                {
+                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
+                                                    tick_synced.insert(pool_id);
+                                                }
+                                                log::info!(
+                                                    "Fetched {} tick arrays for Whirlpool pool {:?}",
+                                                    tick_arrays.len(),
+                                                    whirlpool_pool_state.address
+                                                );
+                                                // create raw events and sending it to start_batch_event_processing
+
+                                                tick_arrays.iter().for_each(|tick_array_state| {
+                                                    let pu = WhirlpoolPoolUpdate {
+                                                        slot: 0,    // dont care
+                                                        transaction_index: None, // dont care
+                                                        address: pool_id,
+                                                        pool_state_part: None,
+                                                        reserve_part: None,
+                                                        tick_array_state: Some(orca_whirlpools::types::TickArrayState {
+                                                            whirlpool: tick_array_state.whirlpool(),
+                                                            start_tick_index: tick_array_state.start_tick_index(),
+                                                            ticks: {
+                                                                let tick_vec: Vec<_> = tick_array_state.ticks().iter().map(|tick| orca_whirlpools::types::Tick {
+                                                                    initialized: tick.initialized,
+                                                                    liquidity_net: tick.liquidity_net,
+                                                                    liquidity_gross: tick.liquidity_gross,
+                                                                    fee_growth_outside_a: tick.fee_growth_outside_a,
+                                                                    fee_growth_outside_b: tick.fee_growth_outside_b,
+                                                                    reward_growths_outside: tick.reward_growths_outside,
+                                                                }).collect();
+                                                                tick_vec.try_into().unwrap_or_else(|v: Vec<_>| {
+                                                                    panic!("Expected a Vec of length 88 but got {}", v.len())
+                                                                })
+                                                            },
+                                                        }),
+                                                        last_updated: recv_us as u64,
+                                                        is_account_state_update: true,
+                                                        pool_update_event_type: PoolUpdateEventType::WhirlpoolTickArrayStateAccount,
+                                                        additional_event_type: tick_array_state.start_tick_index(), // use start tick index as additional event type
+                                                    };
+                                                    let tick_array_state_event = PoolUpdateEvent::Whirlpool(Box::new(pu));
+                                                    // send to pool update event processor
+                                                    let _ = pool_update_tx_clone.send(vec![tick_array_state_event]);
+                                                });
+                                            }
+                                            Err(e) => {
+                                                log::error!(
+                                                    "Failed to fetch tick arrays for Raydium CLMM pool {:?}: {:?}",
+                                                    whirlpool_pool_state.address,
+                                                    e
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                                 _ => {
@@ -1293,6 +1352,15 @@ impl PoolStateManager {
                     drop(pending); // release lock early
 
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);
+                }
+                PoolState::OrcaWhirlpool(whirlpool_pool_state) => {
+                    // add pool to pending pools to fetch tick arrays
+                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
+                    pending.insert(PoolForTickFetching {
+                        address: *pool_address,
+                        dex_type: DexType::Orca,
+                    });
+                    drop(pending); // release lock early
                 }
                 PoolState::RaydiumCpmm(cpmm_pool_state) => {
                     raydium_cpmm_amm_configs_set.insert(cpmm_pool_state.amm_config);

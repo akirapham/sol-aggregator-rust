@@ -7,7 +7,7 @@ use crate::{
     constants::wsol,
     pool_data_types::{
         BonkPoolState, DbcPoolState, DexType, GetAmmConfig, PumpSwapPoolState, PumpfunPoolState,
-        RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState,
+        RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState, WhirlpoolPoolState,
     },
 };
 
@@ -23,6 +23,7 @@ macro_rules! pool_state_delegate {
             PoolState::Bonk(state) => state.$field,
             PoolState::RadyiumClmm(state) => state.$field,
             PoolState::MeteoraDbc(state) => state.$field,
+            PoolState::OrcaWhirlpool(state) => state.$field,
         }
     };
 }
@@ -36,6 +37,7 @@ pub enum PoolState {
     Bonk(BonkPoolState),
     RadyiumClmm(RaydiumClmmPoolState),
     MeteoraDbc(DbcPoolState),
+    OrcaWhirlpool(WhirlpoolPoolState),
 }
 
 #[allow(dead_code)]
@@ -72,6 +74,16 @@ pub enum PoolUpdateEventType {
     RaydiumClmmTickArrayBitmapExtensionAccount,
     RaydiumCpmmPoolStateAccount,
     DbcPoolStateAccount,
+    WhirlpoolPoolStateAccount,
+    WhirlpoolTickArrayStateAccount,
+    WhirlpoolSwap,
+    WhirlpoolSwapV2,
+    WhirlpoolDecreaseLiquidity,
+    WhirlpoolDecreaseLiquidityV2,
+    WhirlpoolIncreaseLiquidity,
+    WhirlpoolIncreaseLiquidityV2,
+    WhirlpoolTwoHopSwap,
+    WhirlpoolTwoHopSwapV2,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +111,7 @@ impl PoolState {
             PoolState::Bonk(state) => (state.base_mint, state.quote_mint),
             PoolState::RadyiumClmm(state) => (state.token_mint0, state.token_mint1),
             PoolState::MeteoraDbc(state) => (state.base_mint, state.base_mint),
+            PoolState::OrcaWhirlpool(state) => (state.token_mint_a, state.token_mint_b),
         }
     }
 
@@ -111,6 +124,7 @@ impl PoolState {
             PoolState::Bonk(_) => DexType::Bonk,
             PoolState::RadyiumClmm(_) => DexType::RaydiumClmm,
             PoolState::MeteoraDbc(_) => DexType::MeteoraDbc,
+            PoolState::OrcaWhirlpool(_) => DexType::Orca,
         }
     }
 
@@ -144,6 +158,10 @@ impl PoolState {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
+            PoolState::OrcaWhirlpool(state) => PoolStateMetadata {
+                slot: state.slot,
+                transaction_index: state.transaction_index,
+            },
         }
     }
 
@@ -156,6 +174,7 @@ impl PoolState {
             PoolState::Bonk(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RadyiumClmm(state) => (state.token0_reserve, state.token1_reserve),
             PoolState::MeteoraDbc(state) => (state.base_reserve, state.quote_reserve),
+            PoolState::OrcaWhirlpool(state) => (state.token_a_reserve, state.token_b_reserve),
         }
     }
 
@@ -193,6 +212,11 @@ impl PoolState {
             PoolState::MeteoraDbc(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
+            PoolState::OrcaWhirlpool(state) => {
+                state
+                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .await
+            }
         }
     }
 
@@ -222,6 +246,9 @@ impl PoolState {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
             }
             PoolState::MeteoraDbc(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::OrcaWhirlpool(state) => {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
             }
         }

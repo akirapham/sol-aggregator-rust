@@ -1,6 +1,7 @@
 pub mod bonk;
 pub mod clmm;
 pub mod dbc;
+pub mod orca_whirlpool;
 pub mod pool_state;
 pub mod pumpfun;
 pub mod pumpswap;
@@ -11,6 +12,7 @@ pub mod traits;
 
 pub use bonk::*;
 pub use dbc::*;
+pub use orca_whirlpool::*;
 pub use pool_state::*;
 pub use pumpfun::*;
 pub use pumpswap::*;

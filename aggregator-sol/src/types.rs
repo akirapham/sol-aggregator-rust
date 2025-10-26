@@ -7,6 +7,7 @@ use crate::{
     pool_data_types::{
         BonkPoolUpdate, DbcPoolUpdate, DexType, PoolUpdateEventType, PumpSwapPoolUpdate,
         PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
+        WhirlpoolPoolUpdate,
     },
 };
 
@@ -141,8 +142,9 @@ pub enum PoolUpdateEvent {
     Raydium(RaydiumAmmV4PoolUpdate),
     RaydiumCpmm(RaydiumCpmmPoolUpdate),
     Bonk(BonkPoolUpdate),
-    RaydiumClmm(RaydiumClmmPoolUpdate),
+    RaydiumClmm(Box<RaydiumClmmPoolUpdate>),
     MeteoraDbc(DbcPoolUpdate),
+    Whirlpool(Box<WhirlpoolPoolUpdate>),
 }
 
 impl PoolUpdateEvent {
@@ -155,6 +157,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::Bonk(update) => update.address,
             PoolUpdateEvent::RaydiumClmm(update) => update.address,
             PoolUpdateEvent::MeteoraDbc(update) => update.address,
+            PoolUpdateEvent::Whirlpool(update) => update.address,
         }
     }
 
@@ -167,6 +170,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::Bonk(update) => update.is_account_state_update,
             PoolUpdateEvent::RaydiumClmm(update) => update.is_account_state_update,
             PoolUpdateEvent::MeteoraDbc(update) => update.is_account_state_update,
+            PoolUpdateEvent::Whirlpool(update) => update.is_account_state_update,
         }
     }
 
@@ -179,6 +183,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::Bonk(update) => update.pool_update_event_type,
             PoolUpdateEvent::RaydiumClmm(update) => update.pool_update_event_type,
             PoolUpdateEvent::MeteoraDbc(update) => update.pool_update_event_type,
+            PoolUpdateEvent::Whirlpool(update) => update.pool_update_event_type,
         }
     }
 
@@ -191,6 +196,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::Bonk(update) => update.last_updated,
             PoolUpdateEvent::RaydiumClmm(update) => update.last_updated,
             PoolUpdateEvent::MeteoraDbc(update) => update.last_updated,
+            PoolUpdateEvent::Whirlpool(update) => update.last_updated,
         }
     }
 
@@ -203,6 +209,7 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::Bonk(update) => update.additional_event_type,
             PoolUpdateEvent::RaydiumClmm(update) => update.additional_event_type,
             PoolUpdateEvent::MeteoraDbc(update) => update.additional_event_type,
+            PoolUpdateEvent::Whirlpool(update) => update.additional_event_type,
         }
     }
 }

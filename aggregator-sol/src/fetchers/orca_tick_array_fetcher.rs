@@ -3,12 +3,17 @@ use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use std::str::FromStr;
 use std::sync::Arc;
 
-const ORCA_WHIRLPOOL_PROGRAM_ID: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
-const TICK_ARRAY_SIZE: usize = 88;
+use crate::pool_data_types::orca_whirlpool::WhirlpoolPoolState;
+
+const TICK_ARRAY_SIZE: usize = 88; // For array declarations
+const TICK_ARRAY_SIZE_I32: i32 = 88; // For arithmetic
 const TICK_ARRAY_SEED: &str = "tick_array";
+
+// Tick limits from Whirlpool protocol
+const MIN_TICK_INDEX: i32 = -443636;
+const MAX_TICK_INDEX: i32 = 443636;
 
 #[allow(unused)]
 #[derive(Clone, Debug)]
@@ -18,7 +23,7 @@ pub struct OrcaTickArrayInfo {
     pub account_data: Option<Vec<u8>>,
 }
 
-/// Represents an individual tick in Orca Whirlpool
+/// Represents an individual tick in Orca Whirlpool (for fixed arrays)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize, Copy, Default)]
 pub struct OrcaTickState {
     pub initialized: bool,
@@ -28,6 +33,40 @@ pub struct OrcaTickState {
     pub fee_growth_outside_b: u128,
     #[serde(with = "serde_big_array::BigArray")]
     pub reward_growths_outside: [u128; 3],
+}
+
+/// Dynamic tick data (for initialized ticks in dynamic arrays)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize, Copy)]
+pub struct DynamicTickData {
+    pub liquidity_net: i128,
+    pub liquidity_gross: u128,
+    pub fee_growth_outside_a: u128,
+    pub fee_growth_outside_b: u128,
+    #[serde(with = "serde_big_array::BigArray")]
+    pub reward_growths_outside: [u128; 3],
+}
+
+/// Dynamic tick enum - either uninitialized (1 byte) or initialized (113 bytes)
+#[derive(Clone, Debug, PartialEq, Eq, BorshDeserialize)]
+pub enum DynamicTick {
+    Uninitialized,
+    Initialized(DynamicTickData),
+}
+
+impl DynamicTick {
+    pub fn to_tick_state(&self) -> OrcaTickState {
+        match self {
+            DynamicTick::Uninitialized => OrcaTickState::default(),
+            DynamicTick::Initialized(data) => OrcaTickState {
+                initialized: true,
+                liquidity_net: data.liquidity_net,
+                liquidity_gross: data.liquidity_gross,
+                fee_growth_outside_a: data.fee_growth_outside_a,
+                fee_growth_outside_b: data.fee_growth_outside_b,
+                reward_growths_outside: data.reward_growths_outside,
+            },
+        }
+    }
 }
 
 /// Represents a fixed-size tick array in Orca Whirlpool (88 ticks)
@@ -42,15 +81,84 @@ pub struct FixedOrcaTickArrayState {
 }
 
 /// Represents a dynamic tick array in Orca Whirlpool (variable size with bitmap)
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
+/// Note: We don't use BorshDeserialize for the whole struct because ticks need custom parsing
+#[derive(Clone, Debug)]
 pub struct DynamicOrcaTickArrayState {
-    #[serde(with = "serde_big_array::BigArray")]
     pub discriminator: [u8; 8],
     pub start_tick_index: i32,
     pub whirlpool: Pubkey,
-    pub tick_bitmap: u128, // Bitmap for tracking initialized ticks
-    #[serde(with = "serde_big_array::BigArray")]
-    pub ticks: [OrcaTickState; TICK_ARRAY_SIZE],
+    pub tick_bitmap: u128,
+    pub ticks: Vec<DynamicTick>, // Exactly 88 ticks, variable size encoding
+}
+
+impl DynamicOrcaTickArrayState {
+    /// Manually deserialize from account data
+    pub fn deserialize_from_account_data(data: &[u8]) -> Result<Self, std::io::Error> {
+        if data.len() < 60 {
+            // 8 (discriminator) + 4 (start_tick) + 32 (whirlpool) + 16 (bitmap) = 60
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Account data too small",
+            ));
+        }
+
+        let mut offset = 0;
+
+        // Read discriminator
+        let discriminator: [u8; 8] = data[offset..offset + 8].try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "Bad discriminator")
+        })?;
+        offset += 8;
+
+        // Read start_tick_index
+        let start_tick_index =
+            i32::from_le_bytes(data[offset..offset + 4].try_into().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Bad start_tick_index")
+            })?);
+        offset += 4;
+
+        // Read whirlpool pubkey
+        let whirlpool = Pubkey::try_from(&data[offset..offset + 32]).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "Bad whirlpool pubkey")
+        })?;
+        offset += 32;
+
+        // Read tick_bitmap
+        let tick_bitmap =
+            u128::from_le_bytes(data[offset..offset + 16].try_into().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Bad tick_bitmap")
+            })?);
+        offset += 16;
+
+        // Read exactly 88 ticks
+        let mut ticks = Vec::with_capacity(TICK_ARRAY_SIZE);
+        for _ in 0..TICK_ARRAY_SIZE {
+            if offset >= data.len() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "Not enough data for ticks",
+                ));
+            }
+
+            // Deserialize DynamicTick from remaining data
+            let mut tick_data = &data[offset..];
+            let tick = DynamicTick::deserialize(&mut tick_data)?;
+
+            // Calculate how many bytes were consumed
+            let consumed = data.len() - offset - tick_data.len();
+            offset += consumed;
+
+            ticks.push(tick);
+        }
+
+        Ok(Self {
+            discriminator,
+            start_tick_index,
+            whirlpool,
+            tick_bitmap,
+            ticks,
+        })
+    }
 }
 
 /// Enum to represent either fixed or dynamic tick array
@@ -76,10 +184,10 @@ impl OrcaTickArrayState {
         }
     }
 
-    pub fn ticks(&self) -> &[OrcaTickState; TICK_ARRAY_SIZE] {
+    pub fn ticks(&self) -> Vec<OrcaTickState> {
         match self {
-            Self::Fixed(arr) => &arr.ticks,
-            Self::Dynamic(arr) => &arr.ticks,
+            Self::Fixed(arr) => arr.ticks.to_vec(),
+            Self::Dynamic(arr) => arr.ticks.iter().map(|t| t.to_tick_state()).collect(),
         }
     }
 
@@ -102,14 +210,11 @@ pub struct OrcaTickArrayFetcher {
 
 #[allow(unused)]
 impl OrcaTickArrayFetcher {
-    pub fn new(rpc_client: Arc<RpcClient>) -> Result<Self> {
-        let program_id = Pubkey::from_str(ORCA_WHIRLPOOL_PROGRAM_ID)
-            .map_err(|_| anyhow!("Failed to parse Orca Whirlpool program ID"))?;
-
-        Ok(Self {
+    pub fn new(rpc_client: Arc<RpcClient>, program_id: Pubkey) -> Self {
+        Self {
             rpc_client,
             program_id,
-        })
+        }
     }
 
     /// Fetch a single tick array by address
@@ -138,11 +243,11 @@ impl OrcaTickArrayFetcher {
 
         if discriminator == fixed_discriminator {
             let tick_array: FixedOrcaTickArrayState =
-                BorshDeserialize::deserialize(&mut &account.data[8..])?;
+                BorshDeserialize::deserialize(&mut &account.data[..])?;
             Ok(OrcaTickArrayState::Fixed(tick_array))
         } else if discriminator == dynamic_discriminator {
-            let tick_array: DynamicOrcaTickArrayState =
-                BorshDeserialize::deserialize(&mut &account.data[8..])?;
+            let tick_array =
+                DynamicOrcaTickArrayState::deserialize_from_account_data(&account.data)?;
             Ok(OrcaTickArrayState::Dynamic(tick_array))
         } else {
             Err(anyhow!("Unknown tick array discriminator"))
@@ -183,7 +288,7 @@ impl OrcaTickArrayFetcher {
                     let dynamic_discriminator: [u8; 8] = [17, 216, 246, 142, 225, 199, 218, 56];
 
                     if discriminator == fixed_discriminator {
-                        match BorshDeserialize::deserialize(&mut &account.data[8..]) {
+                        match BorshDeserialize::deserialize(&mut &account.data[..]) {
                             Ok(tick_array) => {
                                 tick_arrays.push(OrcaTickArrayState::Fixed(tick_array));
                             }
@@ -196,7 +301,9 @@ impl OrcaTickArrayFetcher {
                             }
                         }
                     } else if discriminator == dynamic_discriminator {
-                        match BorshDeserialize::deserialize(&mut &account.data[8..]) {
+                        match DynamicOrcaTickArrayState::deserialize_from_account_data(
+                            &account.data,
+                        ) {
                             Ok(tick_array) => {
                                 tick_arrays.push(OrcaTickArrayState::Dynamic(tick_array));
                             }
@@ -213,7 +320,10 @@ impl OrcaTickArrayFetcher {
                     }
                 }
                 None => {
-                    log::warn!("Account {} not found", addresses[idx]);
+                    log::debug!(
+                        "Tick array account {} not found (not initialized on-chain)",
+                        addresses[idx]
+                    );
                 }
             }
         }
@@ -227,10 +337,12 @@ impl OrcaTickArrayFetcher {
         whirlpool: &Pubkey,
         start_tick_index: i32,
     ) -> Result<(Pubkey, u8)> {
+        // Whirlpool uses the string representation of the start tick index for PDA derivation
+        let start_tick_index_str = start_tick_index.to_string();
         let seeds = [
             TICK_ARRAY_SEED.as_bytes(),
             whirlpool.as_ref(),
-            &start_tick_index.to_le_bytes(),
+            start_tick_index_str.as_bytes(),
         ];
 
         let (pda, bump) = Pubkey::find_program_address(&seeds, &self.program_id);
@@ -240,22 +352,22 @@ impl OrcaTickArrayFetcher {
     /// Get initialized tick indices from a tick array
     pub fn get_initialized_ticks(tick_array: &OrcaTickArrayState) -> Vec<(i32, OrcaTickState)> {
         let start_tick = tick_array.start_tick_index();
-        let ticks = tick_array.ticks();
         let mut initialized_ticks = Vec::new();
 
-        // For dynamic arrays, use bitmap; for fixed arrays, check initialized flag
         match tick_array {
             OrcaTickArrayState::Dynamic(dynamic) => {
-                for (i, tick) in ticks.iter().enumerate() {
-                    let is_initialized = (dynamic.tick_bitmap >> i) & 1 == 1;
-                    if is_initialized && tick.initialized {
+                // For dynamic arrays, ticks vector contains exactly the ticks as stored
+                // The bitmap tells us which tick offsets are initialized
+                for (i, tick) in dynamic.ticks.iter().enumerate() {
+                    let tick_state = tick.to_tick_state();
+                    if tick_state.initialized {
                         let tick_index = start_tick + i as i32;
-                        initialized_ticks.push((tick_index, *tick));
+                        initialized_ticks.push((tick_index, tick_state));
                     }
                 }
             }
-            OrcaTickArrayState::Fixed(_) => {
-                for (i, tick) in ticks.iter().enumerate() {
+            OrcaTickArrayState::Fixed(fixed) => {
+                for (i, tick) in fixed.ticks.iter().enumerate() {
                     if tick.initialized {
                         let tick_index = start_tick + i as i32;
                         initialized_ticks.push((tick_index, *tick));
@@ -275,6 +387,60 @@ impl OrcaTickArrayFetcher {
         const Q64: f64 = 18446744073709551616.0; // 2^64
         let sqrt_price = (sqrt_price_x64 as f64) / Q64;
         sqrt_price * sqrt_price
+    }
+
+    /// Fetch all relevant tick arrays for a given Whirlpool
+    ///
+    /// Unlike Raydium which uses a pool-level bitmap, Whirlpool requires calculating
+    /// which tick arrays are needed based on the current tick position.
+    /// This implementation fetches tick arrays in a range around the current tick.
+    ///
+    /// # Arguments
+    /// * `pool_id` - The Whirlpool address
+    /// * `pool_state` - The Whirlpool pool state containing tick_current_index and tick_spacing
+    ///
+    /// # Returns
+    /// Vector of OrcaTickArrayState objects for all fetched tick arrays
+    pub async fn fetch_all_tick_arrays(
+        &self,
+        pool_id: Pubkey,
+        pool_state: &WhirlpoolPoolState,
+    ) -> Result<Vec<OrcaTickArrayState>> {
+        let tick_current_index = pool_state.tick_current_index;
+        let tick_spacing = pool_state.tick_spacing as i32;
+
+        // Calculate ticks per array: TICK_ARRAY_SIZE_I32 * tick_spacing
+        let ticks_per_array = TICK_ARRAY_SIZE_I32 * tick_spacing;
+
+        // Calculate the start tick index for the array containing current tick
+        let current_array_start = (tick_current_index / ticks_per_array) * ticks_per_array;
+
+        // Fetch arrays in both directions from current position
+        // We fetch 3 arrays in each direction plus the current array (7 total)
+        // This provides good coverage for most swap scenarios
+        let offsets = [-3, -2, -1, 0, 1, 2, 3];
+
+        let start_tick_indices: Vec<i32> = offsets
+            .iter()
+            .map(|&offset| current_array_start + (offset * ticks_per_array))
+            .filter(|&start_index| {
+                // Filter out invalid tick array indices
+                (MIN_TICK_INDEX..MAX_TICK_INDEX).contains(&start_index)
+            })
+            .collect();
+
+        // Generate tick array addresses
+        let addresses: Vec<Pubkey> = start_tick_indices
+            .iter()
+            .filter_map(|&start_index| {
+                self.derive_tick_array_pda(&pool_id, start_index)
+                    .ok()
+                    .map(|(pda, _)| pda)
+            })
+            .collect();
+
+        // Batch fetch all tick arrays (including uninitialized ones)
+        self.fetch_multiple_tick_arrays(addresses).await
     }
 }
 
@@ -304,21 +470,6 @@ mod tests {
         assert_eq!(tick_array.whirlpool(), fixed_array.whirlpool);
         assert!(!tick_array.is_dynamic());
         assert!(tick_array.tick_bitmap().is_none());
-    }
-
-    #[test]
-    fn test_dynamic_tick_array_bitmap() {
-        let dynamic_array = DynamicOrcaTickArrayState {
-            discriminator: [17, 216, 246, 142, 225, 199, 218, 56],
-            start_tick_index: 50,
-            whirlpool: Pubkey::new_unique(),
-            tick_bitmap: 0xFF, // First 8 ticks initialized
-            ticks: [OrcaTickState::default(); TICK_ARRAY_SIZE],
-        };
-
-        let tick_array = OrcaTickArrayState::Dynamic(dynamic_array);
-        assert!(tick_array.is_dynamic());
-        assert_eq!(tick_array.tick_bitmap(), Some(0xFF));
     }
 
     #[test]

@@ -4,11 +4,11 @@ use solana_sdk::pubkey::Pubkey;
 use tokio::sync::MutexGuard;
 
 use crate::constants::is_base_token;
-use crate::pool_data_types::PoolState;
 use crate::pool_data_types::{
     BonkPoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState,
     RaydiumClmmPoolState, RaydiumCpmmPoolState,
 };
+use crate::pool_data_types::{PoolState, WhirlpoolPoolState};
 use crate::types::PoolUpdateEvent;
 use crate::utils::{get_sol_mint, tokens_equal};
 
@@ -275,6 +275,53 @@ pub fn pool_update_event_to_pool_state(
             }
 
             (Some(PoolState::RadyiumClmm(pool_state)), true)
+        }
+        PoolUpdateEvent::Whirlpool(whirlpool_update) => {
+            let mut pool_state = WhirlpoolPoolState {
+                slot: whirlpool_update.slot,
+                transaction_index: whirlpool_update.transaction_index,
+                address: whirlpool_update.address,
+                last_updated: whirlpool_update.last_updated,
+                is_state_keys_initialized: whirlpool_update.is_account_state_update,
+                ..Default::default()
+            };
+
+            if let Some(ref pool_state_part) = whirlpool_update.pool_state_part {
+                pool_state.whirlpool_config = pool_state_part.whirlpool_config;
+                pool_state.token_mint_a = pool_state_part.token_mint_a;
+                pool_state.token_mint_b = pool_state_part.token_mint_b;
+                pool_state.token_vault_a = pool_state_part.token_vault_a;
+                pool_state.token_vault_b = pool_state_part.token_vault_b;
+                pool_state.tick_spacing = pool_state_part.tick_spacing;
+                pool_state.liquidity = pool_state_part.liquidity;
+                pool_state.sqrt_price = pool_state_part.sqrt_price;
+                pool_state.tick_current_index = pool_state_part.tick_current_index;
+                pool_state.fee_rate = pool_state_part.fee_rate;
+                pool_state.protocol_fee_rate = pool_state_part.protocol_fee_rate;
+                pool_state.tick_spacing_seed = pool_state_part.tick_spacing_seed;
+            }
+
+            if let Some(ref token_reserves) = whirlpool_update.reserve_part {
+                pool_state.token_a_reserve = token_reserves.token_a_reserve;
+                pool_state.token_b_reserve = token_reserves.token_b_reserve;
+
+                pool_state.liquidity_usd = compute_pool_liquidity_usd(
+                    &pool_state.token_mint_a,
+                    &pool_state.token_mint_b,
+                    pool_state.token_a_reserve,
+                    pool_state.token_b_reserve,
+                    sol_price,
+                );
+            }
+
+            if let Some(ref tick_array_update) = whirlpool_update.tick_array_state {
+                pool_state.tick_array_state.insert(
+                    tick_array_update.start_tick_index,
+                    tick_array_update.clone(),
+                );
+            }
+
+            (Some(PoolState::OrcaWhirlpool(pool_state)), true)
         }
         PoolUpdateEvent::MeteoraDbc(_dbc_pool_update) => todo!(),
     }
@@ -562,6 +609,77 @@ pub fn update_pool_state_by_event(
                 {
                     state.tick_array_bitmap_extension =
                         raydium_clmm_pool_update.tick_array_bitmap_extension.clone();
+                }
+            }
+        }
+        PoolUpdateEvent::Whirlpool(whirlpool_update) => {
+            if let PoolState::OrcaWhirlpool(state) = &mut **existing_state {
+                is_pool_with_ticks = true;
+                // only update last_updated if it's transaction event update that we can collect reserves
+                if !whirlpool_update.is_account_state_update {
+                    state.last_updated = whirlpool_update.last_updated;
+                    state.slot = whirlpool_update.slot;
+                    state.transaction_index = whirlpool_update.transaction_index;
+                }
+
+                let default_pubkey = Pubkey::default();
+                if let Some(ref pool_state_part) = whirlpool_update.pool_state_part {
+                    if !tokens_equal(&pool_state_part.whirlpool_config, &default_pubkey)
+                        && !tokens_equal(&pool_state_part.whirlpool_config, &state.whirlpool_config)
+                    {
+                        state.whirlpool_config = pool_state_part.whirlpool_config;
+                    }
+                    if !tokens_equal(&pool_state_part.token_mint_a, &default_pubkey)
+                        && !tokens_equal(&pool_state_part.token_mint_a, &state.token_mint_a)
+                    {
+                        state.token_mint_a = pool_state_part.token_mint_a;
+                    }
+                    if !tokens_equal(&pool_state_part.token_mint_b, &default_pubkey)
+                        && !tokens_equal(&pool_state_part.token_mint_b, &state.token_mint_b)
+                    {
+                        state.token_mint_b = pool_state_part.token_mint_b;
+                    }
+                    if !tokens_equal(&pool_state_part.token_vault_a, &default_pubkey)
+                        && !tokens_equal(&pool_state_part.token_vault_a, &state.token_vault_a)
+                    {
+                        state.token_vault_a = pool_state_part.token_vault_a;
+                    }
+                    if !tokens_equal(&pool_state_part.token_vault_b, &default_pubkey)
+                        && !tokens_equal(&pool_state_part.token_vault_b, &state.token_vault_b)
+                    {
+                        state.token_vault_b = pool_state_part.token_vault_b;
+                    }
+
+                    state.tick_spacing = pool_state_part.tick_spacing;
+                    state.liquidity = pool_state_part.liquidity;
+                    state.sqrt_price = pool_state_part.sqrt_price;
+                    state.tick_current_index = pool_state_part.tick_current_index;
+                    state.fee_rate = pool_state_part.fee_rate;
+                    state.protocol_fee_rate = pool_state_part.protocol_fee_rate;
+                    state.tick_spacing_seed = pool_state_part.tick_spacing_seed;
+                }
+
+                if let Some(ref token_reserves) = whirlpool_update.reserve_part {
+                    if token_reserves.token_a_reserve != 0 {
+                        state.token_a_reserve = token_reserves.token_a_reserve;
+                    }
+                    if token_reserves.token_b_reserve != 0 {
+                        state.token_b_reserve = token_reserves.token_b_reserve;
+                    }
+
+                    state.liquidity_usd = compute_pool_liquidity_usd(
+                        &state.token_mint_a,
+                        &state.token_mint_b,
+                        state.token_a_reserve,
+                        state.token_b_reserve,
+                        sol_price,
+                    );
+                }
+                if let Some(ref tick_array_update) = whirlpool_update.tick_array_state {
+                    state.tick_array_state.insert(
+                        tick_array_update.start_tick_index,
+                        tick_array_update.clone(),
+                    );
                 }
             }
         }

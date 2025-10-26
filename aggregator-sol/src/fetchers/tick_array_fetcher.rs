@@ -65,7 +65,7 @@ impl TickArrayFetcher {
     pub async fn fetch_all_tick_arrays(
         &self,
         pool_id: Pubkey,
-        pool_state: Arc<&RaydiumClmmPoolState>,
+        pool_state: &RaydiumClmmPoolState,
     ) -> Result<Vec<TickArrayState>> {
         // first we fetch tick array bitmap and then tick array bitmap extension if any
         // derive tick array bitmap extension address from pool state

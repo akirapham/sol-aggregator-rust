@@ -20,7 +20,7 @@ use solana_streamer_sdk::{
                 },
                 meteora_dbc::{DbcPoolConfigAccountEvent, DbcVirtualPoolAccountEvent},
                 orca_whirlpools::{
-                    WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
+                    self, WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
                     WhirlpoolCollectProtocolFeesEvent, WhirlpoolCollectProtocolFeesV2Event,
                     WhirlpoolConfigAccountEvent, WhirlpoolDecreaseLiquidityEvent,
                     WhirlpoolDecreaseLiquidityV2Event, WhirlpoolIncreaseLiquidityEvent,
@@ -72,6 +72,7 @@ use crate::{
         PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
         RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart, RaydiumClmmPoolUpdate,
         RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState, TickState,
+        WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate,
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
@@ -396,7 +397,7 @@ pub fn handle_dex_event(
                     if is_base_token(&inputb.mint) || is_base_token(&outputb.mint) {
                         let token0_is_input = Pubkey::from_str(&inputb.mint).unwrap() < Pubkey::from_str(&outputb.mint).unwrap();
                         pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                            RaydiumClmmPoolUpdate {
+                            Box::new(RaydiumClmmPoolUpdate {
                                 address:e.pool_state,
                                 slot: e.metadata.slot,
                                 transaction_index: e.metadata.transaction_index,
@@ -411,7 +412,7 @@ pub fn handle_dex_event(
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::RaydiumClmmSwap,
                                 additional_event_type: 0,
-                            }));
+                            })));
                     }
                 }
             },
@@ -422,7 +423,7 @@ pub fn handle_dex_event(
                     if is_base_token(&inputb.mint) || is_base_token(&outputb.mint) {
                         let token0_is_input = Pubkey::from_str(&inputb.mint).unwrap() < Pubkey::from_str(&outputb.mint).unwrap();
                         pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                            RaydiumClmmPoolUpdate {
+                            Box::new(RaydiumClmmPoolUpdate {
                                 address:e.pool_state,
                                 slot: e.metadata.slot,
                                 transaction_index: e.metadata.transaction_index,
@@ -437,7 +438,7 @@ pub fn handle_dex_event(
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::RaydiumClmmSwapV2,
                                 additional_event_type: 0,
-                            }));
+                            })));
                     }
                 }
             },
@@ -450,7 +451,7 @@ pub fn handle_dex_event(
                 if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
                     if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
                         pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                            RaydiumClmmPoolUpdate {
+                            Box::new(RaydiumClmmPoolUpdate {
                                 address:e.pool_state,
                                 slot: e.metadata.slot,
                                 transaction_index: e.metadata.transaction_index,
@@ -465,7 +466,7 @@ pub fn handle_dex_event(
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::RaydiumClmmDecreaseLiquidityV2,
                                 additional_event_type: 0,
-                            }));
+                            })));
                     }
                 }
             },
@@ -478,7 +479,7 @@ pub fn handle_dex_event(
                 if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
                     if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
                         pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                            RaydiumClmmPoolUpdate {
+                            Box::new(RaydiumClmmPoolUpdate {
                                 address:e.pool_state,
                                 slot: e.metadata.slot,
                                 transaction_index: e.metadata.transaction_index,
@@ -493,7 +494,7 @@ pub fn handle_dex_event(
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::RaydiumClmmIncreaseLiquidityV2,
                                 additional_event_type: 0,
-                            }));
+                            })));
                     }
                 }
             },
@@ -503,7 +504,7 @@ pub fn handle_dex_event(
                 if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
                     if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
                         pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                            RaydiumClmmPoolUpdate {
+                            Box::new(RaydiumClmmPoolUpdate {
                                 address:e.pool_state,
                                 slot: e.metadata.slot,
                                 transaction_index: e.metadata.transaction_index,
@@ -518,7 +519,7 @@ pub fn handle_dex_event(
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::RaydiumClmmOpenPositionWithToken22Nft,
                                 additional_event_type: 0,
-                            }));
+                            })));
                     }
                 }
             },
@@ -528,7 +529,7 @@ pub fn handle_dex_event(
                 if let (Some(t0b), Some(t1b)) = (token0_balance, token1_balance) {
                     if is_base_token(&t0b.mint) || is_base_token(&t1b.mint) {
                         pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                            RaydiumClmmPoolUpdate {
+                            Box::new(RaydiumClmmPoolUpdate {
                                 address:e.pool_state,
                                 slot: e.metadata.slot,
                                 transaction_index: e.metadata.transaction_index,
@@ -543,7 +544,7 @@ pub fn handle_dex_event(
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::RaydiumClmmOpenPositionV2,
                                 additional_event_type: 0,
-                            }));
+                            })));
                     }
                 }
             },
@@ -725,6 +726,281 @@ pub fn handle_dex_event(
                     }
                 }
             },
+            // -------------------------- orca whirlpool -----------------------
+            WhirlpoolInitializePoolEvent => |e: WhirlpoolInitializePoolEvent| {
+                // do nothing
+            },
+            WhirlpoolTwoHopSwapV2Event => |e: WhirlpoolTwoHopSwapV2Event| {
+                {
+                    let (vault_a, vault_b) = if e.a_to_b_one {
+                        (e.token_vault_one_input, e.token_vault_one_intermediate)
+                    } else {
+                        (e.token_vault_one_intermediate, e.token_vault_one_input)
+                    };
+                    let reserve_a_balance = post_token_balances.get(vault_a.to_string().as_str());
+                    let reserve_b_balance = post_token_balances.get(vault_b.to_string().as_str());
+                    if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                        if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                            pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                                Box::new(WhirlpoolPoolUpdate {
+                                    address: e.whirlpool_one,
+                                    slot: e.metadata.slot,
+                                    transaction_index: e.metadata.transaction_index,
+                                    last_updated: e.metadata.recv_us as u64,
+                                    pool_state_part: None,
+                                    reserve_part: Some(WhirlpoolPoolReservePart {
+                                        token_a_reserve: ra_b.amount,
+                                        token_b_reserve: rb_b.amount
+                                    }),
+                                    tick_array_state: None,
+                                    is_account_state_update: false,
+                                    pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwapV2,
+                                    additional_event_type: 0,
+                                })));
+                        }
+                    }
+                }
+
+                {
+                    let (vault_a, vault_b) = if e.a_to_b_two {
+                        (e.token_vault_two_intermediate, e.token_vault_two_output)
+                    } else {
+                        (e.token_vault_two_output, e.token_vault_two_intermediate)
+                    };
+                    let reserve_a_balance = post_token_balances.get(vault_a.to_string().as_str());
+                    let reserve_b_balance = post_token_balances.get(vault_b.to_string().as_str());
+                    if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                        if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                            pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                                Box::new(WhirlpoolPoolUpdate {
+                                    address: e.whirlpool_two,
+                                    slot: e.metadata.slot,
+                                    transaction_index: e.metadata.transaction_index,
+                                    last_updated: e.metadata.recv_us as u64,
+                                    pool_state_part: None,
+                                    reserve_part: Some(WhirlpoolPoolReservePart {
+                                        token_a_reserve: ra_b.amount,
+                                        token_b_reserve: rb_b.amount
+                                    }),
+                                    tick_array_state: None,
+                                    is_account_state_update: false,
+                                    pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwapV2,
+                                    additional_event_type: 1,
+                                })));
+                        }
+                    }
+                }
+            },
+            WhirlpoolSwapEvent => |e: WhirlpoolSwapEvent| {
+                let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
+                let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
+                if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                    if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                        pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                            Box::new(WhirlpoolPoolUpdate {
+                                address: e.whirlpool,
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: e.metadata.recv_us as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(WhirlpoolPoolReservePart {
+                                    token_a_reserve: ra_b.amount,
+                                    token_b_reserve: rb_b.amount
+                                }),
+                                tick_array_state: None,
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::WhirlpoolSwap,
+                                additional_event_type: 0,
+                            })));
+                    }
+                }
+            },
+            WhirlpoolSwapV2Event => |e: WhirlpoolSwapV2Event| {
+                let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
+                let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
+                if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                    if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                        pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                            Box::new(WhirlpoolPoolUpdate {
+                                address: e.whirlpool,
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: e.metadata.recv_us as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(WhirlpoolPoolReservePart {
+                                    token_a_reserve: ra_b.amount,
+                                    token_b_reserve: rb_b.amount
+                                }),
+                                tick_array_state: None,
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::WhirlpoolSwapV2,
+                                additional_event_type: 0,
+                            })));
+                    }
+                }
+            },
+            WhirlpoolDecreaseLiquidityV2Event => |e: WhirlpoolDecreaseLiquidityV2Event| {
+                let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
+                let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
+                if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                    if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                        pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                            Box::new(WhirlpoolPoolUpdate {
+                                address: e.whirlpool,
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: e.metadata.recv_us as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(WhirlpoolPoolReservePart {
+                                    token_a_reserve: ra_b.amount,
+                                    token_b_reserve: rb_b.amount
+                                }),
+                                tick_array_state: None,
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::WhirlpoolDecreaseLiquidityV2,
+                                additional_event_type: 0,
+                            })));
+                    }
+                }
+            },
+            WhirlpoolDecreaseLiquidityEvent => |e: WhirlpoolDecreaseLiquidityEvent| {
+                let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
+                let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
+                if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                    if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                        pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                            Box::new(WhirlpoolPoolUpdate {
+                                address: e.whirlpool,
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: e.metadata.recv_us as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(WhirlpoolPoolReservePart {
+                                    token_a_reserve: ra_b.amount,
+                                    token_b_reserve: rb_b.amount
+                                }),
+                                tick_array_state: None,
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::WhirlpoolDecreaseLiquidity,
+                                additional_event_type: 0,
+                            })));
+                    }
+                }
+            },
+            WhirlpoolIncreaseLiquidityV2Event => |e: WhirlpoolIncreaseLiquidityV2Event| {
+                let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
+                let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
+                if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                    if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                        pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                            Box::new(WhirlpoolPoolUpdate {
+                                address: e.whirlpool,
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: e.metadata.recv_us as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(WhirlpoolPoolReservePart {
+                                    token_a_reserve: ra_b.amount,
+                                    token_b_reserve: rb_b.amount
+                                }),
+                                tick_array_state: None,
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidityV2,
+                                additional_event_type: 0,
+                            })));
+                    }
+                }
+            },
+            WhirlpoolIncreaseLiquidityEvent => |e: WhirlpoolIncreaseLiquidityEvent| {
+                let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
+                let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
+                if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                    if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                        pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                            Box::new(WhirlpoolPoolUpdate {
+                                address: e.whirlpool,
+                                slot: e.metadata.slot,
+                                transaction_index: e.metadata.transaction_index,
+                                last_updated: e.metadata.recv_us as u64,
+                                pool_state_part: None,
+                                reserve_part: Some(WhirlpoolPoolReservePart {
+                                    token_a_reserve: ra_b.amount,
+                                    token_b_reserve: rb_b.amount
+                                }),
+                                tick_array_state: None,
+                                is_account_state_update: false,
+                                pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidity,
+                                additional_event_type: 0,
+                            })));
+                    }
+                }
+            },
+            WhirlpoolCollectFeesEvent => |e: WhirlpoolCollectFeesEvent| {
+                // do nothing for now
+            },
+            WhirlpoolCollectProtocolFeesEvent => |e: WhirlpoolCollectProtocolFeesEvent| {
+                // do nothing for now
+            },
+            WhirlpoolInitializePoolV2Event => |e: WhirlpoolInitializePoolV2Event| {
+                // do nothing for now
+            },
+            WhirlpoolTwoHopSwapEvent => |e: WhirlpoolTwoHopSwapEvent| {
+                {
+                    let reserve_a_balance = post_token_balances.get(e.token_vault_one_a.to_string().as_str());
+                    let reserve_b_balance = post_token_balances.get(e.token_vault_one_b.to_string().as_str());
+                    if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                        if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                            pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                                Box::new(WhirlpoolPoolUpdate {
+                                    address: e.whirlpool_one,
+                                    slot: e.metadata.slot,
+                                    transaction_index: e.metadata.transaction_index,
+                                    last_updated: e.metadata.recv_us as u64,
+                                    pool_state_part: None,
+                                    reserve_part: Some(WhirlpoolPoolReservePart {
+                                        token_a_reserve: ra_b.amount,
+                                        token_b_reserve: rb_b.amount
+                                    }),
+                                    tick_array_state: None,
+                                    is_account_state_update: false,
+                                    pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwap,
+                                    additional_event_type: 0,
+                                })));
+                        }
+                    }
+                }
+
+                {
+                    let reserve_a_balance = post_token_balances.get(e.token_vault_two_a.to_string().as_str());
+                    let reserve_b_balance = post_token_balances.get(e.token_vault_two_b.to_string().as_str());
+                    if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
+                        if is_base_token(&ra_b.mint) || is_base_token(&rb_b.mint) {
+                            pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                                Box::new(WhirlpoolPoolUpdate {
+                                    address: e.whirlpool_two,
+                                    slot: e.metadata.slot,
+                                    transaction_index: e.metadata.transaction_index,
+                                    last_updated: e.metadata.recv_us as u64,
+                                    pool_state_part: None,
+                                    reserve_part: Some(WhirlpoolPoolReservePart {
+                                        token_a_reserve: ra_b.amount,
+                                        token_b_reserve: rb_b.amount
+                                    }),
+                                    tick_array_state: None,
+                                    is_account_state_update: false,
+                                    pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwap,
+                                    additional_event_type: 0,
+                                })));
+                        }
+                    }
+                }
+            },
+            WhirlpoolCollectFeesV2Event => |e: WhirlpoolCollectFeesV2Event| {
+                // do nothing for now
+            },
+            WhirlpoolCollectProtocolFeesV2Event => |e: WhirlpoolCollectProtocolFeesV2Event| {
+                // do nothing for now
+            },
             // -------------------------- account -----------------------
             BonkPoolStateAccountEvent => |e: BonkPoolStateAccountEvent| {
                 pool_update_events.push(PoolUpdateEvent::Bonk(
@@ -797,7 +1073,7 @@ pub fn handle_dex_event(
             RaydiumClmmPoolStateAccountEvent => |e: RaydiumClmmPoolStateAccountEvent| {
                 if is_base_token(&e.pool_state.token_mint0.to_string()) || is_base_token(&e.pool_state.token_mint1.to_string()) {
                     pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                    RaydiumClmmPoolUpdate {
+                    Box::new(RaydiumClmmPoolUpdate {
                         address:e.pubkey,
                         slot:e.metadata.slot,
                         transaction_index:e.metadata.transaction_index,
@@ -823,12 +1099,12 @@ pub fn handle_dex_event(
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::RaydiumClmmPoolStateAccount,
                         additional_event_type: 0, // for tick array index tracking, 0 for others
-                    }));
+                    })));
                 }
             },
             RaydiumClmmTickArrayStateAccountEvent => |e: RaydiumClmmTickArrayStateAccountEvent| {
                 pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                    RaydiumClmmPoolUpdate {
+                    Box::new(RaydiumClmmPoolUpdate {
                         address:e.tick_array_state.pool_id,
                         slot:e.metadata.slot,
                         transaction_index:e.metadata.transaction_index,
@@ -851,11 +1127,11 @@ pub fn handle_dex_event(
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayStateAccount,
                         additional_event_type: e.tick_array_state.start_tick_index, // for tick array index tracking
-                    }));
+                    })));
             },
             RaydiumClmmTickArrayBitmapExtensionAccountEvent => |e: RaydiumClmmTickArrayBitmapExtensionAccountEvent| {
                 pool_update_events.push(PoolUpdateEvent::RaydiumClmm(
-                    RaydiumClmmPoolUpdate {
+                    Box::new(RaydiumClmmPoolUpdate {
                         address:e.tick_array_bitmap_extension.pool_id,
                         slot:e.metadata.slot,
                         transaction_index:e.metadata.transaction_index,
@@ -870,7 +1146,7 @@ pub fn handle_dex_event(
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::RaydiumClmmTickArrayBitmapExtensionAccount,
                         additional_event_type: 0,
-                    }));
+                    })));
             },
             RaydiumCpmmAmmConfigAccountEvent => |e: RaydiumCpmmAmmConfigAccountEvent| {
                 // do nothing for now
@@ -903,62 +1179,57 @@ pub fn handle_dex_event(
             },
             TokenInfoEvent => |e: TokenInfoEvent| {
             },
-            WhirlpoolConfigAccountEvent => |e: WhirlpoolConfigAccountEvent| {
-                // log::info!("WhirlpoolConfigAccountEvent");
-            },
             WhirlpoolPoolStateAccountEvent => |e: WhirlpoolPoolStateAccountEvent| {
-                // log::info!("WhirlpoolPoolStateAccountEvent");
+                if is_base_token(&e.whirlpool_pool_state.token_mint_a.to_string()) || is_base_token(&e.whirlpool_pool_state.token_mint_b.to_string()) {
+                    pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                    Box::new(WhirlpoolPoolUpdate {
+                        address:e.pubkey,
+                        slot:e.metadata.slot,
+                        transaction_index:e.metadata.transaction_index,
+                        last_updated: e.metadata.recv_us as u64,
+                        pool_state_part: Some(WhirlpoolPoolStatePart {
+                            whirlpool_config: e.whirlpool_pool_state.whirlpools_config,
+                            token_mint_a: e.whirlpool_pool_state.token_mint_a,
+                            token_mint_b: e.whirlpool_pool_state.token_mint_b,
+                            token_vault_a: e.whirlpool_pool_state.token_vault_a,
+                            token_vault_b: e.whirlpool_pool_state.token_vault_b,
+                            tick_spacing: e.whirlpool_pool_state.tick_spacing,
+                            tick_spacing_seed: e.whirlpool_pool_state.tick_spacing_seed,
+                            fee_rate: e.whirlpool_pool_state.fee_rate,
+                            protocol_fee_rate: e.whirlpool_pool_state.protocol_fee_rate,
+                            liquidity: e.whirlpool_pool_state.liquidity,
+                            sqrt_price: e.whirlpool_pool_state.sqrt_price,
+                            tick_current_index: e.whirlpool_pool_state.tick_current_index,
+                        }),
+                        reserve_part: None,
+                        tick_array_state: None,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::WhirlpoolPoolStateAccount,
+                        additional_event_type: 0, // for tick array index tracking, 0 for others
+                    })
+                ));
+                }
             },
             WhirlpoolTickArrayStateAccountEvent => |e: WhirlpoolTickArrayStateAccountEvent| {
-                // log::info!("WhirlpoolTickArrayStateAccountEvent");
-            },
-            WhirlpoolSwapV2Event => |e: WhirlpoolSwapV2Event| {
-                log::info!("WhirlpoolSwapV2Event");
-            },
-            WhirlpoolInitializePoolEvent => |e: WhirlpoolInitializePoolEvent| {
-                // log::info!("WhirlpoolInitializePoolEvent");
-            },
-            WhirlpoolTwoHopSwapV2Event => |e: WhirlpoolTwoHopSwapV2Event| {
-                log::info!("WhirlpoolTwoHopSwapV2Event");
-            },
-            WhirlpoolSwapEvent => |e: WhirlpoolSwapEvent| {
-                log::info!("WhirlpoolSwapEvent");
-            },
-            WhirlpoolIncreaseLiquidityEvent => |e: WhirlpoolIncreaseLiquidityEvent| {
-                // log::info!("WhirlpoolIncreaseLiquidityEvent");
-            },
-            WhirlpoolIncreaseLiquidityV2Event => |e: WhirlpoolIncreaseLiquidityV2Event| {
-                // log::info!("WhirlpoolIncreaseLiquidityV2Event");
-            },
-            WhirlpoolDecreaseLiquidityEvent => |e: WhirlpoolDecreaseLiquidityEvent| {
-                // log::info!("WhirlpoolDecreaseLiquidityEvent");
-            },
-            WhirlpoolCollectFeesEvent => |e: WhirlpoolCollectFeesEvent| {
-                // log::info!("WhirlpoolCollectFeesEvent");
-            },
-            WhirlpoolCollectProtocolFeesEvent => |e: WhirlpoolCollectProtocolFeesEvent| {
-                // log::info!("WhirlpoolCollectProtocolFeesEvent");
-            },
-            WhirlpoolInitializePoolV2Event => |e: WhirlpoolInitializePoolV2Event| {
-                // log::info!("WhirlpoolInitializePoolV2Event");
-            },
-            WhirlpoolDecreaseLiquidityV2Event => |e: WhirlpoolDecreaseLiquidityV2Event| {
-                // log::info!("WhirlpoolDecreaseLiquidityV2Event");
-            },
-            WhirlpoolTwoHopSwapEvent => |e: WhirlpoolTwoHopSwapEvent| {
-                log::info!("WhirlpoolTwoHopSwapEvent");
-            },
-            WhirlpoolCollectFeesV2Event => |e: WhirlpoolCollectFeesV2Event| {
-                // log::info!("WhirlpoolCollectFeesV2Event");
-            },
-            WhirlpoolCollectProtocolFeesV2Event => |e: WhirlpoolCollectProtocolFeesV2Event| {
-                // log::info!("WhirlpoolCollectProtocolFeesV2Event");
+                pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                    Box::new(WhirlpoolPoolUpdate {
+                        address:e.tick_array_state.whirlpool,
+                        slot:e.metadata.slot,
+                        transaction_index:e.metadata.transaction_index,
+                        last_updated: e.metadata.recv_us as u64,
+                        pool_state_part: None,
+                        reserve_part: None,
+                        tick_array_state: Some(e.tick_array_state.clone()),
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::WhirlpoolTickArrayStateAccount,
+                        additional_event_type: e.tick_array_state.start_tick_index,
+                    })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
-                // log::info!("DbcVirtualPoolAccountEvent, pool config {}", e.virtual_pool.config);
+                // do nothing for now
             },
             DbcPoolConfigAccountEvent => |e: DbcPoolConfigAccountEvent| {
-                // log::info!("DbcPoolConfigAccountEvent pool config {}", e.pubkey);
+                // do nothing for now
             },
         });
     }

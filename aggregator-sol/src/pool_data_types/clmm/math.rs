@@ -123,7 +123,7 @@ impl SwapMath {
             last_saved_tick_array_start_index
         };
         let mut state = SwapComputeState {
-            amount_specified_remaining: amount_specified,
+            amount_specified_remaining: amount_specified.clone(),
             amount_calculated: rug::Integer::ZERO,
             sqrt_price_x64: current_sqrt_price_x64,
             tick: tick as i32,
@@ -132,9 +132,27 @@ impl SwapMath {
             fee_amount: rug::Integer::ZERO,
         };
         let mut tick_array_start_index = last_saved_tick_array_start_index;
-        let mut tick_array_current = tick_array_cache
-            .get(&last_saved_tick_array_start_index)
-            .unwrap();
+        let mut tick_array_current = match tick_array_cache.get(&last_saved_tick_array_start_index) {
+            Some(cache) => cache,
+            None => {
+                if catch_liquidity_insufficient {
+                    return Ok(SwapComputeResult {
+                        all_trade: false,
+                        amount_specified_remaining: amount_specified,
+                        amount_calculated: rug::Integer::ZERO,
+                        fee_amount: rug::Integer::ZERO,
+                        sqrt_price_x64: current_sqrt_price_x64,
+                        liquidity,
+                        tick_current: current_tick,
+                        accounts: vec![],
+                    });
+                }
+                return Err(format!(
+                    "Initial tick array not found in cache at index {}",
+                    last_saved_tick_array_start_index
+                ));
+            }
+        };
         // let mut loop_count = 0;
         let mut t = !zero_for_one && tick_array_current.start_tick_index == state.tick;
         while !state.amount_specified_remaining.is_zero()
@@ -208,7 +226,27 @@ impl SwapMath {
                         )
                         .0;
                         tick_array_address = Some(expected_next_tick_array_address);
-                        tick_array_current = tick_array_cache.get(&tick_array_start_index).unwrap();
+                        tick_array_current = match tick_array_cache.get(&tick_array_start_index) {
+                            Some(cache) => cache,
+                            None => {
+                                if catch_liquidity_insufficient {
+                                    return Ok(SwapComputeResult {
+                                        all_trade: false,
+                                        amount_specified_remaining: state.amount_specified_remaining,
+                                        amount_calculated: state.amount_calculated,
+                                        fee_amount: state.fee_amount,
+                                        sqrt_price_x64: state.sqrt_price_x64,
+                                        liquidity: state.liquidity,
+                                        tick_current: state.tick,
+                                        accounts: state.accounts,
+                                    });
+                                }
+                                return Err(format!(
+                                    "Tick array not found in cache at index {}",
+                                    tick_array_start_index
+                                ));
+                            }
+                        };
                         match TickUtils::first_initialized_tick(tick_array_current, zero_for_one) {
                             Ok(tick) => next_init_tick_opt = Some(tick),
                             Err(e) => return Err(format!("not found next tick info: {e}")),

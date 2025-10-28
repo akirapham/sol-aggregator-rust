@@ -83,15 +83,6 @@ impl ArbitrageMonitor {
     /// Check arbitrage when a broadcast pool update is received
     /// This is triggered by real-time pool updates from the broadcast channel
     async fn on_broadcast_pool_update(&self, pool_update: &ArbitragePoolUpdate) {
-        log::info!(
-            "🔄 Broadcast pool update: {} | {} <-> {} | Forward price: {:.8}, Reverse price: {:.8}",
-            pool_update.pool_address,
-            pool_update.token_a,
-            pool_update.token_b,
-            pool_update.forward_price,
-            pool_update.reverse_price
-        );
-
         // Quick price check first - round trip should yield profit
         let price_round_trip = pool_update.forward_price * pool_update.reverse_price;
         let price_diff_percent = ((price_round_trip - 1.0) * 100.0).abs();

@@ -584,7 +584,6 @@ impl PoolStateManager {
             let mut window_total_events: u64 = 0;
             let mut window_total_apply_duration = Duration::ZERO;
             let mut window_iterations: u64 = 0;
-            let mut last_concurrency: usize = 0;
 
             loop {
                 ticker.tick().await;
@@ -723,7 +722,6 @@ impl PoolStateManager {
                 window_total_apply_duration =
                     window_total_apply_duration.saturating_add(total_apply_ns);
                 window_iterations = window_iterations.saturating_add(1);
-                last_concurrency = concurrency_limit;
 
                 // Emit aggregated log once every 10s summarizing the last window
                 if window_start.elapsed() >= Duration::from_secs(10) {
@@ -740,7 +738,7 @@ impl PoolStateManager {
                         window_total_apply_duration,
                         avg_per_update_ms,
                         window_iterations,
-                        last_concurrency
+                        concurrency_limit
                     );
 
                     // reset window
@@ -1082,6 +1080,11 @@ impl PoolStateManager {
     fn is_pool_stale(&self, pool: &PoolState) -> bool {
         let pool_last_update = SystemTime::UNIX_EPOCH + Duration::from_micros(pool.last_updated());
         pool_last_update < self.startup_time
+    }
+
+    pub async fn is_pool_tick_synced(&self, pool_address: &Pubkey) -> bool {
+        let tick_synced = self.tick_synced_pools.lock().await;
+        tick_synced.contains(pool_address)
     }
 
     /// Get pool state by address

@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
-use borsh::BorshDeserialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
+use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::parser::ORCA_WHIRLPOOL_PROGRAM_ID;
 use std::sync::Arc;
 
 use crate::pool_data_types::orca_whirlpool::WhirlpoolPoolState;
@@ -14,6 +15,44 @@ const TICK_ARRAY_SEED: &str = "tick_array";
 // Tick limits from Whirlpool protocol
 const MIN_TICK_INDEX: i32 = -443636;
 const MAX_TICK_INDEX: i32 = 443636;
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct AdaptiveFeeConstants {
+    pub filter_period: u16,
+    pub decay_period: u16,
+    pub reduction_factor: u16,
+    pub adaptive_fee_control_factor: u32,
+    pub max_volatility_accumulator: u32,
+    pub tick_group_size: u16,
+    pub major_swap_threshold_ticks: u16,
+    pub reserved: [u8; 16],
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Oracle {
+    pub discriminator: [u8; 8],
+    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
+    pub whirlpool: Pubkey,
+    pub trade_enable_timestamp: u64,
+    pub adaptive_fee_constants: AdaptiveFeeConstants,
+    pub adaptive_fee_variables: AdaptiveFeeVariables,
+    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::Bytes>"))]
+    pub reserved: [u8; 128],
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct AdaptiveFeeVariables {
+    pub last_reference_update_timestamp: u64,
+    pub last_major_swap_timestamp: u64,
+    pub volatility_reference: u32,
+    pub tick_group_index_reference: i32,
+    pub volatility_accumulator: u32,
+    pub reserved: [u8; 16],
+}
+
 
 #[allow(unused)]
 #[derive(Clone, Debug)]
@@ -394,7 +433,8 @@ impl OrcaTickArrayFetcher {
     ///
     /// Unlike Raydium which uses a pool-level bitmap, Whirlpool requires calculating
     /// which tick arrays are needed based on the current tick position.
-    /// This implementation fetches tick arrays in a range around the current tick.
+    /// This implementation fetches tick arrays in a wider range around the current tick
+    /// to ensure we have all necessary data for accurate swap routing.
     ///
     /// # Arguments
     /// * `pool_id` - The Whirlpool address
@@ -416,10 +456,10 @@ impl OrcaTickArrayFetcher {
         // Calculate the start tick index for the array containing current tick
         let current_array_start = (tick_current_index / ticks_per_array) * ticks_per_array;
 
-        // Fetch arrays in both directions from current position
-        // We fetch 3 arrays in each direction plus the current array (7 total)
-        // This provides good coverage for most swap scenarios
-        let offsets = [-3, -2, -1, 0, 1, 2, 3];
+        // Fetch arrays in a wider range to support larger swaps
+        // We fetch 5 arrays in each direction plus the current array (11 total)
+        // This provides good coverage for most swap scenarios and reduces quote inaccuracy
+        let offsets = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
 
         let start_tick_indices: Vec<i32> = offsets
             .iter()
@@ -429,6 +469,14 @@ impl OrcaTickArrayFetcher {
                 (MIN_TICK_INDEX..MAX_TICK_INDEX).contains(&start_index)
             })
             .collect();
+
+        log::debug!(
+            "Fetching {} tick arrays for Whirlpool {} (current tick: {}, spacing: {})",
+            start_tick_indices.len(),
+            pool_id,
+            tick_current_index,
+            tick_spacing
+        );
 
         // Generate tick array addresses
         let addresses: Vec<Pubkey> = start_tick_indices
@@ -441,8 +489,37 @@ impl OrcaTickArrayFetcher {
             .collect();
 
         // Batch fetch all tick arrays (including uninitialized ones)
-        self.fetch_multiple_tick_arrays(addresses).await
+        let tick_arrays = self.fetch_multiple_tick_arrays(addresses).await?;
+
+        log::debug!(
+            "Successfully fetched {} initialized tick arrays for Whirlpool {}",
+            tick_arrays.len(),
+            pool_id
+        );
+
+        Ok(tick_arrays)
     }
+
+    pub async fn fetch_oracle(
+        &self,
+        whirlpool: &Pubkey,
+        tick_spacing: u16,
+        fee_tier_index_seed: [u8; 2],
+    ) -> Result<Option<Oracle>> {
+        // no need to fetch oracle for non-adaptive fee whirlpools
+        if tick_spacing == u16::from_le_bytes(fee_tier_index_seed) {
+            return Ok(None);
+        }
+        let oracle_address = get_oracle_address(whirlpool).0;
+        let oracle_info = rpc.get_account(&oracle_address).await?;
+        Ok(Some(Oracle::from_bytes(&oracle_info.data)?))
+    }
+}
+
+pub fn get_oracle_address(whirlpool: &Pubkey) -> (Pubkey, u8) {
+    let seeds: &[&[u8]; 2] = &[b"oracle", whirlpool.as_ref()];
+
+    Pubkey::try_find_program_address(seeds, &ORCA_WHIRLPOOL_PROGRAM_ID).unwrap()
 }
 
 #[cfg(test)]

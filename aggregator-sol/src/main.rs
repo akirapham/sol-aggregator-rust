@@ -17,6 +17,8 @@ use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use dotenv::dotenv;
 use env_logger::Env;
 use std::sync::Arc;
+use std::path::PathBuf;
+use std::env;
 use tokio::net::TcpListener;
 use tokio::signal;
 
@@ -66,110 +68,169 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let aggregator = Arc::new(aggregator::DexAggregator::new(config, pool_manager.clone()));
 
     // 2.5. Load arbitrage configuration and start monitoring (optional)
-    let arb_config_path = std::env::var("ARBITRAGE_CONFIG_PATH")
-        .unwrap_or_else(|_| "arbitrage_config.toml".to_string());
+    let arb_config_path = env::var("ARBITRAGE_CONFIG_PATH").unwrap_or_else(|_| "arbitrage_config.toml".to_string());
 
-    let (arb_config_arc, arbitrage_monitor) =
-        if let Ok(mut arb_config) = ArbitrageConfig::from_file(&arb_config_path) {
-            log::info!("Arbitrage configuration loaded from {}", arb_config_path);
+    // Helper to attempt loading and wiring up the arbitrage monitor from a provided config
+    async fn try_setup_arb(
+        arb_path: PathBuf,
+        pool_manager: Arc<PoolStateManager>,
+        aggregator: Arc<aggregator::DexAggregator>,
+    ) -> Option<(Arc<std::sync::RwLock<ArbitrageConfig>>, Arc<ArbitrageMonitor>)> {
+        if !arb_path.exists() {
+            return None;
+        }
 
-            // Load tokens from DB and merge with TOML config
-            let db = pool_manager.get_db();
-            if let Ok(db_tokens) = ArbitrageConfig::load_tokens_from_db(&db) {
-                if !db_tokens.is_empty() {
-                    log::info!(
-                        "Loaded {} tokens from RocksDB, merging with TOML config",
-                        db_tokens.len()
-                    );
-                    arb_config = arb_config.merge_with_db_tokens(db_tokens);
-                }
-            }
+        match ArbitrageConfig::from_file(arb_path.to_str().unwrap()) {
+            Ok(mut arb_config) => {
+                log::info!("Arbitrage configuration loaded from {}", arb_path.display());
 
-            log::info!(
-                "Monitoring {} tokens",
-                arb_config.get_enabled_tokens().len()
-            );
-
-            // Collect monitored token pubkeys for the pool manager to filter broadcasts
-            let mut monitored_tokens = std::collections::HashSet::new();
-
-            // Add base token
-            if let Ok(base_token) = arb_config.get_base_token() {
-                monitored_tokens.insert(base_token);
-            }
-
-            // Add all monitored tokens
-            monitored_tokens.extend(arb_config.get_monitored_token_pubkeys());
-
-            log::info!(
-                "Total tokens to monitor in pool manager: {}",
-                monitored_tokens.len()
-            );
-
-            // Also merge with any tokens already loaded from DB by PoolManager
-            let db_loaded_tokens = pool_manager.get_arbitrage_monitored_tokens().await;
-            if !db_loaded_tokens.is_empty() {
-                log::info!(
-                    "Pool manager already loaded {} tokens from DB, merging...",
-                    db_loaded_tokens.len()
-                );
-                monitored_tokens.extend(db_loaded_tokens);
-            }
-
-            // Tell pool manager which tokens to monitor (will skip save if unchanged)
-            pool_manager
-                .set_arbitrage_monitored_tokens(monitored_tokens)
-                .await;
-
-            let aggregator_clone = aggregator.clone();
-            let monitor = ArbitrageMonitor::new(
-                aggregator_clone,
-                arb_config.clone(),
-                "rocksdb_data/arbitrage_opportunities",
-            )
-            .expect("Failed to create arbitrage monitor");
-
-            // Wrap monitor in Arc for sharing across tasks
-            let monitor = Arc::new(monitor);
-
-            // Subscribe to broadcast pool updates from pool manager
-            let pool_update_rx = pool_manager.subscribe_arbitrage_updates();
-            let monitor_for_events = monitor.clone();
-            monitor_for_events.subscribe_to_pool_updates(pool_update_rx);
-
-            // Spawn a cleanup task to remove old opportunities periodically
-            let monitor_for_cleanup = monitor.clone();
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
-                loop {
-                    interval.tick().await;
-                    match monitor_for_cleanup.cleanup_old_opportunities(86400) {
-                        // Keep last 24 hours
-                        Ok(count) => {
-                            if count > 0 {
-                                log::info!("Cleaned up {} old arbitrage opportunities", count);
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Failed to cleanup old opportunities: {}", e);
-                        }
+                // Load tokens from DB and merge with TOML config
+                let db = pool_manager.get_db();
+                if let Ok(db_tokens) = ArbitrageConfig::load_tokens_from_db(&db) {
+                    if !db_tokens.is_empty() {
+                        log::info!(
+                            "Loaded {} tokens from RocksDB, merging with TOML config",
+                            db_tokens.len()
+                        );
+                        arb_config = arb_config.merge_with_db_tokens(db_tokens);
                     }
                 }
-            });
 
-            log::info!("Arbitrage monitoring started successfully (broadcast mode)");
-            (
-                Some(Arc::new(std::sync::RwLock::new(arb_config))),
-                Some(monitor),
-            )
-        } else {
-            log::warn!(
-                "Arbitrage configuration not found at {}. Arbitrage monitoring disabled.",
-                arb_config_path
-            );
-            // Create a default config for API to work
-            (None, None)
-        };
+                log::info!(
+                    "Monitoring arbitrage {} tokens",
+                    arb_config.get_enabled_tokens().len()
+                );
+
+                // Collect monitored token pubkeys for the pool manager to filter broadcasts
+                let mut monitored_tokens = std::collections::HashSet::new();
+
+                // Add base token
+                if let Ok(base_token) = arb_config.get_base_token() {
+                    monitored_tokens.insert(base_token);
+                }
+
+                // Add all monitored tokens
+                monitored_tokens.extend(arb_config.get_monitored_token_pubkeys());
+
+                log::info!(
+                    "Total tokens to monitor in pool manager: {}",
+                    monitored_tokens.len()
+                );
+
+                // Also merge with any tokens already loaded from DB by PoolManager
+                let db_loaded_tokens = pool_manager.get_arbitrage_monitored_tokens().await;
+                if !db_loaded_tokens.is_empty() {
+                    log::info!(
+                        "Pool manager already loaded {} tokens from DB, merging...",
+                        db_loaded_tokens.len()
+                    );
+                    monitored_tokens.extend(db_loaded_tokens);
+                }
+
+                // Tell pool manager which tokens to monitor (will skip save if unchanged)
+                pool_manager
+                    .set_arbitrage_monitored_tokens(monitored_tokens)
+                    .await;
+
+                let aggregator_clone = aggregator.clone();
+                let monitor = ArbitrageMonitor::new(
+                    aggregator_clone,
+                    arb_config.clone(),
+                    "rocksdb_data/arbitrage_opportunities",
+                )
+                .expect("Failed to create arbitrage monitor");
+
+                // Wrap monitor in Arc for sharing across tasks
+                let monitor = Arc::new(monitor);
+
+                // Subscribe to broadcast pool updates from pool manager
+                let pool_update_rx = pool_manager.subscribe_arbitrage_updates();
+                let monitor_for_events = monitor.clone();
+                monitor_for_events.subscribe_to_pool_updates(pool_update_rx);
+
+                // Spawn a cleanup task to remove old opportunities periodically
+                let monitor_for_cleanup = monitor.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
+                    loop {
+                        interval.tick().await;
+                        match monitor_for_cleanup.cleanup_old_opportunities(86400) {
+                            // Keep last 24 hours
+                            Ok(count) => {
+                                if count > 0 {
+                                    log::info!("Cleaned up {} old arbitrage opportunities", count);
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Failed to cleanup old opportunities: {}", e);
+                            }
+                        }
+                    }
+                });
+
+                log::info!("Arbitrage monitoring started successfully (broadcast mode)");
+                Some((Arc::new(std::sync::RwLock::new(arb_config)), monitor))
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to parse arbitrage config at {}: {}",
+                    arb_path.display(),
+                    e
+                );
+                None
+            }
+        }
+    }
+
+    // Try explicit path first
+    let mut arb_config_arc = None;
+    let mut arbitrage_monitor = None;
+
+    let requested = PathBuf::from(&arb_config_path);
+    // If the requested path exists, try to load it
+    if let Some((cfg, mon)) = try_setup_arb(requested.clone(), pool_manager.clone(), aggregator.clone()).await {
+        arb_config_arc = Some(cfg);
+        arbitrage_monitor = Some(mon);
+    } else {
+        // If the file wasn't found at the requested path, try common fallbacks
+        let mut tried = Vec::new();
+        tried.push(requested.clone());
+
+        // Fallback inside aggregator-sol directory
+        let fallback1 = PathBuf::from("aggregator-sol").join(&arb_config_path);
+        tried.push(fallback1.clone());
+
+        // Fallback to repo root's config directory
+        let fallback2 = PathBuf::from("config").join(&arb_config_path);
+        tried.push(fallback2.clone());
+
+        let mut found = false;
+        for p in tried.into_iter() {
+            if p.exists() {
+                if let Some((cfg, mon)) = try_setup_arb(p, pool_manager.clone(), aggregator.clone()).await {
+                    arb_config_arc = Some(cfg);
+                    arbitrage_monitor = Some(mon);
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if !found {
+            // Informative warn with working dir to help debugging
+            match env::current_dir() {
+                Ok(cwd) => log::warn!(
+                    "Arbitrage configuration not found at {} (cwd: {}). Arbitrage monitoring disabled. Set ARBITRAGE_CONFIG_PATH to point to the file.",
+                    arb_config_path,
+                    cwd.display()
+                ),
+                Err(_) => log::warn!(
+                    "Arbitrage configuration not found at {}. Arbitrage monitoring disabled. Set ARBITRAGE_CONFIG_PATH to point to the file.",
+                    arb_config_path
+                ),
+            }
+        }
+    }
 
     // 3. Create and start the REST API server
     // read port from env or default to 3000

@@ -148,6 +148,12 @@ impl DexAggregator {
                 continue;
             }
 
+            // Skip pools without synced ticks
+            if !self.pool_manager.is_pool_tick_synced(pool_address).await {
+                log::debug!("Skipping pool without synced ticks: {}", pool_address);
+                continue;
+            }
+
             if let Some(pool_state) = self
                 .pool_manager
                 .get_pool_state_by_address(pool_address)

@@ -88,6 +88,7 @@ rug = { workspace = true }
 serde-big-array = { workspace = true }
 toml = { workspace = true }
 binance-price-stream = { path = "../crates/binance-price-stream" }
+orca_whirlpools_core = { workspace = true }
 
 [features]
 default = ["bincode"]  # Enable bincode by default (or add it to default features)

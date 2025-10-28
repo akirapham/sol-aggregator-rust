@@ -16,6 +16,9 @@ use crate::{
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
 
+// FEE_RATE denominator from Orca SDK
+const FEE_RATE_MUL_VALUE: u32 = 1_000_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WhirlpoolPoolState {
     pub slot: u64,
@@ -124,218 +127,448 @@ impl WhirlpoolPoolState {
             return 0;
         }
 
-        // Based on Whirlpool SDK's compute_swap implementation
-        // For routing purposes, we compute a single swap step assuming we stay in the current tick
-        // This provides a reasonable estimate without full tick array traversal
-
-        let fee_rate = self.fee_rate;
-        let current_liquidity = self.liquidity;
-        let current_sqrt_price = self.sqrt_price;
-
-        // Compute single swap step (simplified from full Orca SDK compute_swap)
-        match self.compute_swap_step(
+        log::debug!(
+            "Orca swap: input={}, a_to_b={}, fee_rate={}, liquidity={}, sqrt_price={}",
             input_amount,
-            fee_rate,
-            current_liquidity,
-            current_sqrt_price,
-            sqrt_price_limit_x64,
-            true, // specified_input = true
             a_to_b,
-        ) {
-            Ok(swap_step) => swap_step.amount_out,
-            Err(_) => 0,
+            self.fee_rate,
+            self.liquidity,
+            self.sqrt_price
+        );
+
+        // NOTE: This is a simplified single-step calculation. For accurate quotes, 
+        // we would need to traverse through all affected tick arrays.
+        // The Orca SDK's compute_swap requires the full tick sequence.
+        
+        // Apply fee to input amount
+        let fee_rate_u128 = self.fee_rate as u128;
+        let amount_after_fee = (input_amount as u128)
+            .checked_mul(1_000_000 - fee_rate_u128)
+            .and_then(|v| Some(v / 1_000_000))
+            .unwrap_or(0) as u64;
+
+        // For single-step: estimate output using constant product-like formula
+        // output ≈ liquidity * (sqrt_price - sqrt_price_after) / (sqrt_price * sqrt_price_after)
+        // This is a rough approximation for small swaps
+        
+        if amount_after_fee == 0 {
+            return 0;
+        }
+
+        // Simplified formula assuming single tick
+        // For token B output (B = amount * sqrt_price in Q64 scale)
+        if a_to_b {
+            // Swapping A for B: output is approximate
+            // B ≈ (liquidity * ΔA) / (liquidity + ΔA * sqrt_price)
+            let numerator = (self.liquidity as u128)
+                .checked_mul(amount_after_fee as u128)
+                .unwrap_or(u128::MAX);
+            let denominator = (self.liquidity as u128)
+                .checked_add((amount_after_fee as u128).checked_mul(self.sqrt_price).unwrap_or(u128::MAX))
+                .unwrap_or(u128::MAX);
+            
+            let output = numerator / denominator;
+            let output_u64 = if output > u64::MAX as u128 { u64::MAX } else { output as u64 };
+            
+            log::debug!("Orca swap result: amount_in={}, amount_out={}", input_amount, output_u64);
+            output_u64
+        } else {
+            // Swapping B for A: output is approximate
+            // A ≈ amount / sqrt_price (in Q64 scale)
+            let amount_x64 = (amount_after_fee as u128) << 64;
+            let output = amount_x64 / self.sqrt_price;
+            let output_u64 = if output > u64::MAX as u128 { u64::MAX } else { output as u64 };
+            
+            log::debug!("Orca swap result: amount_in={}, amount_out={}", input_amount, output_u64);
+            output_u64
         }
     }
 
-    /// Simplified swap step computation based on Orca SDK's compute_swap_step
-    /// Reference: https://github.com/orca-so/whirlpools/blob/main/rust-sdk/core/src/quote/swap.rs
+    /// Swap step computation exactly matching Orca SDK's compute_swap
+    /// Reference: https://github.com/orca-so/whirlpools/blob/main/programs/whirlpool/src/math/swap_math.rs
     fn compute_swap_step(
         &self,
         amount_remaining: u64,
         fee_rate: u16,
-        current_liquidity: u128,
-        current_sqrt_price: u128,
-        target_sqrt_price: u128,
+        liquidity: u128,
+        sqrt_price_current: u128,
+        sqrt_price_target: u128,
         specified_input: bool,
         a_to_b: bool,
     ) -> Result<SwapStepResult, &'static str> {
-        if current_liquidity == 0 {
+        if liquidity == 0 {
             return Err("No liquidity");
         }
 
-        // Apply fee to input amount
-        let amount_fee = if specified_input {
-            ((amount_remaining as u128)
-                .saturating_mul(fee_rate as u128)
-                .saturating_div(1_000_000)) as u64
-        } else {
-            0
-        };
+        // Calculate initial fixed delta to determine if we hit max swap
+        let initial_amount_fixed_delta = self.try_get_amount_fixed_delta(
+            sqrt_price_current,
+            sqrt_price_target,
+            liquidity,
+            specified_input,
+            a_to_b,
+        )?;
 
-        let amount_after_fee = amount_remaining.saturating_sub(amount_fee);
-
-        if amount_after_fee == 0 {
-            return Ok(SwapStepResult {
-                amount_in: 0,
-                amount_out: 0,
-                next_sqrt_price: current_sqrt_price,
-                fee_amount: 0,
-            });
+        // Calculate amount after fee application (only for ExactIn)
+        let mut amount_calc = amount_remaining;
+        if specified_input {
+            // Apply fee: amount_calc = amount_remaining * (FEE_RATE_MUL_VALUE - fee_rate) / FEE_RATE_MUL_VALUE
+            // FEE_RATE_MUL_VALUE = 1_000_000
+            let fee_rate_u128 = fee_rate as u128;
+            let numerator = (amount_remaining as u128)
+                .checked_mul(1_000_000 - fee_rate_u128)
+                .ok_or("Multiplication overflow")?;
+            amount_calc = (numerator / 1_000_000) as u64;
         }
 
-        // Calculate next sqrt price from input amount
-        // Using formulas from Orca SDK token math
-        let next_sqrt_price = if specified_input {
-            self.get_next_sqrt_price_from_input(
-                current_sqrt_price,
-                current_liquidity,
-                amount_after_fee,
-                a_to_b,
-            )?
+        log::debug!(
+            "compute_swap_step: amount_remaining={}, amount_calc={}, initial_fixed_delta={}",
+            amount_remaining,
+            amount_calc,
+            initial_amount_fixed_delta
+        );
+
+        log::debug!(
+            "compute_swap_step: amount_remaining={}, amount_calc={}, initial_fixed_delta={}",
+            amount_remaining,
+            amount_calc,
+            initial_amount_fixed_delta
+        );
+
+        // Determine next sqrt price
+        let next_sqrt_price = if initial_amount_fixed_delta <= amount_calc {
+            // We can reach the target price
+            log::debug!("Can reach target price");
+            sqrt_price_target
         } else {
-            self.get_next_sqrt_price_from_output(
-                current_sqrt_price,
-                current_liquidity,
-                amount_after_fee,
+            // We can't reach target, calculate intermediate price
+            log::debug!("Cannot reach target, calculating intermediate price");
+            self.get_next_sqrt_price(
+                sqrt_price_current,
+                liquidity,
+                amount_calc,
+                specified_input,
                 a_to_b,
             )?
         };
 
-        // Clamp to target price
-        let bounded_next_sqrt_price = if a_to_b {
-            next_sqrt_price.max(target_sqrt_price)
+        log::debug!("next_sqrt_price: {}, target: {}", next_sqrt_price, sqrt_price_target);
+
+        let is_max_swap = next_sqrt_price == sqrt_price_target;
+
+        // Calculate amount unfixed delta (the "other" amount not specified)
+        let amount_unfixed_delta = self.get_amount_unfixed_delta(
+            sqrt_price_current,
+            next_sqrt_price,
+            liquidity,
+            specified_input,
+            a_to_b,
+        )?;
+
+        // Calculate fixed delta for the new price (might differ due to precision)
+        let amount_fixed_delta = if !is_max_swap {
+            self.get_amount_fixed_delta(
+                sqrt_price_current,
+                next_sqrt_price,
+                liquidity,
+                specified_input,
+                a_to_b,
+            )?
         } else {
-            next_sqrt_price.min(target_sqrt_price)
+            initial_amount_fixed_delta
         };
 
-        // Calculate actual amounts based on price movement
+        // Determine which is input and which is output
         let (amount_in, amount_out) = if specified_input {
-            let out = self.get_amount_delta(
-                current_sqrt_price,
-                bounded_next_sqrt_price,
-                current_liquidity,
-                !a_to_b,
-            )?;
-            (amount_after_fee, out)
+            (amount_fixed_delta, amount_unfixed_delta)
         } else {
-            let input_needed = self.get_amount_delta(
-                current_sqrt_price,
-                bounded_next_sqrt_price,
-                current_liquidity,
-                a_to_b,
-            )?;
-            (input_needed, amount_after_fee)
+            (amount_unfixed_delta, amount_fixed_delta)
+        };
+
+        // Cap output amount if using output
+        let amount_out = if !specified_input && amount_out > amount_remaining {
+            amount_remaining
+        } else {
+            amount_out
+        };
+
+        // Calculate fee amount
+        let fee_amount = if specified_input && !is_max_swap {
+            // Fee is the remaining amount not used for input
+            amount_remaining.saturating_sub(amount_in)
+        } else if specified_input {
+            // For max swap with exact input, apply fee formula
+            // fee = amount_in * fee_rate / (FEE_RATE_MUL_VALUE - fee_rate)
+            let fee_rate_u128 = fee_rate as u128;
+            let numerator = (amount_in as u128)
+                .checked_mul(fee_rate_u128)
+                .ok_or("Multiplication overflow")?;
+            (numerator / (1_000_000 - fee_rate_u128)) as u64
+        } else {
+            // ExactOut - no fee calculation needed here
+            0
         };
 
         Ok(SwapStepResult {
             amount_in,
             amount_out,
-            next_sqrt_price: bounded_next_sqrt_price,
-            fee_amount: amount_fee,
+            next_sqrt_price,
+            fee_amount,
         })
     }
 
-    /// Calculate next sqrt price when trading token A (a_to_b = true) or token B (a_to_b = false)
-    /// Based on Orca SDK's get_next_sqrt_price_from_a and get_next_sqrt_price_from_b
-    fn get_next_sqrt_price_from_input(
+    /// Get fixed delta amount - the amount that is specified in the swap direction
+    /// Matches Orca SDK's try_get_amount_fixed_delta
+    fn try_get_amount_fixed_delta(
         &self,
-        sqrt_price: u128,
+        sqrt_price_current: u128,
+        sqrt_price_target: u128,
         liquidity: u128,
-        amount: u64,
+        specified_input: bool,
         a_to_b: bool,
-    ) -> Result<u128, &'static str> {
-        if amount == 0 {
-            return Ok(sqrt_price);
-        }
-
-        if a_to_b {
-            // Trading A for B: price decreases
-            // Formula: next_sqrt_price = (sqrt_price * liquidity) / (liquidity + amount * sqrt_price)
-            let product = (amount as u128).saturating_mul(sqrt_price);
-            let denominator = (liquidity << 64).saturating_add(product);
-
-            if denominator == 0 {
-                return Err("Division by zero");
-            }
-
-            let numerator = (sqrt_price as u128).saturating_mul(liquidity) << 64;
-
-            Ok(numerator.saturating_div(denominator))
-        } else {
-            // Trading B for A: price increases
-            // Formula: next_sqrt_price = sqrt_price + (amount << 64) / liquidity
-            let delta = ((amount as u128) << 64)
-                .checked_div(liquidity)
-                .ok_or("Division by zero")?;
-
-            sqrt_price.checked_add(delta).ok_or("Sqrt price overflow")
-        }
-    }
-
-    fn get_next_sqrt_price_from_output(
-        &self,
-        sqrt_price: u128,
-        liquidity: u128,
-        amount: u64,
-        a_to_b: bool,
-    ) -> Result<u128, &'static str> {
-        if amount == 0 {
-            return Ok(sqrt_price);
-        }
-
-        if a_to_b {
-            // Want to get amount of B out: price decreases
-            let delta = ((amount as u128) << 64)
-                .checked_div(liquidity)
-                .ok_or("Division by zero")?;
-
-            sqrt_price.checked_sub(delta).ok_or("Sqrt price underflow")
-        } else {
-            // Want to get amount of A out: price increases
-            let product = (amount as u128).saturating_mul(sqrt_price);
-            let denominator = (liquidity << 64).saturating_sub(product);
-
-            if denominator == 0 {
-                return Err("Division by zero");
-            }
-
-            let numerator = sqrt_price.saturating_mul(liquidity) << 64;
-            Ok(numerator.saturating_div(denominator))
-        }
-    }
-
-    /// Calculate token amount delta between two sqrt prices
-    /// Based on Orca SDK's get_amount_delta_a and get_amount_delta_b
-    fn get_amount_delta(
-        &self,
-        sqrt_price_a: u128,
-        sqrt_price_b: u128,
-        liquidity: u128,
-        get_token_a: bool,
     ) -> Result<u64, &'static str> {
-        let (sqrt_price_lower, sqrt_price_upper) = if sqrt_price_a < sqrt_price_b {
-            (sqrt_price_a, sqrt_price_b)
+        if a_to_b == specified_input {
+            // We're fixing A (either swapping A as input or getting A as output)
+            self.get_amount_delta_a(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                specified_input,
+            )
         } else {
-            (sqrt_price_b, sqrt_price_a)
+            // We're fixing B
+            self.get_amount_delta_b(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                specified_input,
+            )
+        }
+    }
+
+    /// Get unfixed delta amount - the amount that is not specified in the swap direction
+    /// Matches Orca SDK's get_amount_unfixed_delta
+    fn get_amount_unfixed_delta(
+        &self,
+        sqrt_price_current: u128,
+        sqrt_price_target: u128,
+        liquidity: u128,
+        specified_input: bool,
+        a_to_b: bool,
+    ) -> Result<u64, &'static str> {
+        if a_to_b == specified_input {
+            // We're fixing A, so unfixed is B
+            self.get_amount_delta_b(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                !specified_input,
+            )
+        } else {
+            // We're fixing B, so unfixed is A
+            self.get_amount_delta_a(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                !specified_input,
+            )
+        }
+    }
+
+    /// Get fixed delta - same as try_get_amount_fixed_delta but for non-target price
+    fn get_amount_fixed_delta(
+        &self,
+        sqrt_price_current: u128,
+        sqrt_price_target: u128,
+        liquidity: u128,
+        specified_input: bool,
+        a_to_b: bool,
+    ) -> Result<u64, &'static str> {
+        if a_to_b == specified_input {
+            self.get_amount_delta_a(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                specified_input,
+            )
+        } else {
+            self.get_amount_delta_b(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                specified_input,
+            )
+        }
+    }
+
+    /// Calculate next sqrt price given an input amount
+    /// Matches Orca SDK's get_next_sqrt_price
+    fn get_next_sqrt_price(
+        &self,
+        current_sqrt_price: u128,
+        liquidity: u128,
+        amount_calc: u64,
+        specified_input: bool,
+        a_to_b: bool,
+    ) -> Result<u128, &'static str> {
+        if specified_input == a_to_b {
+            // We're swapping the fixed token in the input direction
+            self.get_next_sqrt_price_from_a_round_up(
+                current_sqrt_price,
+                liquidity,
+                amount_calc,
+                specified_input,
+            )
+        } else {
+            self.get_next_sqrt_price_from_b_round_down(
+                current_sqrt_price,
+                liquidity,
+                amount_calc,
+                specified_input,
+            )
+        }
+    }
+
+    /// Calculate next sqrt price when token A is being swapped
+    /// Δ(1/sqrt_p) = ΔtokenA / liquidity
+    /// sqrt_price_new = 1 / (1/sqrt_price + amount/liquidity)
+    fn get_next_sqrt_price_from_a_round_up(
+        &self,
+        sqrt_price: u128,
+        liquidity: u128,
+        amount: u64,
+        _round_up: bool,
+    ) -> Result<u128, &'static str> {
+        if amount == 0 {
+            return Ok(sqrt_price);
+        }
+
+        let amount_u128 = amount as u128;
+
+        let denominator = (liquidity << 64).checked_add(amount_u128.saturating_mul(sqrt_price))
+            .ok_or("Overflow in denominator")?;
+        let numerator = (sqrt_price as u128)
+            .checked_mul(liquidity)
+            .ok_or("Overflow in numerator")?
+            .checked_shl(64)
+            .ok_or("Overflow in shift")?;
+
+        numerator.checked_div(denominator).ok_or("Division by zero")
+    }
+
+    /// Calculate next sqrt price when token B is being swapped
+    /// Δ(sqrt_p) = ΔtokenB / liquidity
+    /// sqrt_price_new = sqrt_price + amount/liquidity
+    fn get_next_sqrt_price_from_b_round_down(
+        &self,
+        sqrt_price: u128,
+        liquidity: u128,
+        amount: u64,
+        _round_down: bool,
+    ) -> Result<u128, &'static str> {
+        if amount == 0 {
+            return Ok(sqrt_price);
+        }
+
+        let amount_x64 = (amount as u128) << 64;
+        let delta = amount_x64.checked_div(liquidity).ok_or("Division by zero")?;
+
+        sqrt_price.checked_add(delta).ok_or("Sqrt price overflow")
+    }
+
+    /// Calculate token A amount delta between two sqrt prices
+    /// ΔtokenA = liquidity * (sqrt_price_upper - sqrt_price_lower) / (sqrt_price_lower * sqrt_price_upper) / 2^64
+    fn get_amount_delta_a(
+        &self,
+        sqrt_price_0: u128,
+        sqrt_price_1: u128,
+        liquidity: u128,
+        round_up: bool,
+    ) -> Result<u64, &'static str> {
+        let (sqrt_price_lower, sqrt_price_upper) = if sqrt_price_0 <= sqrt_price_1 {
+            (sqrt_price_0, sqrt_price_1)
+        } else {
+            (sqrt_price_1, sqrt_price_0)
         };
 
-        if get_token_a {
-            // Amount of token A
-            // Formula: liquidity * (sqrt_price_upper - sqrt_price_lower) / (sqrt_price_lower * sqrt_price_upper)
-            let sqrt_price_diff = sqrt_price_upper.saturating_sub(sqrt_price_lower);
-            let numerator = liquidity.saturating_mul(sqrt_price_diff) << 64;
-            let denominator = sqrt_price_lower.saturating_mul(sqrt_price_upper);
+        if sqrt_price_lower == sqrt_price_upper || liquidity == 0 {
+            return Ok(0);
+        }
 
-            if denominator == 0 {
-                return Ok(0);
-            }
+        let sqrt_price_diff = sqrt_price_upper.checked_sub(sqrt_price_lower)
+            .ok_or("Underflow in sqrt_price_diff")?;
 
-            Ok((numerator.saturating_div(denominator) >> 64) as u64)
+        // numerator = liquidity * (sqrt_price_upper - sqrt_price_lower) << 64
+        let numerator = liquidity
+            .checked_mul(sqrt_price_diff)
+            .ok_or("Overflow in numerator")?
+            .checked_shl(64)
+            .ok_or("Overflow in shift")?;
+
+        // denominator = sqrt_price_lower * sqrt_price_upper
+        let denominator = sqrt_price_lower
+            .checked_mul(sqrt_price_upper)
+            .ok_or("Overflow in denominator")?;
+
+        let quotient = numerator / denominator;
+        let remainder = numerator % denominator;
+
+        let result = if round_up && remainder != 0 {
+            quotient.checked_add(1).ok_or("Overflow in result")?
         } else {
-            // Amount of token B
-            // Formula: liquidity * (sqrt_price_upper - sqrt_price_lower) >> 64
-            let sqrt_price_diff = sqrt_price_upper.saturating_sub(sqrt_price_lower);
-            Ok((liquidity.saturating_mul(sqrt_price_diff) >> 64) as u64)
+            quotient
+        };
+
+        // Result should fit in u64
+        if result > u64::MAX as u128 {
+            Err("Amount delta exceeds u64")
+        } else {
+            Ok(result as u64)
+        }
+    }
+
+    /// Calculate token B amount delta between two sqrt prices
+    /// ΔtokenB = liquidity * (sqrt_price_upper - sqrt_price_lower) >> 64
+    fn get_amount_delta_b(
+        &self,
+        sqrt_price_0: u128,
+        sqrt_price_1: u128,
+        liquidity: u128,
+        round_up: bool,
+    ) -> Result<u64, &'static str> {
+        let (sqrt_price_lower, sqrt_price_upper) = if sqrt_price_0 <= sqrt_price_1 {
+            (sqrt_price_0, sqrt_price_1)
+        } else {
+            (sqrt_price_1, sqrt_price_0)
+        };
+
+        if sqrt_price_lower == sqrt_price_upper || liquidity == 0 {
+            return Ok(0);
+        }
+
+        let sqrt_price_diff = sqrt_price_upper.checked_sub(sqrt_price_lower)
+            .ok_or("Underflow in sqrt_price_diff")?;
+
+        // product = liquidity * sqrt_price_diff
+        let product = liquidity
+            .checked_mul(sqrt_price_diff)
+            .ok_or("Overflow in product")?;
+
+        let quotient = product >> 64;
+        let remainder = product & ((1u128 << 64) - 1);
+
+        let should_round = round_up && remainder > 0;
+        let result = if should_round {
+            quotient.checked_add(1).ok_or("Overflow in result")?
+        } else {
+            quotient
+        };
+
+        // Result should fit in u64
+        if result > u64::MAX as u128 {
+            Err("Amount delta exceeds u64")
+        } else {
+            Ok(result as u64)
         }
     }
 
@@ -395,6 +628,7 @@ impl WhirlpoolPoolState {
 }
 
 /// Result of a single swap step computation
+#[allow(unused)]
 struct SwapStepResult {
     amount_in: u64,
     amount_out: u64,

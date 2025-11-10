@@ -115,10 +115,10 @@ pub struct PoolStateManager {
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SerializablePools(HashMap<Pubkey, PoolState>);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SerializableTokenCache(HashMap<Pubkey, Token>);
 
 #[allow(dead_code)]
@@ -513,6 +513,7 @@ impl PoolStateManager {
                                                                 })
                                                             },
                                                         }),
+                                                        oracle_state: None,
                                                         last_updated: recv_us as u64,
                                                         is_account_state_update: true,
                                                         pool_update_event_type: PoolUpdateEventType::WhirlpoolTickArrayStateAccount,
@@ -525,7 +526,7 @@ impl PoolStateManager {
                                             }
                                             Err(e) => {
                                                 log::error!(
-                                                    "Failed to fetch tick arrays for Raydium CLMM pool {:?}: {:?}",
+                                                    "Failed to fetch tick arrays for Orca Whirlpool {:?}: {:?}",
                                                     whirlpool_pool_state.address,
                                                     e
                                                 );
@@ -1158,6 +1159,11 @@ impl PoolStateManager {
         if let Some(pool_mutex) = pools.get(pool_address) {
             let pool_guard = pool_mutex.lock().await;
             Some((*pool_guard).clone())
+            // if !self.is_pool_stale(&(*pool_guard).clone()) {
+            //     Some((*pool_guard).clone())
+            // } else {
+            //     None
+            // }
         } else {
             None
         }

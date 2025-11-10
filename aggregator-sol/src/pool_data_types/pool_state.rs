@@ -76,6 +76,7 @@ pub enum PoolUpdateEventType {
     DbcPoolStateAccount,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
+    WhirlpoolOracleStateAccount,
     WhirlpoolSwap,
     WhirlpoolSwapV2,
     WhirlpoolDecreaseLiquidity,
@@ -190,32 +191,40 @@ impl PoolState {
     ) -> u64 {
         match self {
             PoolState::Pumpfun(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                output_amount
             }
             PoolState::PumpSwap(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                output_amount
             }
             PoolState::RaydiumAmmV4(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                output_amount
             }
             PoolState::RaydiumCpmm(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                output_amount
             }
             PoolState::Bonk(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                output_amount
             }
             PoolState::RadyiumClmm(state) => {
-                state
-                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
-                    .await
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher).await;
+                // log::info!("1111111 RadyiumClmm input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
+                output_amount
             }
             PoolState::MeteoraDbc(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                output_amount
             }
             PoolState::OrcaWhirlpool(state) => {
-                state
+                let output_amount = state
                     .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
-                    .await
+                    .await;
+                log::info!("1111111 OrcaWhirlpool input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
+                output_amount
             }
         }
     }

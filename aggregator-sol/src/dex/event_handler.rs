@@ -26,7 +26,7 @@ use solana_streamer_sdk::{
                     WhirlpoolDecreaseLiquidityV2Event, WhirlpoolIncreaseLiquidityEvent,
                     WhirlpoolIncreaseLiquidityV2Event, WhirlpoolInitializePoolEvent,
                     WhirlpoolInitializePoolV2Event, WhirlpoolPoolStateAccountEvent,
-                    WhirlpoolSwapEvent, WhirlpoolSwapV2Event, WhirlpoolTickArrayStateAccountEvent,
+                    WhirlpoolSwapEvent, WhirlpoolSwapV2Event, WhirlpoolTickArrayStateAccountEvent, WhirlpoolOracleStateAccountEvent,
                     WhirlpoolTwoHopSwapEvent, WhirlpoolTwoHopSwapV2Event,
                 },
                 pumpfun::{
@@ -753,6 +753,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwapV2,
                                     additional_event_type: 0,
@@ -783,6 +784,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwapV2,
                                     additional_event_type: 1,
@@ -792,6 +794,7 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolSwapEvent => |e: WhirlpoolSwapEvent| {
+                log::info!("22222222222222222 WhirlpoolSwapEvent: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -808,6 +811,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolSwap,
                                 additional_event_type: 0,
@@ -816,6 +820,7 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolSwapV2Event => |e: WhirlpoolSwapV2Event| {
+                log::info!("22222222222222222 WhirlpoolSwapV2Event: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -832,6 +837,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolSwapV2,
                                 additional_event_type: 0,
@@ -840,6 +846,7 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolDecreaseLiquidityV2Event => |e: WhirlpoolDecreaseLiquidityV2Event| {
+                log::info!("22222222222222222 WhirlpoolDecreaseLiquidityV2Event: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -856,6 +863,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolDecreaseLiquidityV2,
                                 additional_event_type: 0,
@@ -864,6 +872,7 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolDecreaseLiquidityEvent => |e: WhirlpoolDecreaseLiquidityEvent| {
+                log::info!("22222222222222222 WhirlpoolDecreaseLiquidityEvent: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -880,6 +889,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolDecreaseLiquidity,
                                 additional_event_type: 0,
@@ -888,6 +898,7 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolIncreaseLiquidityV2Event => |e: WhirlpoolIncreaseLiquidityV2Event| {
+                log::info!("22222222222222222 WhirlpoolIncreaseLiquidityV2Event: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -904,6 +915,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidityV2,
                                 additional_event_type: 0,
@@ -912,6 +924,7 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolIncreaseLiquidityEvent => |e: WhirlpoolIncreaseLiquidityEvent| {
+                log::info!("22222222222222222 WhirlpoolIncreaseLiquidityEvent: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -928,6 +941,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidity,
                                 additional_event_type: 0,
@@ -962,6 +976,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwap,
                                     additional_event_type: 0,
@@ -987,6 +1002,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwap,
                                     additional_event_type: 0,
@@ -1180,6 +1196,7 @@ pub fn handle_dex_event(
             TokenInfoEvent => |e: TokenInfoEvent| {
             },
             WhirlpoolPoolStateAccountEvent => |e: WhirlpoolPoolStateAccountEvent| {
+                log::info!("22222222222222222 WhirlpoolPoolStateAccountEvent: {:?}", e.pubkey.to_string());
                 if is_base_token(&e.whirlpool_pool_state.token_mint_a.to_string()) || is_base_token(&e.whirlpool_pool_state.token_mint_b.to_string()) {
                     pool_update_events.push(PoolUpdateEvent::Whirlpool(
                     Box::new(WhirlpoolPoolUpdate {
@@ -1191,7 +1208,7 @@ pub fn handle_dex_event(
                             whirlpool_config: e.whirlpool_pool_state.whirlpools_config,
                             token_mint_a: e.whirlpool_pool_state.token_mint_a,
                             token_mint_b: e.whirlpool_pool_state.token_mint_b,
-                            token_vault_a: e.whirlpool_pool_state.token_vault_a,
+                            token_vault_a: e.whirlpool_pool_state.token_vault_a, 
                             token_vault_b: e.whirlpool_pool_state.token_vault_b,
                             tick_spacing: e.whirlpool_pool_state.tick_spacing,
                             tick_spacing_seed: e.whirlpool_pool_state.tick_spacing_seed,
@@ -1203,6 +1220,7 @@ pub fn handle_dex_event(
                         }),
                         reserve_part: None,
                         tick_array_state: None,
+                        oracle_state: None,
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::WhirlpoolPoolStateAccount,
                         additional_event_type: 0, // for tick array index tracking, 0 for others
@@ -1211,6 +1229,7 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolTickArrayStateAccountEvent => |e: WhirlpoolTickArrayStateAccountEvent| {
+                log::info!("22222222222222222 WhirlpoolTickArrayStateAccountEvent: {:?}", e.tick_array_state.whirlpool.to_string());
                 pool_update_events.push(PoolUpdateEvent::Whirlpool(
                     Box::new(WhirlpoolPoolUpdate {
                         address:e.tick_array_state.whirlpool,
@@ -1220,9 +1239,27 @@ pub fn handle_dex_event(
                         pool_state_part: None,
                         reserve_part: None,
                         tick_array_state: Some(e.tick_array_state.clone()),
+                        oracle_state: None,
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::WhirlpoolTickArrayStateAccount,
                         additional_event_type: e.tick_array_state.start_tick_index,
+                    })));
+            },
+            WhirlpoolOracleStateAccountEvent => |e: WhirlpoolOracleStateAccountEvent| {
+                log::info!("22222222222222222 WhirlpoolOracleStateAccountEvent: {:?}", e.oracle_state.whirlpool.to_string());
+                pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                    Box::new(WhirlpoolPoolUpdate {
+                        address:e.oracle_state.whirlpool,
+                        slot:e.metadata.slot,
+                        transaction_index:e.metadata.transaction_index,
+                        last_updated: e.metadata.recv_us as u64,
+                        pool_state_part: None,
+                        reserve_part: None,
+                        tick_array_state: None,
+                        oracle_state: Some(e.oracle_state.clone()),
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::WhirlpoolOracleStateAccount,
+                        additional_event_type: 0,
                     })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {

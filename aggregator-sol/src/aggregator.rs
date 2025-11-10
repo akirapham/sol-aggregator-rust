@@ -379,7 +379,7 @@ impl DexAggregator {
                             self_arc.clone(),
                         )
                         .await;
-                    splits_with_distributions[split_index][i] = Some(SwapPath {
+                    splits_with_distributions[0][i] = Some(SwapPath {
                         steps: vec![SwapStepInternal {
                             dex: swap_step.dex,
                             input_token: swap_step.input_token,
@@ -572,7 +572,8 @@ impl DexAggregator {
             .await?;
 
         let final_token_a_amount = reverse_route.output_amount;
-
+        
+        log::info!("AAAAAAAAAAAAAAAAAAAAAAAAA final_token_a_amount {}, token_a_amount {} token_b_amount {} token_a_address {} token_b_address {}", final_token_a_amount, token_a.input_amount, token_b_amount, token_a.input_token.address, token_b_address);
         // Step 5: Calculate profit
         if final_token_a_amount > token_a.input_amount {
             let profit = final_token_a_amount - token_a.input_amount;

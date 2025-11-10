@@ -511,8 +511,12 @@ impl OrcaTickArrayFetcher {
             return Ok(None);
         }
         let oracle_address = get_oracle_address(whirlpool).0;
-        let oracle_info = rpc.get_account(&oracle_address).await?;
-        Ok(Some(Oracle::from_bytes(&oracle_info.data)?))
+        let oracle_info = self.rpc_client.get_account(&oracle_address).await?;
+        // Ok(Some(Oracle::from_bytes(&oracle_info.data)?))
+
+        let oracle = Oracle::try_from_slice(&oracle_info.data)
+            .map_err(|e| anyhow!("Failed to deserialize oracle: {}", e))?;
+        Ok(Some(oracle))
     }
 }
 

@@ -3,36 +3,36 @@ use anyhow::Result;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use dotenv::dotenv;
 use env_logger::Env;
-use log::info;
+use log::{ info, debug };
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    eprintln!("DEBUG: amm-eth main() started");
+    debug!("DEBUG: amm-eth main() started");
 
     // Load environment variables
     dotenv().ok();
-    eprintln!("DEBUG: dotenv loaded");
+    debug!("DEBUG: dotenv loaded");
 
     // Check critical environment variables
     match std::env::var("ETH_RPC_URL") {
-        Ok(url) => eprintln!("DEBUG: ETH_RPC_URL = {}", url),
+        Ok(url) => debug!("DEBUG: ETH_RPC_URL = {}", url),
         Err(e) => {
-            eprintln!("ERROR: ETH_RPC_URL not set: {}", e);
+            debug!("ERROR: ETH_RPC_URL not set: {}", e);
             return Err(anyhow::anyhow!("ETH_RPC_URL environment variable not set"));
         }
     }
 
     match std::env::var("ETH_WEBSOCKET_URL") {
-        Ok(url) => eprintln!("DEBUG: ETH_WEBSOCKET_URL = {}", url),
-        Err(e) => eprintln!("WARNING: ETH_WEBSOCKET_URL not set: {}", e),
+        Ok(url) => debug!("DEBUG: ETH_WEBSOCKET_URL = {}", url),
+        Err(e) => debug!("WARNING: ETH_WEBSOCKET_URL not set: {}", e),
     }
 
     // Initialize logger
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-    eprintln!("DEBUG: logger initialized");
+    debug!("DEBUG: logger initialized");
 
     info!("Starting Ethereum Uniswap swap listener");
 
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     let ws_port = std::env::var("ETH_PRICE_WS_PORT").unwrap_or_else(|_| "8080".to_string());
     let ws_addr = format!("0.0.0.0:{}", ws_port).parse()?;
     info!("Starting WebSocket server on: {}", ws_addr);
-    eprintln!("DEBUG: WebSocket server address: {}", ws_addr);
+    debug!("DEBUG: WebSocket server address: {}", ws_addr);
     let ws_server = Arc::new(WsServer::new(ws_addr));
     let broadcaster = ws_server.get_broadcaster();
 
@@ -51,20 +51,20 @@ async fn main() -> Result<()> {
             log::error!("WebSocket server error: {}", e);
         }
     });
-    eprintln!("DEBUG: WebSocket server spawned");
+    debug!("DEBUG: WebSocket server spawned");
 
     // Create configuration
-    eprintln!("DEBUG: Creating EthConfig...");
+    debug!("DEBUG: Creating EthConfig...");
     let config = EthConfig::default();
-    eprintln!("DEBUG: EthConfig created successfully");
+    debug!("DEBUG: EthConfig created successfully");
 
     // Start Binance WebSocket for ETH price updates
     info!("Starting Binance WebSocket for ETH/USDT price...");
-    eprintln!("DEBUG: Starting Binance client...");
+    debug!("DEBUG: Starting Binance client...");
     let binance_config = BinanceConfig::with_stream_type(StreamType::BookTicker);
     let binance_client = BinancePriceStream::new(binance_config, vec!["ETHUSDT".to_string()]);
     let _eth_price_rx = binance_client.start().await?;
-    eprintln!("DEBUG: Binance client started");
+    debug!("DEBUG: Binance client started");
 
     // Update ETH price in background every second
     let eth_price_shared = config.eth_price_usd.clone();
@@ -81,24 +81,24 @@ async fn main() -> Result<()> {
             }
         }
     });
-    eprintln!("DEBUG: ETH price updater spawned");
+    debug!("DEBUG: ETH price updater spawned");
 
     // Create price store with broadcaster
-    eprintln!("DEBUG: Creating price store...");
+    debug!("DEBUG: Creating price store...");
     let price_store = PriceStore::with_broadcaster(broadcaster);
-    eprintln!("DEBUG: Price store created");
+    debug!("DEBUG: Price store created");
 
     // Create the listener
-    eprintln!("DEBUG: Creating EthSwapListener...");
+    debug!("DEBUG: Creating EthSwapListener...");
     let listener = EthSwapListener::new(config, price_store.clone()).await?;
-    eprintln!("DEBUG: EthSwapListener created successfully");
+    debug!("DEBUG: EthSwapListener created successfully");
 
     // Open RocksDB for token pair persistence
     let db_path = "rocksdb_data/amm-eth";
     info!("Opening RocksDB at {}", db_path);
-    eprintln!("DEBUG: Opening RocksDB at {}", db_path);
+    debug!("DEBUG: Opening RocksDB at {}", db_path);
     let token_pair_db = Arc::new(TokenPairDb::open(db_path)?);
-    eprintln!("DEBUG: RocksDB opened successfully");
+    debug!("DEBUG: RocksDB opened successfully");
 
     // Load existing token pairs and decimals from database
     let token_pair_cache = listener.get_token_pair_cache();
@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
     let loaded_count =
         token_pair_db.load_all_into_cache(&token_pair_cache, &token_decimal_cache)?;
     info!("Loaded {} token pairs from RocksDB", loaded_count);
-    eprintln!("DEBUG: Loaded {} token pairs from RocksDB", loaded_count);
+    debug!("DEBUG: Loaded {} token pairs from RocksDB", loaded_count);
     info!("Loaded {} token pairs from RocksDB", loaded_count);
 
     // Start a background task to save token pairs and decimals to RocksDB 60s
@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
             }
         }
     });
-    eprintln!("DEBUG: Token pair saver spawned");
+    debug!("DEBUG: Token pair saver spawned");
 
     // Start a background task to log statistics periodically
     let stats_price_store = price_store.clone();
@@ -144,11 +144,11 @@ async fn main() -> Result<()> {
             );
         }
     });
-    eprintln!("DEBUG: Statistics logger spawned");
+    debug!("DEBUG: Statistics logger spawned");
 
     // Start listening to swap events
     info!("Starting swap event listener...");
-    eprintln!("DEBUG: About to start listener.start()...");
+    debug!("DEBUG: About to start listener.start()...");
 
     // Create a shutdown signal handler
     let shutdown_signal = async {
@@ -158,12 +158,12 @@ async fn main() -> Result<()> {
     // Run listener with shutdown signal
     tokio::select! {
         result = listener.start() => {
-            eprintln!("DEBUG: listener.start() completed");
+            debug!("DEBUG: listener.start() completed");
             result?;
         }
         _ = shutdown_signal => {
             info!("Shutdown signal received");
-            eprintln!("DEBUG: Shutdown signal received");
+            debug!("DEBUG: Shutdown signal received");
         }
     }
 
@@ -172,15 +172,15 @@ async fn main() -> Result<()> {
     match token_pair_db.save_all_from_cache(&token_pair_cache, &token_decimal_cache) {
         Ok(count) => {
             info!("💾 Saved {} token pairs to RocksDB during shutdown", count);
-            eprintln!("DEBUG: Saved {} token pairs during shutdown", count);
+            debug!("DEBUG: Saved {} token pairs during shutdown", count);
         }
         Err(e) => {
             log::error!("Failed to save token pairs during shutdown: {}", e);
-            eprintln!("ERROR: Failed to save token pairs during shutdown: {}", e);
+            debug!("ERROR: Failed to save token pairs during shutdown: {}", e);
         }
     }
 
     info!("Shutdown complete");
-    eprintln!("DEBUG: Shutdown complete");
+    debug!("DEBUG: Shutdown complete");
     Ok(())
 }

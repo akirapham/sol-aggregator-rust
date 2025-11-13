@@ -38,6 +38,7 @@ pub struct TokenPriceUpdate {
     pub pool_token0: Address,
     pub pool_token1: Address,
     pub eth_chain: EthChain,
+    pub fee_tier: Option<u32>,
 }
 
 impl From<TokenPrice> for TokenPriceUpdate {
@@ -53,6 +54,7 @@ impl From<TokenPrice> for TokenPriceUpdate {
             pool_token0: price.pool_token0,
             pool_token1: price.pool_token1,
             eth_chain: price.eth_chain,
+            fee_tier: price.fee_tier,
         }
     }
 }

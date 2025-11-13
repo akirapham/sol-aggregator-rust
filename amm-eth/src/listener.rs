@@ -31,6 +31,7 @@ abigen!(
         function token0() external view returns (address)
         function token1() external view returns (address)
         function factory() external view returns (address)
+        function fee() external view returns (uint24)
     ]"#
 );
 
@@ -477,6 +478,7 @@ impl EthSwapListener {
             decimals0,
             price_store,
             config,
+            pair_info.fee_tier,
         );
 
         Self::update_token_price(
@@ -489,6 +491,7 @@ impl EthSwapListener {
             decimals1,
             price_store,
             config,
+            pair_info.fee_tier,
         );
 
         Ok(())
@@ -756,6 +759,7 @@ impl EthSwapListener {
             pair_info.decimals0,
             price_store,
             config,
+            pair_info.fee_tier,
         );
 
         Self::update_token_price(
@@ -768,6 +772,7 @@ impl EthSwapListener {
             pair_info.decimals1,
             price_store,
             config,
+            pair_info.fee_tier,
         );
 
         Ok(())
@@ -820,8 +825,15 @@ impl EthSwapListener {
         let mut last_error = None;
 
         for attempt in 1..=3 {
-            match Self::fetch_token_pair_with_decimals(pool_address, &provider, config).await {
-                Ok((token0, token1, decimals0, decimals1, factory)) => {
+            match Self::fetch_token_pair_with_decimals(
+                pool_address,
+                &provider,
+                config,
+                dex_version == DexVersion::UniswapV3,
+            )
+            .await
+            {
+                Ok((token0, token1, decimals0, decimals1, factory, fee_tier)) => {
                     let pair_info = PairInfo {
                         pool_address: pool_address.to_string().to_lowercase(),
                         pool_token0: token0,
@@ -830,6 +842,7 @@ impl EthSwapListener {
                         decimals0,
                         decimals1,
                         factory,
+                        fee_tier,
                     };
                     // Store in cache
                     token_cache.insert(pool_address.to_string().to_lowercase(), pair_info.clone());
@@ -869,7 +882,8 @@ impl EthSwapListener {
         pool_address: Address,
         provider: &Arc<Provider<Http>>,
         config: &EthConfig,
-    ) -> Result<(Address, Address, u8, u8, Address)> {
+        is_v3: bool,
+    ) -> Result<(Address, Address, u8, u8, Address, Option<u32>)> {
         let pair_contract = UniswapV2Pair::new(pool_address, provider.clone());
 
         // Fetch token addresses in parallel
@@ -882,6 +896,24 @@ impl EthSwapListener {
 
         let (token0, token1, factory) = tokio::try_join!(token0_fut, token1_fut, factory_fut)
             .context("Failed to fetch token addresses from pool")?;
+
+        let fee_tier: Option<u32> = if is_v3 {
+            // For Uniswap V3, fetch fee tier from the pool contract
+            let v3_pool_contract =
+                uniswap_v3_pool::UniswapV3Pool::new(pool_address, provider.clone());
+            match v3_pool_contract.fee().call().await {
+                Ok(fee) => Some(fee),
+                Err(e) => {
+                    warn!(
+                        "Failed to fetch fee tier for V3 pool {:?}: {}",
+                        pool_address, e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // Check if tokens have known decimals (WETH, USDC, USDT) to avoid RPC calls
         let decimals0 = if let Some(known_decimals) = config.get_known_decimals(token0) {
@@ -912,7 +944,7 @@ impl EthSwapListener {
                 .unwrap_or(18)
         };
 
-        Ok((token0, token1, decimals0, decimals1, factory))
+        Ok((token0, token1, decimals0, decimals1, factory, fee_tier))
     }
 
     /// Update token price in the price store
@@ -926,6 +958,7 @@ impl EthSwapListener {
         decimals: u8,
         price_store: &PriceStore,
         config: &EthConfig,
+        fee_tier: Option<u32>,
     ) {
         // we do nothing if token is WETH, USDC or USDT
         if token_address == config.weth_address
@@ -981,6 +1014,7 @@ impl EthSwapListener {
             pool_token0: token0,
             pool_token1: token1,
             eth_chain: config.eth_chain,
+            fee_tier,
         };
 
         price_store.update_price(token_address, token_price);
@@ -1325,6 +1359,7 @@ impl EthSwapListener {
             pair_info.decimals0,
             price_store,
             config,
+            pair_info.fee_tier,
         );
 
         Self::update_token_price(
@@ -1337,6 +1372,7 @@ impl EthSwapListener {
             pair_info.decimals1,
             price_store,
             config,
+            pair_info.fee_tier,
         );
 
         Ok(())
@@ -1467,6 +1503,11 @@ impl EthSwapListener {
             .and_then(|v| v.as_str())
             .context("Missing token1.id")?;
 
+        let fee_tier = pool
+            .get("feeTier")
+            .and_then(|v| v.as_u64())
+            .context("Missing or invalid feeTier in pool")?;
+
         // Extract decimals directly from the nested objects
         let dec0 = token0_obj
             .get("decimals")
@@ -1497,6 +1538,7 @@ impl EthSwapListener {
             pool_address: pool_id_hex.clone(),
             dex_version: DexVersion::UniswapV4,
             factory: v4_pool_manager,
+            fee_tier: Some(fee_tier as u32),
         };
         v4_cache.insert(pool_id_hex, pool_info.clone());
 

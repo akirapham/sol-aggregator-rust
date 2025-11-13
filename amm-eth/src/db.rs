@@ -20,6 +20,7 @@ pub struct TokenPairData {
     pub token1_decimals: u8,
     pub dex_version: String,
     pub factory: String,
+    pub fee_tier: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,7 @@ impl TokenPairDb {
         token1_decimals: u8,
         dex_version: &str,
         factory: Address,
+        fee_tier: Option<u32>,
     ) -> Result<()> {
         let key = format!("pair:{:?}", pool_address);
         let data = TokenPairData {
@@ -66,6 +68,7 @@ impl TokenPairDb {
             token1_decimals,
             dex_version: dex_version.to_string(),
             factory: format!("{:?}", factory),
+            fee_tier,
         };
 
         let value = serde_json::to_vec(&data)?;
@@ -95,6 +98,7 @@ impl TokenPairDb {
                     decimals0: data.token0_decimals,
                     decimals1: data.token1_decimals,
                     factory,
+                    fee_tier: data.fee_tier,
                 }))
             }
             None => Ok(None),
@@ -148,6 +152,7 @@ impl TokenPairDb {
                 pair_info.decimals1,
                 pair_info.dex_version.as_str(),
                 pair_info.factory,
+                pair_info.fee_tier,
             ) {
                 error!(
                     "Failed to save token pair for {:?}: {}",
@@ -191,11 +196,12 @@ impl TokenPairDb {
                     // Load token pairs (key starts with "pair:")
                     if key_str.starts_with("pair:") {
                         if let Ok(data) = serde_json::from_slice::<TokenPairData>(&value) {
-                            if let (pool_address, Ok(token0), Ok(token1), Ok(factory)) = (
+                            if let (pool_address, Ok(token0), Ok(token1), Ok(factory), fee_tier) = (
                                 data.pool_address.clone(),
                                 data.token0.parse::<Address>(),
                                 data.token1.parse::<Address>(),
                                 data.factory.parse::<Address>(),
+                                data.fee_tier,
                             ) {
                                 match DexVersion::from_str(&data.dex_version) {
                                     Ok(dex_version) => {
@@ -209,6 +215,7 @@ impl TokenPairDb {
                                                 decimals0: data.token0_decimals,
                                                 decimals1: data.token1_decimals,
                                                 factory,
+                                                fee_tier,
                                             },
                                         );
                                         count += 1;

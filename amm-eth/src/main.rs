@@ -3,7 +3,7 @@ use anyhow::Result;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use dotenv::dotenv;
 use env_logger::Env;
-use log::{ info, debug };
+use log::{debug, info};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;

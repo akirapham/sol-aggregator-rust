@@ -55,6 +55,7 @@ pub struct TokenPrice {
     pub pool_token0: Address,
     pub pool_token1: Address,
     pub eth_chain: EthChain,
+    pub fee_tier: Option<u32>,
 }
 
 /// DEX type identifier

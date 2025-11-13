@@ -19,11 +19,8 @@ impl<P: ethers::providers::Middleware + 'static> UniversalQuoter<P> {
         }
     }
 
-    pub fn with_v2(mut self, factory: Address) -> Self {
-        self.v2_quoter = Some(Arc::new(UniswapV2Quoter::new(
-            self.provider.clone(),
-            factory,
-        )));
+    pub fn with_v2(mut self) -> Self {
+        self.v2_quoter = Some(Arc::new(UniswapV2Quoter::new(self.provider.clone())));
         self
     }
 
@@ -35,54 +32,19 @@ impl<P: ethers::providers::Middleware + 'static> UniversalQuoter<P> {
         self
     }
 
-    pub async fn get_best_quote(
-        &self,
-        token_in: Address,
-        token_out: Address,
-        amount_in: U256,
-        fee_tier: Option<u32>,
-    ) -> Result<SwapQuote> {
-        let mut best_quote: Option<SwapQuote> = None;
-
-        // Try V2
-        if let Some(v2) = &self.v2_quoter {
-            if let Ok(quote) = v2.get_quote(token_in, token_out, amount_in).await {
-                best_quote = Some(quote);
-            }
-        }
-
-        // Try V3
-        if let Some(v3) = &self.v3_quoter {
-            if let Some(fee) = fee_tier {
-                if let Ok(quote) = v3.get_quote(token_in, token_out, amount_in, fee).await {
-                    match best_quote {
-                        Some(ref current_best) => {
-                            if quote.amount_out > current_best.amount_out {
-                                best_quote = Some(quote);
-                            }
-                        }
-                        None => {
-                            best_quote = Some(quote);
-                        }
-                    }
-                }
-            }
-        }
-
-        best_quote.ok_or(QuoteError::NoLiquidity)
-    }
-
     pub async fn get_v2_quote(
         &self,
+        pair_address: Address,
         token_in: Address,
         token_out: Address,
         amount_in: U256,
-    ) -> Result<SwapQuote> {
+    ) -> Result<U256> {
         let v2 = self.v2_quoter.as_ref().ok_or(QuoteError::ContractError(
             "V2 quoter not initialized".to_string(),
         ))?;
 
-        v2.get_quote(token_in, token_out, amount_in).await
+        v2.get_quote(pair_address, token_in, token_out, amount_in)
+            .await
     }
 
     pub async fn get_v3_quote(

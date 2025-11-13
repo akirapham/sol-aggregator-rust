@@ -75,4 +75,5 @@ pub struct PairInfo {
     pub decimals0: u8,
     pub decimals1: u8,
     pub factory: Address,
+    pub fee_tier: Option<u32>,
 }

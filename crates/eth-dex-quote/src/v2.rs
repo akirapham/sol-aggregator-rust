@@ -1,4 +1,4 @@
-use crate::types::{DexType, QuoteError, Result, SwapQuote};
+use crate::types::{QuoteError, Result};
 use async_trait::async_trait;
 use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::types::{Address, Bytes, TransactionRequest, U256};
@@ -8,34 +8,31 @@ use std::sync::Arc;
 pub trait V2Quoter: Send + Sync {
     async fn get_quote(
         &self,
+        pair_address: Address,
         token_in: Address,
         token_out: Address,
         amount_in: U256,
-    ) -> Result<SwapQuote>;
+    ) -> Result<U256>;
 }
 
 pub struct UniswapV2Quoter<P: ethers::providers::Middleware> {
     provider: Arc<P>,
-    factory: Address,
 }
 
 impl<P: ethers::providers::Middleware + 'static> UniswapV2Quoter<P> {
-    pub fn new(provider: Arc<P>, factory: Address) -> Self {
-        Self { provider, factory }
+    pub fn new(provider: Arc<P>) -> Self {
+        Self { provider }
     }
 
-    pub async fn get_reserves(
-        &self,
-        token_in: Address,
-        token_out: Address,
-    ) -> Result<(U256, U256)> {
-        let pair = self.get_pair(token_in, token_out).await?;
-
+    pub async fn get_reserves_from_pair(&self, pair_address: Address) -> Result<(U256, U256)> {
         // Encode getReserves() function call
         // Function selector for getReserves() is 0x0902f1ac
         let call_data = Bytes::from(vec![0x09, 0x02, 0xf1, 0xac]);
 
-        let tx: TypedTransaction = TransactionRequest::new().to(pair).data(call_data).into();
+        let tx: TypedTransaction = TransactionRequest::new()
+            .to(pair_address)
+            .data(call_data)
+            .into();
 
         let reserves = self
             .provider
@@ -44,43 +41,34 @@ impl<P: ethers::providers::Middleware + 'static> UniswapV2Quoter<P> {
             .map_err(|e| QuoteError::RpcError(e.to_string()))?;
 
         // Decode reserves - getReserves returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
-        // We get 96 bytes total (3 uint256 values padded to 32 bytes each)
-        if reserves.len() < 96 {
-            return Err(QuoteError::ContractError(
-                "Invalid reserve response".to_string(),
-            ));
+        // Response should be at least 96 bytes (3 x 32-byte words)
+        // But sometimes it might be shorter depending on encoding
+        if reserves.len() < 32 {
+            return Err(QuoteError::ContractError(format!(
+                "Invalid reserve response length: {}",
+                reserves.len()
+            )));
         }
 
-        let reserve0 = U256::from_big_endian(&reserves[0..32]);
-        let reserve1 = U256::from_big_endian(&reserves[32..64]);
-
-        Ok((reserve0, reserve1))
-    }
-
-    async fn get_pair(&self, token_in: Address, token_out: Address) -> Result<Address> {
-        let is_reverse = token_in > token_out;
-        let (token_a, token_b) = if is_reverse {
-            (token_out, token_in)
+        // Parse first reserve (reserve0) - take first 32 bytes
+        let reserve0 = if reserves.len() >= 32 {
+            U256::from_big_endian(&reserves[0..32])
         } else {
-            (token_in, token_out)
+            return Err(QuoteError::ContractError(
+                "Could not parse reserve0".to_string(),
+            ));
         };
 
-        let init_code =
-            hex::decode("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e265cbd3627")
-                .map_err(|_| QuoteError::ContractError("Invalid init code".to_string()))?;
+        // Parse second reserve (reserve1) - take next 32 bytes
+        let reserve1 = if reserves.len() >= 64 {
+            U256::from_big_endian(&reserves[32..64])
+        } else {
+            return Err(QuoteError::ContractError(
+                "Could not parse reserve1".to_string(),
+            ));
+        };
 
-        let salt = ethers::utils::keccak256(ethers::abi::encode(&[
-            ethers::abi::Token::Address(token_a),
-            ethers::abi::Token::Address(token_b),
-        ]));
-
-        let pair = ethers::utils::get_create2_address(
-            self.factory,
-            salt,
-            ethers::utils::keccak256(&init_code),
-        );
-
-        Ok(pair)
+        Ok((reserve0, reserve1))
     }
 
     pub fn compute_amount_out(
@@ -104,19 +92,24 @@ impl<P: ethers::providers::Middleware + 'static> UniswapV2Quoter<P> {
 impl<P: ethers::providers::Middleware + 'static> V2Quoter for UniswapV2Quoter<P> {
     async fn get_quote(
         &self,
+        pair_address: Address,
         token_in: Address,
         token_out: Address,
         amount_in: U256,
-    ) -> Result<SwapQuote> {
-        let (reserve_in, reserve_out) = self.get_reserves(token_in, token_out).await?;
+    ) -> Result<U256> {
+        let (reserve0, reserve1) = self.get_reserves_from_pair(pair_address).await?;
+
+        // For simplicity, assume reserves are in standard order (token0, token1)
+        // In production, you'd query pair.token0() to determine the actual order
+        let (reserve_in, reserve_out) = if token_in < token_out {
+            (reserve0, reserve1)
+        } else {
+            (reserve1, reserve0)
+        };
 
         let amount_out = Self::compute_amount_out(amount_in, reserve_in, reserve_out)?;
 
-        Ok(SwapQuote {
-            amount_out,
-            route: vec![token_in, token_out],
-            dex: DexType::UniswapV2,
-        })
+        Ok(amount_out)
     }
 }
 

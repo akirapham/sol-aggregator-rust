@@ -1,5 +1,6 @@
 use ethers::types::{Address, U256};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reserve {
@@ -48,7 +49,7 @@ pub struct TokenPrice {
     pub price_in_eth: f64,
     pub price_in_usd: Option<f64>,
     pub last_updated: u64,
-    pub pool_address: Address,
+    pub pool_address: String, // use String to store cover both address type and pool id in V4
     pub dex_version: DexVersion,
     pub decimals: u8,
     pub pool_token0: Address,
@@ -78,6 +79,26 @@ impl DexVersion {
             DexVersion::SushiswapV3 => "sushiswap_v3",
             DexVersion::PancakeswapV2 => "pancakeswap_v2",
             DexVersion::PancakeswapV3 => "pancakeswap_v3",
+        }
+    }
+}
+
+impl FromStr for DexVersion {
+    type Err = QuoteError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "uniswap_v2" => Ok(DexVersion::UniswapV2),
+            "uniswap_v3" => Ok(DexVersion::UniswapV3),
+            "uniswap_v4" => Ok(DexVersion::UniswapV4),
+            "sushiswap_v2" => Ok(DexVersion::SushiswapV2),
+            "sushiswap_v3" => Ok(DexVersion::SushiswapV3),
+            "pancakeswap_v2" => Ok(DexVersion::PancakeswapV2),
+            "pancakeswap_v3" => Ok(DexVersion::PancakeswapV3),
+            _ => Err(QuoteError::ContractError(format!(
+                "Unknown DexVersion: {}",
+                s
+            ))),
         }
     }
 }

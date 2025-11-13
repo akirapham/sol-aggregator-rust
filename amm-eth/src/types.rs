@@ -1,4 +1,4 @@
-use eth_dex_quote::EthChain;
+use eth_dex_quote::{DexVersion, EthChain};
 use ethers::types::Address;
 
 use std::sync::{Arc, RwLock};
@@ -64,4 +64,15 @@ impl EthConfig {
             None
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct PairInfo {
+    pub pool_address: String,
+    pub pool_token0: Address,
+    pub pool_token1: Address,
+    pub dex_version: DexVersion,
+    pub decimals0: u8,
+    pub decimals1: u8,
+    pub factory: Address,
 }

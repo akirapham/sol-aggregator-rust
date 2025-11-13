@@ -1,5 +1,5 @@
 use crate::price_store::PriceStore;
-use crate::types::EthConfig;
+use crate::types::{EthConfig, PairInfo};
 use anyhow::{Context, Result};
 use dashmap::DashMap;
 use eth_dex_quote::{DexVersion, TokenPrice};
@@ -19,6 +19,7 @@ abigen!(
         event Sync(uint112 reserve0, uint112 reserve1)
         function token0() external view returns (address)
         function token1() external view returns (address)
+        function factory() external view returns (address)
     ]"#
 );
 
@@ -29,6 +30,7 @@ abigen!(
         event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
         function token0() external view returns (address)
         function token1() external view returns (address)
+        function factory() external view returns (address)
     ]"#
 );
 
@@ -77,10 +79,8 @@ abigen!(
 pub struct EthSwapListener {
     config: EthConfig,
     price_store: PriceStore,
-    // Cache for token pairs: pool_address -> (token0, token1, decimals0, decimals1)
-    token_pair_cache: Arc<DashMap<Address, (Address, Address, u8, u8)>>,
-    // Cache for V4 pool IDs: pool_id (bytes32) -> (token0, token1, decimals0, decimals1, pool_address)
-    v4_pool_id_cache: Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+    // Cache for token pairs: pool_address | pool id -> PairInfo
+    token_pair_cache: Arc<DashMap<String, PairInfo>>,
     // Cache for token decimals: token_address -> decimals
     token_decimal_cache: Arc<DashMap<Address, u8>>,
     // Semaphore to limit concurrent event processing
@@ -100,14 +100,13 @@ impl EthSwapListener {
             config,
             price_store,
             token_pair_cache: Arc::new(DashMap::new()),
-            v4_pool_id_cache: Arc::new(DashMap::new()),
             token_decimal_cache: Arc::new(DashMap::new()),
             processing_semaphore,
         })
     }
 
     /// Get reference to the token pair cache for persistence
-    pub fn get_token_pair_cache(&self) -> Arc<DashMap<Address, (Address, Address, u8, u8)>> {
+    pub fn get_token_pair_cache(&self) -> Arc<DashMap<String, PairInfo>> {
         self.token_pair_cache.clone()
     }
 
@@ -164,7 +163,7 @@ impl EthSwapListener {
             let websocket_url = self.config.websocket_url.clone();
             let price_store = self.price_store.clone();
             let config = self.config.clone();
-            let v4_cache = self.v4_pool_id_cache.clone();
+            let v4_cache = self.token_pair_cache.clone();
             let semaphore = self.processing_semaphore.clone();
             tokio::spawn(async move {
                 if let Err(e) =
@@ -187,7 +186,7 @@ impl EthSwapListener {
         websocket_url: String,
         price_store: PriceStore,
         config: EthConfig,
-        token_cache: Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        token_cache: Arc<DashMap<String, PairInfo>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
         info!("Starting Uniswap V2 Sync event listener with auto-reconnection");
@@ -247,7 +246,7 @@ impl EthSwapListener {
         provider: Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
-        token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        token_cache: &Arc<DashMap<String, PairInfo>>,
         semaphore: &Arc<Semaphore>,
     ) -> Result<()> {
         // Create a filter for V2 Sync events
@@ -380,7 +379,7 @@ impl EthSwapListener {
         _provider: &Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
-        token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        token_cache: &Arc<DashMap<String, PairInfo>>,
     ) -> Result<()> {
         let pool_address = log.address;
 
@@ -395,17 +394,23 @@ impl EthSwapListener {
             };
 
         // Get token addresses and decimals from cache or fetch via contract
-        let (token0, token1, decimals0, decimals1) =
-            match Self::get_or_fetch_token_pair(pool_address, token_cache, config).await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    error!(
-                        "Failed to get token pair for pool {:?}: {}",
-                        pool_address, e
-                    );
-                    return Ok(());
-                }
-            };
+        let pair_info = match Self::get_or_fetch_token_pair(
+            pool_address,
+            token_cache,
+            config,
+            DexVersion::UniswapV2,
+        )
+        .await
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                error!(
+                    "Failed to get token pair for pool {:?}: {}",
+                    pool_address, e
+                );
+                return Ok(());
+            }
+        };
 
         let reserve0 = sync_event.reserve_0;
         let reserve1 = sync_event.reserve_1;
@@ -430,6 +435,9 @@ impl EthSwapListener {
         // price = (reserve1 * 10^decimals0) / (reserve0 * 10^decimals1)
         let reserve0_u256 = U256::from(reserve0);
         let reserve1_u256 = U256::from(reserve1);
+
+        let decimals0 = pair_info.decimals0;
+        let decimals1 = pair_info.decimals1;
 
         // Calculate with decimal adjustment using U256 for precision
         let decimals_diff_0_to_1 = decimals0 as i32 - decimals1 as i32;
@@ -457,12 +465,13 @@ impl EthSwapListener {
             Self::u256_to_f64_ratio(reserve0_u256, denominator)
         };
 
+        let pool_address_str = pool_address.to_string().to_lowercase();
         // Update prices for both tokens
         Self::update_token_price(
-            token0,
-            token1,
+            pair_info.pool_token0,
+            pair_info.pool_token1,
             price_token0_in_token1,
-            pool_address,
+            &pool_address_str,
             timestamp,
             DexVersion::UniswapV2,
             decimals0,
@@ -471,10 +480,10 @@ impl EthSwapListener {
         );
 
         Self::update_token_price(
-            token1,
-            token0,
+            pair_info.pool_token1,
+            pair_info.pool_token0,
             price_token1_in_token0,
-            pool_address,
+            &pool_address_str,
             timestamp,
             DexVersion::UniswapV2,
             decimals1,
@@ -490,7 +499,7 @@ impl EthSwapListener {
         websocket_url: String,
         price_store: PriceStore,
         config: EthConfig,
-        token_cache: Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        token_cache: Arc<DashMap<String, PairInfo>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
         info!("Starting Uniswap V3 swap listener with auto-reconnection");
@@ -550,7 +559,7 @@ impl EthSwapListener {
         provider: Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
-        token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        token_cache: &Arc<DashMap<String, PairInfo>>,
         semaphore: &Arc<Semaphore>,
     ) -> Result<()> {
         // Create a filter for V3 Swap events
@@ -684,7 +693,7 @@ impl EthSwapListener {
         _provider: &Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
-        token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        token_cache: &Arc<DashMap<String, PairInfo>>,
     ) -> Result<()> {
         let pool_address = log.address;
 
@@ -699,17 +708,23 @@ impl EthSwapListener {
             };
 
         // Get token addresses and decimals from cache or fetch via contract
-        let (token0, token1, decimals0, decimals1) =
-            match Self::get_or_fetch_token_pair(pool_address, token_cache, config).await {
-                Ok(pair) => pair,
-                Err(e) => {
-                    error!(
-                        "Failed to get token pair for pool {:?}: {}",
-                        pool_address, e
-                    );
-                    return Ok(());
-                }
-            };
+        let pair_info = match Self::get_or_fetch_token_pair(
+            pool_address,
+            token_cache,
+            config,
+            DexVersion::UniswapV3,
+        )
+        .await
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                error!(
+                    "Failed to get token pair for pool {:?}: {}",
+                    pool_address, e
+                );
+                return Ok(());
+            }
+        };
 
         // Extract sqrtPriceX96 from the event
         let sqrt_price_x96 = swap_event.sqrt_price_x96;
@@ -723,33 +738,34 @@ impl EthSwapListener {
         // price = (sqrtPriceX96 / 2^96)^2 * (10^decimals0 / 10^decimals1)
         // Rearranged: price = (sqrtPriceX96^2 * 10^decimals0) / (2^192 * 10^decimals1)
         let price_token0_in_token1 =
-            Self::sqrt_price_x96_to_price(sqrt_price_x96, decimals0, decimals1);
+            Self::sqrt_price_x96_to_price(sqrt_price_x96, pair_info.decimals0, pair_info.decimals1);
 
         let price_token1_in_token0 = if price_token0_in_token1 > 0.0 {
             1.0 / price_token0_in_token1
         } else {
             0.0
         };
+        let pool_address_str = pool_address.to_string().to_lowercase();
         Self::update_token_price(
-            token0,
-            token1,
+            pair_info.pool_token0,
+            pair_info.pool_token1,
             price_token0_in_token1,
-            pool_address,
+            &pool_address_str,
             timestamp,
             DexVersion::UniswapV3,
-            decimals0,
+            pair_info.decimals0,
             price_store,
             config,
         );
 
         Self::update_token_price(
-            token1,
-            token0,
+            pair_info.pool_token1,
+            pair_info.pool_token0,
             price_token1_in_token0,
-            pool_address,
+            &pool_address_str,
             timestamp,
             DexVersion::UniswapV3,
-            decimals1,
+            pair_info.decimals1,
             price_store,
             config,
         );
@@ -783,12 +799,13 @@ impl EthSwapListener {
     /// Get or fetch token pair from cache (with decimals)
     async fn get_or_fetch_token_pair(
         pool_address: Address,
-        token_cache: &Arc<DashMap<Address, (Address, Address, u8, u8)>>,
+        token_cache: &Arc<DashMap<String, PairInfo>>,
         config: &EthConfig,
-    ) -> Result<(Address, Address, u8, u8)> {
+        dex_version: DexVersion,
+    ) -> Result<PairInfo> {
         // Check cache first
-        if let Some(pair) = token_cache.get(&pool_address) {
-            return Ok(*pair.value());
+        if let Some(pair) = token_cache.get(&pool_address.to_string().to_lowercase()) {
+            return Ok((*pair.value()).clone());
         }
 
         // Create RPC provider from environment variable
@@ -804,16 +821,25 @@ impl EthSwapListener {
 
         for attempt in 1..=3 {
             match Self::fetch_token_pair_with_decimals(pool_address, &provider, config).await {
-                Ok((token0, token1, decimals0, decimals1)) => {
+                Ok((token0, token1, decimals0, decimals1, factory)) => {
+                    let pair_info = PairInfo {
+                        pool_address: pool_address.to_string().to_lowercase(),
+                        pool_token0: token0,
+                        pool_token1: token1,
+                        dex_version,
+                        decimals0,
+                        decimals1,
+                        factory,
+                    };
                     // Store in cache
-                    token_cache.insert(pool_address, (token0, token1, decimals0, decimals1));
+                    token_cache.insert(pool_address.to_string().to_lowercase(), pair_info.clone());
 
                     debug!(
                         "Cached token pair for pool {:?}: token0={:?}, token1={:?}, decimals0={}, decimals1={}",
                         pool_address, token0, token1, decimals0, decimals1
                     );
 
-                    return Ok((token0, token1, decimals0, decimals1));
+                    return Ok(pair_info);
                 }
                 Err(e) => {
                     warn!(
@@ -843,16 +869,18 @@ impl EthSwapListener {
         pool_address: Address,
         provider: &Arc<Provider<Http>>,
         config: &EthConfig,
-    ) -> Result<(Address, Address, u8, u8)> {
+    ) -> Result<(Address, Address, u8, u8, Address)> {
         let pair_contract = UniswapV2Pair::new(pool_address, provider.clone());
 
         // Fetch token addresses in parallel
         let token0_call = pair_contract.token_0();
         let token1_call = pair_contract.token_1();
+        let factory_call = pair_contract.factory();
         let token0_fut = token0_call.call();
         let token1_fut = token1_call.call();
+        let factory_fut = factory_call.call();
 
-        let (token0, token1) = tokio::try_join!(token0_fut, token1_fut)
+        let (token0, token1, factory) = tokio::try_join!(token0_fut, token1_fut, factory_fut)
             .context("Failed to fetch token addresses from pool")?;
 
         // Check if tokens have known decimals (WETH, USDC, USDT) to avoid RPC calls
@@ -884,7 +912,7 @@ impl EthSwapListener {
                 .unwrap_or(18)
         };
 
-        Ok((token0, token1, decimals0, decimals1))
+        Ok((token0, token1, decimals0, decimals1, factory))
     }
 
     /// Update token price in the price store
@@ -892,7 +920,7 @@ impl EthSwapListener {
         token_address: Address,
         paired_with: Address,
         price_in_paired_token: f64,
-        pool_address: Address,
+        pool_address: &str,
         timestamp: u64,
         dex_version: DexVersion,
         decimals: u8,
@@ -947,7 +975,7 @@ impl EthSwapListener {
             price_in_eth,
             price_in_usd,
             last_updated: timestamp,
-            pool_address,
+            pool_address: pool_address.to_string(),
             dex_version,
             decimals,
             pool_token0: token0,
@@ -1022,7 +1050,7 @@ impl EthSwapListener {
         websocket_url: String,
         price_store: PriceStore,
         config: EthConfig,
-        v4_cache: Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+        v4_cache: Arc<DashMap<String, PairInfo>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
         info!("Starting Uniswap V4 swap listener with auto-reconnection");
@@ -1082,7 +1110,7 @@ impl EthSwapListener {
         provider: Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
-        v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+        v4_cache: &Arc<DashMap<String, PairInfo>>,
         semaphore: &Arc<Semaphore>,
     ) -> Result<()> {
         // V4 PoolManager address on Ethereum mainnet
@@ -1228,7 +1256,7 @@ impl EthSwapListener {
         _provider: &Arc<Provider<Ws>>,
         price_store: &PriceStore,
         config: &EthConfig,
-        v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+        v4_cache: &Arc<DashMap<String, PairInfo>>,
     ) -> Result<()> {
         // Try to parse as V4 Swap event
         let swap_event: uniswap_v4_pool_manager::SwapFilter =
@@ -1250,19 +1278,18 @@ impl EthSwapListener {
         let pool_id_hex = format!("0x{}", hex::encode(pool_id));
 
         // Get or fetch token information for this pool ID
-        let (token0, token1, decimals0, decimals1, pool_address) =
-            match Self::get_or_fetch_v4_pool_info(pool_id, v4_cache, config).await {
-                Ok(info) => info,
-                Err(e) => {
-                    // V4 pool info not cached and couldn't be fetched
-                    // This might happen for new pools or if we don't have a way to derive tokens from pool ID
-                    error!(
-                        "❌ Failed to get V4 pool info for pool ID {}: {}",
-                        pool_id_hex, e
-                    );
-                    return Ok(());
-                }
-            };
+        let pair_info = match Self::get_or_fetch_v4_pool_info(pool_id, v4_cache, config).await {
+            Ok(info) => info,
+            Err(e) => {
+                // V4 pool info not cached and couldn't be fetched
+                // This might happen for new pools or if we don't have a way to derive tokens from pool ID
+                error!(
+                    "❌ Failed to get V4 pool info for pool ID {}: {}",
+                    pool_id_hex, e
+                );
+                return Ok(());
+            }
+        };
 
         // Extract sqrtPriceX96 from the event
         let sqrt_price_x96 = swap_event.sqrt_price_x96;
@@ -1274,12 +1301,12 @@ impl EthSwapListener {
 
         debug!(
             "V4 Swap: Pool ID {:?} - sqrtPriceX96: {}, token0: {:?}, token1: {:?}",
-            pool_id, sqrt_price_x96, token0, token1
+            pool_id, sqrt_price_x96, pair_info.pool_token0, pair_info.pool_token1
         );
 
         // Calculate price from sqrtPriceX96 (same as V3)
         let price_token0_in_token1 =
-            Self::sqrt_price_x96_to_price(sqrt_price_x96, decimals0, decimals1);
+            Self::sqrt_price_x96_to_price(sqrt_price_x96, pair_info.decimals0, pair_info.decimals1);
 
         let price_token1_in_token0 = if price_token0_in_token1 > 0.0 {
             1.0 / price_token0_in_token1
@@ -1289,25 +1316,25 @@ impl EthSwapListener {
 
         // Update prices using the derived pool address
         Self::update_token_price(
-            token0,
-            token1,
+            pair_info.pool_token0,
+            pair_info.pool_token1,
             price_token0_in_token1,
-            pool_address,
+            &pool_id_hex,
             timestamp,
             DexVersion::UniswapV4,
-            decimals0,
+            pair_info.decimals0,
             price_store,
             config,
         );
 
         Self::update_token_price(
-            token1,
-            token0,
+            pair_info.pool_token1,
+            pair_info.pool_token0,
             price_token1_in_token0,
-            pool_address,
+            &pool_id_hex,
             timestamp,
             DexVersion::UniswapV4,
-            decimals1,
+            pair_info.decimals1,
             price_store,
             config,
         );
@@ -1320,15 +1347,15 @@ impl EthSwapListener {
     /// We use The Graph subgraph or event lookups to get pool details
     async fn get_or_fetch_v4_pool_info(
         pool_id: [u8; 32],
-        v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
+        v4_cache: &Arc<DashMap<String, PairInfo>>,
         _config: &EthConfig,
-    ) -> Result<(Address, Address, u8, u8, Address)> {
+    ) -> Result<PairInfo> {
         let pool_id_hex = format!("0x{}", hex::encode(pool_id));
 
         // Check cache first
-        if let Some(info) = v4_cache.get(&pool_id) {
+        if let Some(info) = v4_cache.get(&pool_id_hex) {
             debug!("✓ V4 pool {} found in cache", pool_id_hex);
-            return Ok(*info.value());
+            return Ok((*info.value()).clone());
         }
 
         // V4 PoolManager address (mainnet)
@@ -1462,8 +1489,16 @@ impl EthSwapListener {
             .parse::<Address>()
             .context("Invalid token1 address")?;
 
-        let pool_info = (token0, token1, dec0 as u8, dec1 as u8, v4_pool_manager);
-        v4_cache.insert(pool_id, pool_info);
+        let pool_info = PairInfo {
+            pool_token0: token0,
+            pool_token1: token1,
+            decimals0: dec0 as u8,
+            decimals1: dec1 as u8,
+            pool_address: pool_id_hex.clone(),
+            dex_version: DexVersion::UniswapV4,
+            factory: v4_pool_manager,
+        };
+        v4_cache.insert(pool_id_hex, pool_info.clone());
 
         Ok(pool_info)
     }

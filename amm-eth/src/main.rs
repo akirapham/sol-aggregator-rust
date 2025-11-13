@@ -6,6 +6,7 @@ use env_logger::Env;
 use log::info;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -96,7 +97,7 @@ async fn main() -> Result<()> {
     let db_path = "rocksdb_data/amm-eth";
     info!("Opening RocksDB at {}", db_path);
     eprintln!("DEBUG: Opening RocksDB at {}", db_path);
-    let token_pair_db = TokenPairDb::open(db_path)?;
+    let token_pair_db = Arc::new(TokenPairDb::open(db_path)?);
     eprintln!("DEBUG: RocksDB opened successfully");
 
     // Load existing token pairs and decimals from database
@@ -111,12 +112,13 @@ async fn main() -> Result<()> {
     // Start a background task to save token pairs and decimals to RocksDB 60s
     let save_pair_cache = token_pair_cache.clone();
     let save_decimal_cache = token_decimal_cache.clone();
+    let db_clone = token_pair_db.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             interval.tick().await;
 
-            match token_pair_db.save_all_from_cache(&save_pair_cache, &save_decimal_cache) {
+            match db_clone.save_all_from_cache(&save_pair_cache, &save_decimal_cache) {
                 Ok(count) => {
                     info!("💾 Saved {} token pairs to RocksDB", count);
                 }
@@ -147,8 +149,38 @@ async fn main() -> Result<()> {
     // Start listening to swap events
     info!("Starting swap event listener...");
     eprintln!("DEBUG: About to start listener.start()...");
-    listener.start().await?;
-    eprintln!("DEBUG: listener.start() completed");
 
+    // Create a shutdown signal handler
+    let shutdown_signal = async {
+        signal::ctrl_c().await.ok();
+    };
+
+    // Run listener with shutdown signal
+    tokio::select! {
+        result = listener.start() => {
+            eprintln!("DEBUG: listener.start() completed");
+            result?;
+        }
+        _ = shutdown_signal => {
+            info!("Shutdown signal received");
+            eprintln!("DEBUG: Shutdown signal received");
+        }
+    }
+
+    // Save all cached data to RocksDB before exit
+    info!("Saving token pairs to RocksDB before shutdown...");
+    match token_pair_db.save_all_from_cache(&token_pair_cache, &token_decimal_cache) {
+        Ok(count) => {
+            info!("💾 Saved {} token pairs to RocksDB during shutdown", count);
+            eprintln!("DEBUG: Saved {} token pairs during shutdown", count);
+        }
+        Err(e) => {
+            log::error!("Failed to save token pairs during shutdown: {}", e);
+            eprintln!("ERROR: Failed to save token pairs during shutdown: {}", e);
+        }
+    }
+
+    info!("Shutdown complete");
+    eprintln!("DEBUG: Shutdown complete");
     Ok(())
 }

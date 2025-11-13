@@ -315,7 +315,6 @@ pub fn pool_update_event_to_pool_state(
             }
 
             if let Some(ref tick_array_update) = whirlpool_update.tick_array_state {
-                log::info!("pool_state222222222222222222222222222222222222222222222222222222");
                 pool_state.tick_array_state.insert(
                     tick_array_update.start_tick_index,
                     tick_array_update.clone(),
@@ -323,7 +322,6 @@ pub fn pool_update_event_to_pool_state(
             }
 
             if let Some(ref oracle_state) = whirlpool_update.oracle_state {
-                log::info!("pool_state3333333333333333333333333333333333333333333333333333333");
                 pool_state.oracle_state = oracle_state.clone();
             }
 
@@ -682,8 +680,6 @@ pub fn update_pool_state_by_event(
                     );
                 }
                 if let Some(ref tick_array_update) = whirlpool_update.tick_array_state {
-                    // log::info!("state3333333333333333333333333333 address {}", whirlpool_update.address.to_string());
-                    // log::info!("state3333333333333333333333333333 whirlpool {}", tick_array_update.whirlpool.to_string());
                     state.tick_array_state.insert(
                         tick_array_update.start_tick_index,
                         tick_array_update.clone(),
@@ -691,7 +687,6 @@ pub fn update_pool_state_by_event(
                 }
 
                 if let Some(ref oracle_state) = whirlpool_update.oracle_state {
-                    log::info!("state4444444444444444444444444444444444444444444444444444444");
                     state.oracle_state = oracle_state.clone();
                 }
             }

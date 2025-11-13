@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::parser::ORCA_WHIRLPOOL_PROGRAM_ID;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::pool_data_types::orca_whirlpool::WhirlpoolPoolState;
@@ -522,8 +523,8 @@ impl OrcaTickArrayFetcher {
 
 pub fn get_oracle_address(whirlpool: &Pubkey) -> (Pubkey, u8) {
     let seeds: &[&[u8]; 2] = &[b"oracle", whirlpool.as_ref()];
-
-    Pubkey::try_find_program_address(seeds, &ORCA_WHIRLPOOL_PROGRAM_ID).unwrap()
+    let program_id = Pubkey::from_str(&ORCA_WHIRLPOOL_PROGRAM_ID.to_string()).unwrap_or_else(|_| Pubkey::default());
+    Pubkey::try_find_program_address(seeds, &program_id).unwrap()
 }
 
 #[cfg(test)]

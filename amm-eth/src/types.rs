@@ -52,7 +52,7 @@ impl Default for EthConfig {
     fn default() -> Self {
         Self {
             websocket_url: std::env::var("ETH_WEBSOCKET_URL")
-                .unwrap_or_else(|_| "wss://eth-mainnet.g.alchemy.com/v2/your-api-key".to_string()),
+                .unwrap_or_else(|_| "wss://ethereum-rpc.publicnode.com".to_string()),
             // Mainnet addresses
             uniswap_v2_factory: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
                 .parse()

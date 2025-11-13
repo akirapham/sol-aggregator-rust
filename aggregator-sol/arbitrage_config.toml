@@ -20,7 +20,7 @@ max_concurrent_checks = 10  # Maximum concurrent arbitrage checks
 [[monitored_tokens]]
 address = "So11111111111111111111111111111111111111112"  # SOL (Wrapped)
 symbol = "SOL"
-enabled = true
+enabled = false
 
 [[monitored_tokens]]
 address = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"  # USDT
@@ -38,6 +38,16 @@ symbol = "WBTC"
 enabled = true
 
 [[monitored_tokens]]
+address = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"  # RAY (Raydium)
+symbol = "RAY"
+enabled = true
+
+[[monitored_tokens]]
+address = "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE"  # ORCA (Orca DEX)
+symbol = "ORCA"
+enabled = true
+
+[[monitored_tokens]]
 address = "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"  # mSOL (Marinade)
 symbol = "mSOL"
 enabled = true
@@ -50,11 +60,6 @@ enabled = true
 [[monitored_tokens]]
 address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
 symbol = "BONK"
-enabled = true
-
-[[monitored_tokens]]
-address = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"  # RAY (Raydium)
-symbol = "RAY"
 enabled = true
 
 [[monitored_tokens]]
@@ -92,11 +97,6 @@ enabled = true
 [[monitored_tokens]]
 address = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"  # jitoSOL (Jito Staked SOL)
 symbol = "jitoSOL"
-enabled = true
-
-[[monitored_tokens]]
-address = "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE"  # ORCA (Orca DEX)
-symbol = "ORCA"
 enabled = true
 
 [[monitored_tokens]]

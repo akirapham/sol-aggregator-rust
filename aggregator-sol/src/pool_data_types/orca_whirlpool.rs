@@ -94,99 +94,80 @@ impl WhirlpoolPoolState {
         Pubkey::new_from_array(*ORCA_WHIRLPOOL_PROGRAM_ID.as_array())
     }
 
-    /// Calculate output amount for Whirlpool swap based on Orca SDK quote_swap
-    pub async fn calculate_output_amount(
+    /// Calculate output amount for Whirlpool swap using compute_swap_simplified
+    /// 
+    /// Uses the core compute_swap_simplified() function which mirrors the official
+    /// Whirlpool SDK's pub fn swap() (swap_manager.rs lines 29-244).
+    /// 
+    /// This simplified implementation provides:
+    /// - Exact input mode: Input fixed, output calculated
+    /// - Core swap computation with official math
+    /// - Proper fee deduction
+    /// - Price limit validation
+    /// - Direction-aware price movements
+    /// 
+    /// For multi-tick traversal with dynamic fees and liquidity updates,
+    /// use the full loop implementation below (kept as reference).
+    pub fn calculate_output_amount(
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> u64 {
+        // Input validation
         let a_to_b = tokens_equal(input_token, &self.token_mint_a);
         if self.sqrt_price == 0 || self.liquidity == 0 || input_amount == 0 {
             return 0;
         }
-        // log::info!("YYYYYYYYYYYYYYYYYYYYY oracle_state {:?}", self.oracle_state.whirlpool.to_string());
 
-        let adjusted_sqrt_price_limit = if a_to_b {
-                MIN_SQRT_PRICE_X64
-            } else {
-                MAX_SQRT_PRICE_X64
-            };
+        // Set price limit based on direction
+        let sqrt_price_limit = if a_to_b {
+            MIN_SQRT_PRICE_X64
+        } else {
+            MAX_SQRT_PRICE_X64
+        };
 
-        if a_to_b && adjusted_sqrt_price_limit >= self.sqrt_price
-            || !a_to_b && adjusted_sqrt_price_limit <= self.sqrt_price
+        // Validate price limit direction
+        if (a_to_b && sqrt_price_limit >= self.sqrt_price)
+            || (!a_to_b && sqrt_price_limit <= self.sqrt_price)
         {
             return 0;
         }
-        let fee_rate = self.fee_rate;
-        let amount_remaining: u64 = input_amount;
-        let sqrt_price_current = self.sqrt_price;
-        let curr_liquidity = self.liquidity;
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let adaptive_fee_info: Option<AdaptiveFeeInfo>;
-        if self.oracle_state.whirlpool.to_string() == "11111111111111111111111111111111" {
-            adaptive_fee_info = None;
-        } else {
-            adaptive_fee_info = Some(AdaptiveFeeInfo {
-                constants: AdaptiveFeeConstants {
-                    filter_period: self.oracle_state.adaptive_fee_constants.filter_period,
-                    decay_period: self.oracle_state.adaptive_fee_constants.decay_period,
-                    reduction_factor: self.oracle_state.adaptive_fee_constants.reduction_factor,
-                    adaptive_fee_control_factor: self.oracle_state.adaptive_fee_constants.adaptive_fee_control_factor,
-                    max_volatility_accumulator: self.oracle_state.adaptive_fee_constants.max_volatility_accumulator,
-                    tick_group_size: self.oracle_state.adaptive_fee_constants.tick_group_size,
-                    major_swap_threshold_ticks: self.oracle_state.adaptive_fee_constants.major_swap_threshold_ticks,
-                    reserved: self.oracle_state.adaptive_fee_constants.reserved,
-                },
-                variables: AdaptiveFeeVariables {
-                    last_reference_update_timestamp: self.oracle_state.adaptive_fee_variables.last_reference_update_timestamp,
-                    last_major_swap_timestamp: self.oracle_state.adaptive_fee_variables.last_major_swap_timestamp,
-                    volatility_reference: self.oracle_state.adaptive_fee_variables.volatility_reference,
-                    tick_group_index_reference: self.oracle_state.adaptive_fee_variables.tick_group_index_reference,
-                    volatility_accumulator: self.oracle_state.adaptive_fee_variables.volatility_accumulator,
-                    reserved: self.oracle_state.adaptive_fee_variables.reserved,
-                },
-            });
-        }
-
-        let mut fee_rate_manager = match FeeRateManager::new(
-            a_to_b,
-            self.tick_current_index, // note:  -1 shift is acceptable
-            timestamp,
-            fee_rate,
-            &adaptive_fee_info,
+        // Call compute_swap_simplified with current pool state
+        // This executes the core swap computation from the official Whirlpool SDK
+        match compute_swap_simplified(
+            input_amount,              // Exact input amount
+            sqrt_price_limit,          // Price limit (MIN for A→B, MAX for B→A)
+            true,                      // amount_specified_is_input = true (exact input mode)
+            a_to_b,                    // Direction: true = A→B, false = B→A
+            self.fee_rate,             // Static fee rate
+            self.sqrt_price,           // Current pool price in Q64 format
+            self.liquidity,            // Current pool liquidity
         ) {
-            Ok(manager) => manager,
-            Err(_) => {
-                log::warn!("Failed to create FeeRateManager, falling back to simple calculation");
-                return 0;
+            Ok(result) => {
+                // Log swap details for debugging
+                log::debug!(
+                    "Swap computed: direction={}, input={}, output_a={}, output_b={}, fee={}",
+                    if a_to_b { "A→B" } else { "B→A" },
+                    input_amount,
+                    result.amount_a,
+                    result.amount_b,
+                    result.fee_amount
+                );
+
+                // Return the output amount based on direction
+                // In exact-input mode with compute_swap_simplified():
+                //   amount_a = input - fees
+                //   amount_b = output calculated
+                if a_to_b {
+                    result.amount_b  // Output is token B when A→B
+                } else {
+                    result.amount_a  // Output is token A when B→A
+                }
             }
-        };
-
-        let _ = fee_rate_manager.update_volatility_accumulator();
-        let total_fee_rate = fee_rate_manager.get_total_fee_rate();
-        let (bounded_sqrt_price_target, _adaptive_fee_update_skipped) =
-            fee_rate_manager.get_bounded_sqrt_price_target(adjusted_sqrt_price_limit, curr_liquidity);
-
-        let swap_computation = compute_swap(
-            amount_remaining,
-            total_fee_rate,
-            curr_liquidity,
-            sqrt_price_current,
-            bounded_sqrt_price_target,
-            true, // amount_specified_is_input
-            a_to_b,
-        );
-        match swap_computation {
-            Ok(computation) => computation.amount_out,
             Err(e) => {
-                log::warn!("Swap computation failed: {:?}", e);
-                0 // Return 0 or handle error appropriately
+                log::warn!("Swap computation failed: {}", e);
+                0
             }
         }
     }
@@ -253,4 +234,169 @@ struct SwapStepResult {
     amount_out: u64,
     next_sqrt_price: u128,
     fee_amount: u64,
+}
+
+/// Implements the core compute_swap logic matching official Whirlpool SDK
+/// 
+/// This function mirrors: pub fn swap(
+///     whirlpool: &Whirlpool,
+///     swap_tick_sequence: &mut SwapTickSequence,
+///     amount: u64,
+///     sqrt_price_limit: u128,
+///     amount_specified_is_input: bool,
+///     a_to_b: bool,
+///     timestamp: u64,
+///     adaptive_fee_info: &Option<AdaptiveFeeInfo>,
+/// ) -> Result<Box<PostSwapUpdate>>
+///
+/// Key Parameters (7 parameters to compute_swap call):
+/// 1. amount_remaining: u64 - Decreases with each iteration (input or output depending on mode)
+/// 2. total_fee_rate: u16 - Updated via FeeRateManager (dynamic fees)
+/// 3. curr_liquidity: u128 - Changes at tick crossings (liquidity_net adjustments)
+/// 4. curr_sqrt_price: u128 - Current Q64 price, updates after each step
+/// 5. bounded_sqrt_price_target: u128 - Calculated with fee bounds for this iteration
+/// 6. amount_specified_is_input: bool - Constant mode flag (exact-in vs exact-out)
+/// 7. a_to_b: bool - Constant direction flag (Token A→B vs B→A)
+///
+/// Documentation of the swap loop structure:
+/// 
+/// OUTER LOOP (lines 102-216 in official):
+///   while amount_remaining > 0 && adjusted_sqrt_price_limit != curr_sqrt_price
+///   - Finds next initialized tick
+///   - Gets next_tick_sqrt_price and sqrt_price_target
+///   
+///   INNER LOOP ("do while"):
+///     loop:
+///       - Updates volatility accumulator (line 111)
+///       - Gets bounded_sqrt_price_target (line 115-120)
+///       - Calls compute_swap() with 7 parameters (line 115-123)
+///       - Updates amounts based on mode (lines 125-134)
+///       - Accumulates fees (lines 136-140)
+///       - Handles tick crossings (lines 142-172)
+///       - Updates price indices (lines 174-207)
+///       - Advances fee manager (lines 208-215)
+///       - Breaks when: amount_remaining == 0 OR curr_sqrt_price == sqrt_price_target
+///
+pub fn compute_swap_simplified(
+    amount: u64,
+    sqrt_price_limit: u128,
+    amount_specified_is_input: bool,
+    a_to_b: bool,
+    fee_rate: u16,
+    curr_sqrt_price: u128,
+    curr_liquidity: u128,
+) -> std::result::Result<SwapComputeResult, String> {
+    // Input validation - mirror official swap function
+    const MIN_SQRT_PRICE_X64: u128 = 4295048016;
+    const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
+    const NO_EXPLICIT_SQRT_PRICE_LIMIT: u128 = 0;
+
+    let adjusted_sqrt_price_limit = if sqrt_price_limit == NO_EXPLICIT_SQRT_PRICE_LIMIT {
+        if a_to_b {
+            MIN_SQRT_PRICE_X64
+        } else {
+            MAX_SQRT_PRICE_X64
+        }
+    } else {
+        sqrt_price_limit
+    };
+
+    // Validate price bounds
+    if adjusted_sqrt_price_limit < MIN_SQRT_PRICE_X64 || adjusted_sqrt_price_limit > MAX_SQRT_PRICE_X64 {
+        return Err("SqrtPriceOutOfBounds".to_string());
+    }
+
+    // Validate price limit direction
+    if (a_to_b && adjusted_sqrt_price_limit >= curr_sqrt_price)
+        || (!a_to_b && adjusted_sqrt_price_limit <= curr_sqrt_price)
+    {
+        return Err("InvalidSqrtPriceLimitDirection".to_string());
+    }
+
+    if amount == 0 {
+        return Err("ZeroTradableAmount".to_string());
+    }
+
+    // Initialize state variables - mirror official swap loop state initialization
+    let mut amount_remaining: u64 = amount;
+    let mut amount_calculated: u64 = 0;
+    let mut curr_sqrt_price_mut = curr_sqrt_price;
+    let mut curr_liquidity_mut = curr_liquidity;
+    let mut fee_sum: u64 = 0;
+
+    // SIMPLIFIED VERSION: Single step (not multi-step like official)
+    // Uses fee_rate directly instead of dynamic FeeRateManager
+    // For multi-step swaps, would need full tick tracking and liquidity updates
+    
+    // Execute single swap step with base fee rate
+    let swap_computation = compute_swap(
+        amount_remaining,
+        fee_rate as u32, // Convert u16 to u32 for fee rate
+        curr_liquidity_mut,
+        curr_sqrt_price_mut,
+        adjusted_sqrt_price_limit,
+        amount_specified_is_input,
+        a_to_b,
+    ).map_err(|e| format!("Swap step failed: {:?}", e))?;
+
+    // Update amounts based on swap mode - mirror official logic (lines 125-141)
+    if amount_specified_is_input {
+        // Exact input mode: input amount is fixed, output varies
+        amount_remaining = amount_remaining
+            .checked_sub(swap_computation.amount_in)
+            .ok_or("AmountRemainingOverflow")?;
+        amount_remaining = amount_remaining
+            .checked_sub(swap_computation.fee_amount)
+            .ok_or("AmountRemainingOverflow")?;
+
+        amount_calculated = amount_calculated
+            .checked_add(swap_computation.amount_out)
+            .ok_or("AmountCalcOverflow")?;
+    } else {
+        // Exact output mode: output amount is fixed, input varies
+        amount_remaining = amount_remaining
+            .checked_sub(swap_computation.amount_out)
+            .ok_or("AmountRemainingOverflow")?;
+
+        amount_calculated = amount_calculated
+            .checked_add(swap_computation.amount_in)
+            .ok_or("AmountCalcOverflow")?;
+        amount_calculated = amount_calculated
+            .checked_add(swap_computation.fee_amount)
+            .ok_or("AmountCalcOverflow")?;
+    }
+
+    fee_sum = fee_sum
+        .checked_add(swap_computation.fee_amount)
+        .ok_or("AmountCalcOverflow")?;
+
+    // Update current sqrt price
+    curr_sqrt_price_mut = swap_computation.next_price;
+
+    // Final amount calculation (mirror lines 226-231 in official)
+    let (amount_a, amount_b) = if a_to_b == amount_specified_is_input {
+        (amount - amount_remaining, amount_calculated)
+    } else {
+        (amount_calculated, amount - amount_remaining)
+    };
+
+    Ok(SwapComputeResult {
+        amount_a,
+        amount_b,
+        fee_amount: fee_sum,
+        end_sqrt_price: curr_sqrt_price_mut,
+        end_tick_index: 0, // Not tracked in simplified version
+        end_liquidity: curr_liquidity_mut,
+    })
+}
+
+/// Result of compute_swap computation matching PostSwapUpdate
+#[derive(Debug, Clone)]
+pub struct SwapComputeResult {
+    pub amount_a: u64,
+    pub amount_b: u64,
+    pub fee_amount: u64,
+    pub end_sqrt_price: u128,
+    pub end_tick_index: i32,
+    pub end_liquidity: u128,
 }

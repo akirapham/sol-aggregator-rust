@@ -212,7 +212,7 @@ impl PoolState {
             }
             PoolState::RadyiumClmm(state) => {
                 let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher).await;
-                // log::info!("1111111 RadyiumClmm input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
+                // log::info!("1111 RadyiumClmm input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
                 output_amount
             }
             PoolState::MeteoraDbc(state) => {
@@ -221,9 +221,8 @@ impl PoolState {
             }
             PoolState::OrcaWhirlpool(state) => {
                 let output_amount = state
-                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
-                    .await;
-                log::info!("1111111 OrcaWhirlpool input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
+                    .calculate_output_amount(input_token, input_amount);
+                // log::info!("1111 OrcaWhirlpool input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
                 output_amount
             }
         }

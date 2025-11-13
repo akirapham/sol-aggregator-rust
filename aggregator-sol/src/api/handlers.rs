@@ -277,54 +277,105 @@ pub async fn check_arbitrage(
         .calculate_arbitrage_profit(&swap_params, &token_b_key, request.slippage_bps)
         .await
     {
-        Some((profit, forward_route, reverse_route)) => {
-            let profit_percent = (profit as f64 / request.input_amount as f64) * 100.0;
+        Some((profit, forward_route, reverse_route, reverse )) => {
+            if reverse {
+                let profit_percent = (profit as f64 / request.input_amount as f64) * 100.0;
 
-            // Extract swap steps from forward route
-            let mut forward_steps: Vec<SwapStep> = vec![];
-            for path in &forward_route.paths {
-                for step in &path.steps {
-                    forward_steps.push(SwapStep {
-                        dex: step.dex,
-                        input_token: step.input_token.to_string(),
-                        output_token: step.output_token.to_string(),
-                        pool_address: step.pool_address.to_string(),
-                        input_amount: step.input_amount,
-                        output_amount: step.output_amount,
-                        percent: step.percent,
-                    });
+                // Extract swap steps from forward route
+                let mut forward_steps: Vec<SwapStep> = vec![];
+                for path in &reverse_route.paths {
+                    for step in &path.steps {
+                        forward_steps.push(SwapStep {
+                            dex: step.dex,
+                            input_token: step.input_token.to_string(),
+                            output_token: step.output_token.to_string(),
+                            pool_address: step.pool_address.to_string(),
+                            input_amount: step.input_amount,
+                            output_amount: step.output_amount,
+                            percent: step.percent,
+                        });
+                    }
                 }
+
+                // Extract swap steps from reverse route
+                let mut reverse_steps: Vec<SwapStep> = vec![];
+                for path in &forward_route.paths {
+                    for step in &path.steps {
+                        reverse_steps.push(SwapStep {
+                            dex: step.dex,
+                            input_token: step.input_token.to_string(),
+                            output_token: step.output_token.to_string(),
+                            pool_address: step.pool_address.to_string(),
+                            input_amount: step.input_amount,
+                            output_amount: step.output_amount,
+                            percent: step.percent,
+                        });
+                    }
+                }
+
+                let time_taken_ms = start_time.elapsed().as_millis() as u64;
+                let response = ArbitrageResponse {
+                    profitable: true,
+                    profit_amount: profit,
+                    profit_percent,
+                    forward_route: forward_steps,
+                    reverse_route: reverse_steps,
+                    forward_output: reverse_route.output_amount,
+                    reverse_output: forward_route.output_amount,
+                    time_taken_ms,
+                    context_slot: reverse_route.context_slot,
+                };
+                Ok(Json(response))
+            } else {
+                let profit_percent = (profit as f64 / request.input_amount as f64) * 100.0;
+
+                // Extract swap steps from forward route
+                let mut forward_steps: Vec<SwapStep> = vec![];
+                for path in &forward_route.paths {
+                    for step in &path.steps {
+                        forward_steps.push(SwapStep {
+                            dex: step.dex,
+                            input_token: step.input_token.to_string(),
+                            output_token: step.output_token.to_string(),
+                            pool_address: step.pool_address.to_string(),
+                            input_amount: step.input_amount,
+                            output_amount: step.output_amount,
+                            percent: step.percent,
+                        });
+                    }
+                }
+
+                // Extract swap steps from reverse route
+                let mut reverse_steps: Vec<SwapStep> = vec![];
+                for path in &reverse_route.paths {
+                    for step in &path.steps {
+                        reverse_steps.push(SwapStep {
+                            dex: step.dex,
+                            input_token: step.input_token.to_string(),
+                            output_token: step.output_token.to_string(),
+                            pool_address: step.pool_address.to_string(),
+                            input_amount: step.input_amount,
+                            output_amount: step.output_amount,
+                            percent: step.percent,
+                        });
+                    }
+                }
+
+                let time_taken_ms = start_time.elapsed().as_millis() as u64;
+                let response = ArbitrageResponse {
+                    profitable: true,
+                    profit_amount: profit,
+                    profit_percent,
+                    forward_route: forward_steps,
+                    reverse_route: reverse_steps,
+                    forward_output: forward_route.output_amount,
+                    reverse_output: reverse_route.output_amount,
+                    time_taken_ms,
+                    context_slot: forward_route.context_slot,
+                };
+                Ok(Json(response))
             }
 
-            // Extract swap steps from reverse route
-            let mut reverse_steps: Vec<SwapStep> = vec![];
-            for path in &reverse_route.paths {
-                for step in &path.steps {
-                    reverse_steps.push(SwapStep {
-                        dex: step.dex,
-                        input_token: step.input_token.to_string(),
-                        output_token: step.output_token.to_string(),
-                        pool_address: step.pool_address.to_string(),
-                        input_amount: step.input_amount,
-                        output_amount: step.output_amount,
-                        percent: step.percent,
-                    });
-                }
-            }
-
-            let time_taken_ms = start_time.elapsed().as_millis() as u64;
-            let response = ArbitrageResponse {
-                profitable: true,
-                profit_amount: profit,
-                profit_percent,
-                forward_route: forward_steps,
-                reverse_route: reverse_steps,
-                forward_output: forward_route.output_amount,
-                reverse_output: reverse_route.output_amount,
-                time_taken_ms,
-                context_slot: forward_route.context_slot,
-            };
-            Ok(Json(response))
         }
         None => {
             // No profitable arbitrage found

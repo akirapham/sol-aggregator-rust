@@ -5,6 +5,8 @@ mod arbitrage_monitor;
 mod config;
 mod constants;
 mod dex;
+mod on_chain_swap_executor;
+mod arbitrage_transaction_handler;
 mod error;
 mod fetchers;
 mod grpc;
@@ -21,6 +23,8 @@ use std::path::PathBuf;
 use std::env;
 use tokio::net::TcpListener;
 use tokio::signal;
+use solana_sdk::signer::keypair::read_keypair_file;
+use solana_sdk::signature::Signer;
 
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
@@ -133,10 +137,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await;
 
                 let aggregator_clone = aggregator.clone();
+                
+                // Load mainnet configuration
+                let rpc_url = env::var("SOLANA_RPC_URL")
+                    .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+                log::info!("Using Solana RPC: {}", rpc_url);
+
+                // Load keypair for transaction signing
+                let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
+                    .unwrap_or_else(|_| format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap_or_default()));
+                let keypair = read_keypair_file(&keypair_path).ok()?;
+                log::info!("Loaded keypair: {}", keypair.pubkey());
+
                 let monitor = ArbitrageMonitor::new(
                     aggregator_clone,
                     arb_config.clone(),
                     "rocksdb_data/arbitrage_opportunities",
+                    &rpc_url,
+                    Arc::new(keypair),
                 )
                 .expect("Failed to create arbitrage monitor");
 
@@ -231,8 +249,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-
-    // 3. Create and start the REST API server
+    
     // read port from env or default to 3000
     let port = std::env::var("API_PORT").unwrap_or_else(|_| "3000".into());
     log::info!("Starting REST API server on port {}...", port);

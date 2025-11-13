@@ -529,7 +529,7 @@ impl DexAggregator {
         token_a: &SwapParams,
         token_b_address: &Pubkey,
         slippage_bps: u16,
-    ) -> Option<(u64, SwapRoute, SwapRoute)> {
+    ) -> Option<(u64, SwapRoute, SwapRoute, bool)> {
         let exclude_pools: HashSet<Pubkey> = HashSet::new();
 
         // Step 1: Get best forward route from tokenA -> tokenB
@@ -573,13 +573,14 @@ impl DexAggregator {
 
         let final_token_a_amount = reverse_route.output_amount;
         
-        log::info!("AAAAAAAAAAAAAAAAAAAAAAAAA final_token_a_amount {}, token_a_amount {} token_b_amount {} token_a_address {} token_b_address {}", final_token_a_amount, token_a.input_amount, token_b_amount, token_a.input_token.address, token_b_address);
         // Step 5: Calculate profit
         if final_token_a_amount > token_a.input_amount {
             let profit = final_token_a_amount - token_a.input_amount;
-            Some((profit, forward_route, reverse_route))
+            Some((profit, forward_route, reverse_route, false))
         } else {
-            None
+            // None
+            let profit = token_a.input_amount - final_token_a_amount;
+            Some((profit, forward_route, reverse_route, true))
         }
     }
 

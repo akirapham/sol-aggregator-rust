@@ -794,7 +794,6 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolSwapEvent => |e: WhirlpoolSwapEvent| {
-                log::info!("22222222222222222 WhirlpoolSwapEvent: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -820,7 +819,6 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolSwapV2Event => |e: WhirlpoolSwapV2Event| {
-                log::info!("22222222222222222 WhirlpoolSwapV2Event: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -846,7 +844,6 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolDecreaseLiquidityV2Event => |e: WhirlpoolDecreaseLiquidityV2Event| {
-                log::info!("22222222222222222 WhirlpoolDecreaseLiquidityV2Event: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -872,7 +869,6 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolDecreaseLiquidityEvent => |e: WhirlpoolDecreaseLiquidityEvent| {
-                log::info!("22222222222222222 WhirlpoolDecreaseLiquidityEvent: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -898,7 +894,6 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolIncreaseLiquidityV2Event => |e: WhirlpoolIncreaseLiquidityV2Event| {
-                log::info!("22222222222222222 WhirlpoolIncreaseLiquidityV2Event: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -924,7 +919,6 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolIncreaseLiquidityEvent => |e: WhirlpoolIncreaseLiquidityEvent| {
-                log::info!("22222222222222222 WhirlpoolIncreaseLiquidityEvent: {:?}", e.whirlpool.to_string());
                 let reserve_a_balance = post_token_balances.get(e.token_vault_a.to_string().as_str());
                 let reserve_b_balance = post_token_balances.get(e.token_vault_b.to_string().as_str());
                 if let (Some(ra_b), Some(rb_b)) = (reserve_a_balance, reserve_b_balance) {
@@ -1196,7 +1190,6 @@ pub fn handle_dex_event(
             TokenInfoEvent => |e: TokenInfoEvent| {
             },
             WhirlpoolPoolStateAccountEvent => |e: WhirlpoolPoolStateAccountEvent| {
-                log::info!("22222222222222222 WhirlpoolPoolStateAccountEvent: {:?}", e.pubkey.to_string());
                 if is_base_token(&e.whirlpool_pool_state.token_mint_a.to_string()) || is_base_token(&e.whirlpool_pool_state.token_mint_b.to_string()) {
                     pool_update_events.push(PoolUpdateEvent::Whirlpool(
                     Box::new(WhirlpoolPoolUpdate {
@@ -1229,7 +1222,6 @@ pub fn handle_dex_event(
                 }
             },
             WhirlpoolTickArrayStateAccountEvent => |e: WhirlpoolTickArrayStateAccountEvent| {
-                log::info!("22222222222222222 WhirlpoolTickArrayStateAccountEvent: {:?}", e.tick_array_state.whirlpool.to_string());
                 pool_update_events.push(PoolUpdateEvent::Whirlpool(
                     Box::new(WhirlpoolPoolUpdate {
                         address:e.tick_array_state.whirlpool,
@@ -1246,7 +1238,6 @@ pub fn handle_dex_event(
                     })));
             },
             WhirlpoolOracleStateAccountEvent => |e: WhirlpoolOracleStateAccountEvent| {
-                log::info!("22222222222222222 WhirlpoolOracleStateAccountEvent: {:?}", e.oracle_state.whirlpool.to_string());
                 pool_update_events.push(PoolUpdateEvent::Whirlpool(
                     Box::new(WhirlpoolPoolUpdate {
                         address:e.oracle_state.whirlpool,

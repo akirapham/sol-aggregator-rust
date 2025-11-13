@@ -572,7 +572,7 @@ impl DexAggregator {
             .await?;
 
         let final_token_a_amount = reverse_route.output_amount;
-        
+
         // Step 5: Calculate profit
         if final_token_a_amount > token_a.input_amount {
             let profit = final_token_a_amount - token_a.input_amount;

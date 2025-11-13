@@ -1,12 +1,13 @@
 use crate::pool_data_types::orca::errors::ErrorCode;
-use crate::pool_data_types::orca::math::{increasing_price_order, sqrt_price_from_tick_index, U256Muldiv, Q64_RESOLUTION};
+use crate::pool_data_types::orca::math::{
+    increasing_price_order, sqrt_price_from_tick_index, U256Muldiv, Q64_RESOLUTION,
+};
 use anchor_lang::prelude::*;
 
 pub const TICK_ARRAY_SIZE: i32 = 88;
 pub const TICK_ARRAY_SIZE_USIZE: usize = 88;
 pub const MAX_TICK_INDEX: i32 = 443636;
 pub const MIN_TICK_INDEX: i32 = -443636;
-
 
 pub const MAX_TRADE_ENABLE_TIMESTAMP_DELTA: u64 = 60 * 60 * 72; // 72 hours
 

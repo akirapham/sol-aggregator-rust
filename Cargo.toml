@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/solana-streamer",
   "crates/mexc-proto",
+  "crates/eth-dex-quote",
   "aggregator-sol",
   "arbitrade",
   "amm-eth",

@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;

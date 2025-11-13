@@ -1,9 +1,6 @@
-use solana_sdk::{
-    signer::keypair::Keypair,
-    signer::Signer,
-};
-use solana_client::rpc_client::RpcClient;
 use serde::{Deserialize, Serialize};
+use solana_client::rpc_client::RpcClient;
+use solana_sdk::{signer::keypair::Keypair, signer::Signer};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -58,7 +55,10 @@ pub struct MainnetSimulator {
 impl MainnetSimulator {
     /// Create a new simulator connected to local validator or specified RPC
     pub async fn new(rpc_endpoint: &str) -> Self {
-        log::info!("Initializing MainnetSimulator with endpoint: {}", rpc_endpoint);
+        log::info!(
+            "Initializing MainnetSimulator with endpoint: {}",
+            rpc_endpoint
+        );
 
         let rpc_client = Arc::new(RpcClient::new(rpc_endpoint.to_string()));
         let test_keypair = Keypair::new();
@@ -77,7 +77,10 @@ impl MainnetSimulator {
         log::info!("Setting up test environment...");
 
         // Airdrop SOL to test keypair
-        match self.rpc_client.request_airdrop(&self.test_keypair.pubkey(), 10_000_000_000) {
+        match self
+            .rpc_client
+            .request_airdrop(&self.test_keypair.pubkey(), 10_000_000_000)
+        {
             Ok(sig) => {
                 log::info!("Airdropped SOL, signature: {}", sig);
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -101,9 +104,9 @@ impl MainnetSimulator {
                 pair_name: "SOL-USDC".to_string(),
                 token_a: "So11111111111111111111111111111111111111112".to_string(), // SOL
                 token_b: "EPjFWaLb3bSsKUMeDiVAYtEturS3562RLZT3CZJW3zL".to_string(), // USDC
-                input_amount: 1_000_000_000, // 1 SOL
-                forward_output: 150_000_000, // ~150 USDC
-                reverse_output: 1_010_000_000, // ~1.01 SOL
+                input_amount: 1_000_000_000,                                        // 1 SOL
+                forward_output: 150_000_000,                                        // ~150 USDC
+                reverse_output: 1_010_000_000,                                      // ~1.01 SOL
                 profit_amount: 10_000_000, // 0.01 SOL profit
                 profit_percent: 1.0,
                 detected_at: SystemTime::now()
@@ -115,9 +118,9 @@ impl MainnetSimulator {
                 pair_name: "USDC-USDT".to_string(),
                 token_a: "EPjFWaLb3bSsKUMeDiVAYtEturS3562RLZT3CZJW3zL".to_string(), // USDC
                 token_b: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenErt".to_string(), // USDT
-                input_amount: 100_000_000, // 100 USDC
-                forward_output: 99_500_000, // 99.5 USDT
-                reverse_output: 100_300_000, // 100.3 USDC
+                input_amount: 100_000_000,                                          // 100 USDC
+                forward_output: 99_500_000,                                         // 99.5 USDT
+                reverse_output: 100_300_000,                                        // 100.3 USDC
                 profit_amount: 300_000, // 0.3 USDC profit
                 profit_percent: 0.3,
                 detected_at: SystemTime::now()
@@ -234,12 +237,7 @@ impl MainnetSimulator {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Generate mock signature
-        let sig = format!(
-            "sim_{}_{}_{}",
-            swap_type,
-            &token_in[0..8],
-            &token_out[0..8]
-        );
+        let sig = format!("sim_{}_{}_{}", swap_type, &token_in[0..8], &token_out[0..8]);
 
         log::debug!("Simulated signature: {}", sig);
         Some(sig)
@@ -313,8 +311,16 @@ impl MainnetSimulator {
             } else {
                 "Failed".to_string()
             },
-            forward_signature_count: if result.forward_signature.is_some() { 1 } else { 0 },
-            reverse_signature_count: if result.reverse_signature.is_some() { 1 } else { 0 },
+            forward_signature_count: if result.forward_signature.is_some() {
+                1
+            } else {
+                0
+            },
+            reverse_signature_count: if result.reverse_signature.is_some() {
+                1
+            } else {
+                0
+            },
             total_gas_used: 5_000, // Mock gas calculation
             profit_realized: opportunity.profit_amount,
             started_at,
@@ -391,7 +397,7 @@ impl MainnetSimulator {
 pub struct MainnetForkSimulator {
     rpc_client: Arc<RpcClient>,
     test_keypair: Keypair,
-    fork_mode: bool,  // true = fork, false = live mainnet
+    fork_mode: bool, // true = fork, false = live mainnet
 }
 
 impl MainnetForkSimulator {
@@ -399,7 +405,8 @@ impl MainnetForkSimulator {
     pub async fn new(endpoint: &str, fork_mode: bool) -> Self {
         log::info!(
             "Initializing MainnetForkSimulator with endpoint: {} (fork: {})",
-            endpoint, fork_mode
+            endpoint,
+            fork_mode
         );
 
         let rpc_client = Arc::new(RpcClient::new(endpoint.to_string()));
@@ -417,7 +424,7 @@ impl MainnetForkSimulator {
     /// ========================================================================
     /// METHOD 1: Query Real Pool Data from Mainnet
     /// ========================================================================
-    /// 
+    ///
     /// This fetches actual Whirlpool/Raydium pools from mainnet and analyzes them
     /// for arbitrage opportunities. Uses real account data!
 
@@ -428,21 +435,21 @@ impl MainnetForkSimulator {
 
         // Example: Query Whirlpool SOL-USDC pool
         let whirlpool_address_str = "EaXdHx7S3D9FFCnd5SysCkST3qsKHn5CTZ5NvZScap9G";
-        
+
         // Parse address using Solana pubkey format
         match whirlpool_address_str.parse::<solana_sdk::pubkey::Pubkey>() {
             Ok(pool_pubkey) => {
                 match self.rpc_client.get_account_data(&pool_pubkey) {
                     Ok(_pool_data) => {
                         log::info!("✅ Found Whirlpool pool data");
-                        
+
                         // Parse pool state and check for arbitrage
                         opportunities.push(SimulatedOpportunity {
                             pair_name: "Real-Whirlpool-SOL-USDC".to_string(),
                             token_a: "So11111111111111111111111111111111111111112".to_string(),
                             token_b: "EPjFWaLb3bSsKUMeDiVAYtEturS3562RLZT3CZJW3zL".to_string(),
                             input_amount: 1_000_000_000,
-                            forward_output: 148_000_000,  // Real market price
+                            forward_output: 148_000_000, // Real market price
                             reverse_output: 1_015_000_000, // Real cross-pool price with arbitrage
                             profit_amount: 15_000_000,
                             profit_percent: 1.5,
@@ -487,7 +494,7 @@ impl MainnetForkSimulator {
                                 let price_i64 = i64::from_le_bytes(arr);
                                 let exponent = -8i32;
                                 let price = price_i64 as f64 * 10f64.powi(exponent);
-                                
+
                                 log::info!("Real SOL price: ${}", price);
                                 return Some(price);
                             }
@@ -518,7 +525,9 @@ impl MainnetForkSimulator {
     ) -> Option<(u64, u64)> {
         log::info!(
             "Simulating {} swap: {} -> {} on fork",
-            dex, token_in, token_out
+            dex,
+            token_in,
+            token_out
         );
 
         if !self.fork_mode {
@@ -549,7 +558,7 @@ impl MainnetForkSimulator {
         }
 
         // Create mock transaction (in real implementation, use actual transaction building)
-        let simulated_output = (amount as f64 * 1.495) as u64;  // 0.5% slippage
+        let simulated_output = (amount as f64 * 1.495) as u64; // 0.5% slippage
         log::info!("Simulated output: {}", simulated_output);
 
         Some((amount, simulated_output))
@@ -561,10 +570,15 @@ impl MainnetForkSimulator {
     ///
     /// This gets past transactions from actual swaps to analyze execution patterns
 
-    pub async fn get_historical_swaps(&self, pool_address: &str, limit: usize) -> Vec<(u64, u64, u64)> {
+    pub async fn get_historical_swaps(
+        &self,
+        pool_address: &str,
+        limit: usize,
+    ) -> Vec<(u64, u64, u64)> {
         log::info!(
             "Fetching historical swaps for pool: {} (limit: {})",
-            pool_address, limit
+            pool_address,
+            limit
         );
 
         let mut swaps = Vec::new();
@@ -575,17 +589,21 @@ impl MainnetForkSimulator {
             let timestamp = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() - (i as u64 * 60);  // Last N minutes
+                .as_secs()
+                - (i as u64 * 60); // Last N minutes
 
             let input_amount = 1_000_000 + (i as u64 * 100_000);
-            let output_amount = (input_amount as f64 * 0.995) as u64;  // 0.5% slippage
+            let output_amount = (input_amount as f64 * 0.995) as u64; // 0.5% slippage
             let gas_used = 5_000 + (i as u64 * 100);
 
             swaps.push((input_amount, output_amount, gas_used));
 
             log::debug!(
                 "Historical swap {}: {} → {} (gas: {})",
-                i, input_amount, output_amount, gas_used
+                i,
+                input_amount,
+                output_amount,
+                gas_used
             );
         }
 
@@ -620,7 +638,8 @@ impl MainnetForkSimulator {
 
                                 log::info!(
                                     "Pool reserves - Token A: {}, Token B: {}",
-                                    reserve_a, reserve_b
+                                    reserve_a,
+                                    reserve_b
                                 );
                                 return Some((reserve_a, reserve_b));
                             }
@@ -650,7 +669,8 @@ impl MainnetForkSimulator {
     ) -> Option<(u64, f64)> {
         log::info!(
             "Calculating arbitrage between pools: {} and {}",
-            pool_a_address, pool_b_address
+            pool_a_address,
+            pool_b_address
         );
 
         // Get reserves from both pools
@@ -674,12 +694,16 @@ impl MainnetForkSimulator {
 
             log::info!(
                 "✅ Arbitrage found! Profit: {} lamports ({:.2}%)",
-                profit, profit_percent
+                profit,
+                profit_percent
             );
 
             return Some((profit, profit_percent));
         } else {
-            log::info!("❌ No arbitrage (loss: {} lamports)", input_amount - final_output);
+            log::info!(
+                "❌ No arbitrage (loss: {} lamports)",
+                input_amount - final_output
+            );
         }
 
         None
@@ -692,10 +716,7 @@ impl MainnetForkSimulator {
     /// This tests transaction execution by simulating it on fork without
     /// actually submitting to mainnet (like ethers.js staticCall)
 
-    pub async fn dry_run_transaction(
-        &self,
-        _transaction_bytes: &[u8],
-    ) -> bool {
+    pub async fn dry_run_transaction(&self, _transaction_bytes: &[u8]) -> bool {
         log::info!("Dry running transaction on fork...");
 
         if !self.fork_mode {
@@ -719,26 +740,22 @@ impl MainnetForkSimulator {
         log::info!("Querying account info: {}", account_address);
 
         match account_address.parse::<solana_sdk::pubkey::Pubkey>() {
-            Ok(account_pubkey) => {
-                match self.rpc_client.get_account_data(&account_pubkey) {
-                    Ok(account_data) => {
-                        let lamports = self
-                            .rpc_client
-                            .get_balance(&account_pubkey)
-                            .unwrap_or(0);
+            Ok(account_pubkey) => match self.rpc_client.get_account_data(&account_pubkey) {
+                Ok(account_data) => {
+                    let lamports = self.rpc_client.get_balance(&account_pubkey).unwrap_or(0);
 
-                        let is_executable = account_data.is_empty() == false;
+                    let is_executable = account_data.is_empty() == false;
 
-                        log::info!(
-                            "Account info - Balance: {} lamports, Executable: {}",
-                            lamports, is_executable
-                        );
+                    log::info!(
+                        "Account info - Balance: {} lamports, Executable: {}",
+                        lamports,
+                        is_executable
+                    );
 
-                        return Some((lamports, is_executable));
-                    }
-                    Err(e) => log::warn!("Failed to fetch account info: {}", e),
+                    return Some((lamports, is_executable));
                 }
-            }
+                Err(e) => log::warn!("Failed to fetch account info: {}", e),
+            },
             Err(e) => log::warn!("Invalid account address: {}", e),
         }
 

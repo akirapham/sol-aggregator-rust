@@ -1,5 +1,5 @@
-use arbitrade_dex_eth::{ArbitrageDetector, DexWsClient, PriceCache};
 use anyhow::Result;
+use arbitrade_dex_eth::{ArbitrageDetector, DexWsClient, PriceCache};
 use dashmap::DashMap;
 use dotenv::dotenv;
 use env_logger::Env;
@@ -23,8 +23,8 @@ struct Config {
 
 impl Config {
     fn from_env() -> Self {
-        let amm_eth_ws_url = env::var("AMM_ETH_WS_URL")
-            .unwrap_or_else(|_| "ws://localhost:8080".to_string());
+        let amm_eth_ws_url =
+            env::var("AMM_ETH_WS_URL").unwrap_or_else(|_| "ws://localhost:8080".to_string());
 
         let min_profit_percent = env::var("MIN_PROFIT_PERCENT")
             .ok()
@@ -68,7 +68,10 @@ async fn main() -> Result<()> {
         "📊 Configuration: min_profit={}%, min_diff={} ETH, check_interval={}s",
         config.min_profit_percent, config.min_price_diff_eth, config.check_interval_secs
     );
-    info!("🔗 Connecting to amm-eth WebSocket: {}", config.amm_eth_ws_url);
+    info!(
+        "🔗 Connecting to amm-eth WebSocket: {}",
+        config.amm_eth_ws_url
+    );
 
     // Create price cache
     let price_cache = Arc::new(PriceCache::new());
@@ -95,7 +98,7 @@ async fn main() -> Result<()> {
             Err(e) => error!("WebSocket error: {}", e),
         }
     });
-    price_cache.get_stats();   
+    price_cache.get_stats();
 
     // Wait for initial connection
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -105,12 +108,11 @@ async fn main() -> Result<()> {
     let detector = ArbitrageDetector::new(
         price_cache.clone(),
         config.min_profit_percent,
-        config.min_price_diff_eth
+        config.min_price_diff_eth,
     );
 
-    let mut check_interval = tokio::time::interval(tokio::time::Duration::from_secs(
-        config.check_interval_secs,
-    ));
+    let mut check_interval =
+        tokio::time::interval(tokio::time::Duration::from_secs(config.check_interval_secs));
 
     info!("🎯 Starting arbitrage detection loop");
 

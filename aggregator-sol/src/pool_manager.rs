@@ -131,7 +131,7 @@ impl PoolStateManager {
     ) -> Self {
         // Load configuration from environment
         let config = ConfigLoader::load().expect("Failed to load configuration");
-        
+
         // Initialize RocksDB
         let db_path = "./rocksdb_data"; // Customize path as needed
         let mut opts = Options::default();
@@ -534,11 +534,17 @@ impl PoolStateManager {
                                                 });
                                             }
                                             Err(e) => {
-                                                log::error!(
-                                                    "Failed to fetch tick arrays for Orca Whirlpool {:?}: {:?}",
+                                                log::warn!(
+                                                    "Failed to fetch tick arrays for Orca Whirlpool {:?}: {:?}. Marking as synced anyway to allow routing.",
                                                     whirlpool_pool_state.address,
                                                     e
                                                 );
+                                                // Even if tick array fetch fails, mark as synced so the pool can be used for routing
+                                                // This allows routing with just the current pool state without full tick traversal
+                                                {
+                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
+                                                    tick_synced.insert(pool_id);
+                                                }
                                             }
                                         }
                                     }
@@ -1381,41 +1387,59 @@ impl PoolStateManager {
             match &pool_state {
                 PoolState::Pumpfun(_) => {
                     if !self.config.enable_pumpfun {
-                        log::debug!("Skipping Pumpfun pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping Pumpfun pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
                 }
                 PoolState::PumpSwap(_) => {
                     if !self.config.enable_pumpfun_swap {
-                        log::debug!("Skipping PumpSwap pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping PumpSwap pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
                 }
                 PoolState::RaydiumAmmV4(_) => {
                     if !self.config.enable_raydium_amm_v4 {
-                        log::debug!("Skipping Raydium AMM V4 pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping Raydium AMM V4 pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
                 }
                 PoolState::RaydiumCpmm(cpmm_pool_state) => {
                     if !self.config.enable_raydium_cpmm {
-                        log::debug!("Skipping Raydium CPMM pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping Raydium CPMM pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
                     raydium_cpmm_amm_configs_set.insert(cpmm_pool_state.amm_config);
                 }
                 PoolState::Bonk(_) => {
                     if !self.config.enable_bonk {
-                        log::debug!("Skipping Bonk pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping Bonk pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
                 }
                 PoolState::RadyiumClmm(clmm_pool_state) => {
                     if !self.config.enable_raydium_clmm {
-                        log::debug!("Skipping Raydium CLMM pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping Raydium CLMM pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
-                    
+
                     // add pool to pending pools to fetch tick arrays
                     let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
                     pending.insert(PoolForTickFetching {
@@ -1428,16 +1452,22 @@ impl PoolStateManager {
                 }
                 PoolState::MeteoraDbc(_) => {
                     if !self.config.enable_meteora_dbc {
-                        log::debug!("Skipping Meteora DBC pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping Meteora DBC pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
                 }
                 PoolState::OrcaWhirlpool(_) => {
                     if !self.config.enable_orca_whirlpools {
-                        log::debug!("Skipping OrcaWhirlpool pool {} - disabled in configuration", pool_address);
+                        log::debug!(
+                            "Skipping OrcaWhirlpool pool {} - disabled in configuration",
+                            pool_address
+                        );
                         continue;
                     }
-                    
+
                     // add pool to pending pools to fetch tick arrays
                     let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
                     pending.insert(PoolForTickFetching {

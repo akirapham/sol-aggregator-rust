@@ -7,17 +7,18 @@ mod fork_tests {
     /// ========================================================================
     /// OPTION 1: Test against Live Devnet
     /// ========================================================================
-    /// 
+    ///
     /// Uses real devnet pools (no setup needed, devnet is always running)
     /// Run with: DEVNET=1 cargo test --test mainnet_simulator test_devnet_pools
 
     #[tokio::test]
-    #[ignore]  // Ignore by default (requires network connection)
+    #[ignore] // Ignore by default (requires network connection)
     async fn test_devnet_pools() {
         let _ = env_logger::try_init();
         log::info!("Testing against live Mainnet pools");
 
-        let simulator = MainnetForkSimulator::new("https://api.mainnet-beta.solana.com", false).await;
+        let simulator =
+            MainnetForkSimulator::new("https://api.mainnet-beta.solana.com", false).await;
 
         // Try to fetch real devnet pool data
         let opportunities = simulator.detect_real_opportunities().await;
@@ -46,7 +47,7 @@ mod fork_tests {
     /// using real money!
 
     #[tokio::test]
-    #[ignore]  // Ignore by default (requires Amman running on localhost:8210)
+    #[ignore] // Ignore by default (requires Amman running on localhost:8210)
     async fn test_mainnet_fork() {
         let _ = env_logger::try_init();
         log::info!("Testing against forked mainnet");
@@ -69,21 +70,18 @@ mod fork_tests {
 
         // Test 3: Get pool reserves (constant product calculation)
         log::info!("=== Test 3: Query Pool Reserves ===");
-        let whirlpool_address = "EaXdHx7S3D9FFCnd5SysCkST3qsKHn5CTZ5NvZScap9G";  // Real SOL-USDC
+        let whirlpool_address = "EaXdHx7S3D9FFCnd5SysCkST3qsKHn5CTZ5NvZScap9G"; // Real SOL-USDC
         let reserves = simulator.get_pool_reserves(whirlpool_address).await;
         match reserves {
             Some((reserve_a, reserve_b)) => {
-                log::info!(
-                    "Pool reserves - A: {}, B: {}",
-                    reserve_a, reserve_b
-                );
+                log::info!("Pool reserves - A: {}, B: {}", reserve_a, reserve_b);
             }
             None => log::warn!("Could not fetch pool reserves"),
         }
 
         // Test 4: Calculate arbitrage using real reserves
         log::info!("=== Test 4: Calculate Real Arbitrage ===");
-        let pool_a = "EaXdHx7S3D9FFCnd5SysCkST3qsKHn5CTZ5NvZScap9G";  // Whirlpool SOL-USDC
+        let pool_a = "EaXdHx7S3D9FFCnd5SysCkST3qsKHn5CTZ5NvZScap9G"; // Whirlpool SOL-USDC
         let pool_b = "58oQChx4yWmvKePYLvj85FjqCkFf1HG5kJbBCYDq8Dw"; // Raydium SOL-USDC
         let input = 1_000_000_000; // 1 SOL
 
@@ -94,7 +92,8 @@ mod fork_tests {
             Some((profit, profit_percent)) => {
                 log::info!(
                     "✅ Real arbitrage found! Profit: {} ({:.2}%)",
-                    profit, profit_percent
+                    profit,
+                    profit_percent
                 );
                 assert!(profit > 0);
             }
@@ -110,7 +109,10 @@ mod fork_tests {
         for (i, (input, output, gas)) in swaps.iter().enumerate() {
             log::info!(
                 "Swap {}: input={}, output={}, gas={}",
-                i, input, output, gas
+                i,
+                input,
+                output,
+                gas
             );
         }
     }
@@ -126,12 +128,13 @@ mod fork_tests {
     /// Note: This is slower but requires no setup
 
     #[tokio::test]
-    #[ignore]  // Ignore by default (network call takes time)
+    #[ignore] // Ignore by default (network call takes time)
     async fn test_mainnet_readonly() {
         let _ = env_logger::try_init();
         log::info!("Testing against live mainnet (read-only)");
 
-        let simulator = MainnetForkSimulator::new("https://api.mainnet-beta.solana.com", false).await;
+        let simulator =
+            MainnetForkSimulator::new("https://api.mainnet-beta.solana.com", false).await;
 
         // Query real mainnet SOL/USD price from Pyth
         log::info!("=== Querying Real Mainnet Prices ===");
@@ -148,14 +151,11 @@ mod fork_tests {
 
         // Query real account balances
         log::info!("=== Querying Real Account Data ===");
-        let test_account = "11111111111111111111111111111111";  // System program
+        let test_account = "11111111111111111111111111111111"; // System program
         let account_info = simulator.get_account_info(test_account).await;
         match account_info {
             Some((balance, is_exec)) => {
-                log::info!(
-                    "Account - Balance: {}, Executable: {}",
-                    balance, is_exec
-                );
+                log::info!("Account - Balance: {}, Executable: {}", balance, is_exec);
             }
             None => {
                 log::warn!("Could not fetch account data");
@@ -185,21 +185,19 @@ mod fork_tests {
         let whirlpool = "EaXdHx7S3D9FFCnd5SysCkST3qsKHn5CTZ5NvZScap9G";
         match mainnet.get_pool_reserves(whirlpool).await {
             Some((reserve_a, reserve_b)) => {
-                log::info!(
-                    "Real pool reserves - A: {}, B: {}",
-                    reserve_a, reserve_b
-                );
+                log::info!("Real pool reserves - A: {}, B: {}", reserve_a, reserve_b);
 
                 // Now simulate swap with these real reserves
                 let input = 1_000_000_000;
 
                 // Using constant product formula: output = (input * reserve_out) / (reserve_in + input)
-                let output = (input as u128 * reserve_b as u128)
-                    / ((reserve_a as u128) + (input as u128));
+                let output =
+                    (input as u128 * reserve_b as u128) / ((reserve_a as u128) + (input as u128));
 
                 log::info!(
                     "Simulated swap: {} -> {} (using real reserves)",
-                    input, output
+                    input,
+                    output
                 );
 
                 // Verify output is reasonable (not more than input * 2)
@@ -267,7 +265,7 @@ mod fork_tests {
 
         log::info!("\n📊 STEP 1: Detecting Arbitrage Opportunities");
         let opportunities = simulator.detect_real_opportunities().await;
-        
+
         if opportunities.is_empty() {
             log::warn!("⚠️ No opportunities detected on fork. Make sure Amman fork is running:");
             log::warn!("   amman start --fork mainnet-beta");
@@ -303,7 +301,8 @@ mod fork_tests {
         log::info!("\n💰 STEP 3: Validating Slippage Protection");
         let slippage_bps = 500; // 5% slippage tolerance
         let expected_output = opp.forward_output;
-        let minimum_output = (expected_output as f64 * (1.0 - (slippage_bps as f64 / 10000.0))) as u64;
+        let minimum_output =
+            (expected_output as f64 * (1.0 - (slippage_bps as f64 / 10000.0))) as u64;
 
         log::info!(
             "Forward swap expectations:\n\
@@ -314,10 +313,7 @@ mod fork_tests {
             slippage_bps as f64 / 100.0,
             minimum_output
         );
-        assert!(
-            minimum_output > 0,
-            "Minimum output cannot be zero"
-        );
+        assert!(minimum_output > 0, "Minimum output cannot be zero");
         log::info!("✅ Slippage parameters valid");
 
         // Test reverse swap
@@ -375,9 +371,13 @@ mod fork_tests {
                     "Pool A reserves:\n\
                      Token A: {}\n\
                      Token B: {}",
-                    reserve_a, reserve_b
+                    reserve_a,
+                    reserve_b
                 );
-                assert!(reserve_a > 0 && reserve_b > 0, "Pool reserves must be positive");
+                assert!(
+                    reserve_a > 0 && reserve_b > 0,
+                    "Pool reserves must be positive"
+                );
                 log::info!("✅ Pool A has sufficient liquidity");
             }
             None => {
@@ -387,7 +387,10 @@ mod fork_tests {
 
         // Verify constant product formula works
         log::info!("\n🔬 STEP 7: Validating Swap Calculation");
-        match simulator.calculate_real_arbitrage(pool_a, pool_b, opp.input_amount).await {
+        match simulator
+            .calculate_real_arbitrage(pool_a, pool_b, opp.input_amount)
+            .await
+        {
             Some((calculated_profit, calculated_percent)) => {
                 log::info!(
                     "Calculated arbitrage:\n\
@@ -397,8 +400,10 @@ mod fork_tests {
                     calculated_percent
                 );
                 // Profit might be slightly different due to fees, but should be in same ballpark
-                let profit_variance = ((calculated_profit as i64 - opp.profit_amount as i64).abs() as f64
-                    / opp.profit_amount as f64 * 100.0);
+                let profit_variance = ((calculated_profit as i64 - opp.profit_amount as i64).abs()
+                    as f64
+                    / opp.profit_amount as f64
+                    * 100.0);
                 log::info!("Variance from detected: {:.2}%", profit_variance);
                 log::info!("✅ Arbitrage calculation validated");
             }
@@ -467,7 +472,8 @@ mod fork_tests {
         log::info!("=== ARBITRAGE SWAP TRANSACTION TEST (Live Mainnet) ===");
 
         // Connect to live mainnet
-        let simulator = MainnetForkSimulator::new("https://api.mainnet-beta.solana.com", false).await;
+        let simulator =
+            MainnetForkSimulator::new("https://api.mainnet-beta.solana.com", false).await;
 
         log::info!("\n📊 Detecting opportunities on live mainnet (this may take a moment)...");
         let opportunities = simulator.detect_real_opportunities().await;
@@ -494,14 +500,21 @@ mod fork_tests {
             assert!(!opp.pair_name.is_empty(), "Pair name should not be empty");
             assert!(opp.input_amount > 0, "Input amount should be positive");
             assert!(opp.profit_amount > 0, "Profit should be positive");
-            assert!(opp.profit_percent > 0.0, "Profit percent should be positive");
+            assert!(
+                opp.profit_percent > 0.0,
+                "Profit percent should be positive"
+            );
             assert!(opp.forward_output > 0, "Forward output should be positive");
             assert!(opp.reverse_output > 0, "Reverse output should be positive");
 
             // Check slippage protection
             let slippage_bps = 500;
-            let min_output = (opp.forward_output as f64 * (1.0 - (slippage_bps as f64 / 10000.0))) as u64;
-            assert!(min_output > 0, "Slippage protection should leave positive output");
+            let min_output =
+                (opp.forward_output as f64 * (1.0 - (slippage_bps as f64 / 10000.0))) as u64;
+            assert!(
+                min_output > 0,
+                "Slippage protection should leave positive output"
+            );
 
             log::info!("✅ Opportunity #{} validated", i + 1);
         }

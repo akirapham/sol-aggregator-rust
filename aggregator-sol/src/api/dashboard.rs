@@ -49,19 +49,20 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 let status_html = match &opp.status {
                     crate::arbitrage_monitor::OpportunityStatus::Completed => {
                         let swapped_secs = opp.swapped_at;
-                        let swapped_timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(swapped_secs);
+                        let swapped_timestamp =
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(swapped_secs);
                         let swapped_datetime = format!("{:?}", swapped_timestamp);
                         format!("<span class='status-badge completed'>✅ Completed<br><small>{}</small></span>", swapped_datetime)
-                    },
+                    }
                     crate::arbitrage_monitor::OpportunityStatus::Executing => {
                         "<span class='status-badge executing'>🔄 Executing</span>".to_string()
-                    },
+                    }
                     crate::arbitrage_monitor::OpportunityStatus::Failed => {
                         "<span class='status-badge failed'>❌ Failed</span>".to_string()
-                    },
+                    }
                     crate::arbitrage_monitor::OpportunityStatus::Pending => {
                         "<span class='status-badge pending'>⏳ Pending</span>".to_string()
-                    },
+                    }
                 };
 
                 opp_html.push_str(&format!(

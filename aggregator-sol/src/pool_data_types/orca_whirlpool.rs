@@ -1,23 +1,22 @@
-use std::{collections::HashMap, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
-    parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::TickArrayState, types::OracleState
+    parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::OracleState, types::TickArrayState,
+};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
     constants::is_base_token,
-    pool_data_types::{
-        GetAmmConfig, PoolUpdateEventType, orca::fee_rate_manager::FeeRateManager
-    },
+    pool_data_types::{orca::fee_rate_manager::FeeRateManager, GetAmmConfig, PoolUpdateEventType},
     utils::tokens_equal,
 };
 
-use crate::pool_data_types::orca::{
-    math::*,
-    state::*,
-};
+use crate::pool_data_types::orca::{math::*, state::*};
 
 // Whirlpool sqrt price limits (same as Raydium CLMM)
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
@@ -95,24 +94,20 @@ impl WhirlpoolPoolState {
     }
 
     /// Calculate output amount for Whirlpool swap using compute_swap_simplified
-    /// 
+    ///
     /// Uses the core compute_swap_simplified() function which mirrors the official
     /// Whirlpool SDK's pub fn swap() (swap_manager.rs lines 29-244).
-    /// 
+    ///
     /// This simplified implementation provides:
     /// - Exact input mode: Input fixed, output calculated
     /// - Core swap computation with official math
     /// - Proper fee deduction
     /// - Price limit validation
     /// - Direction-aware price movements
-    /// 
+    ///
     /// For multi-tick traversal with dynamic fees and liquidity updates,
     /// use the full loop implementation below (kept as reference).
-    pub fn calculate_output_amount(
-        &self,
-        input_token: &Pubkey,
-        input_amount: u64,
-    ) -> u64 {
+    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
         // Input validation
         let a_to_b = tokens_equal(input_token, &self.token_mint_a);
         if self.sqrt_price == 0 || self.liquidity == 0 || input_amount == 0 {
@@ -136,13 +131,13 @@ impl WhirlpoolPoolState {
         // Call compute_swap_simplified with current pool state
         // This executes the core swap computation from the official Whirlpool SDK
         match compute_swap_simplified(
-            input_amount,              // Exact input amount
-            sqrt_price_limit,          // Price limit (MIN for A→B, MAX for B→A)
-            true,                      // amount_specified_is_input = true (exact input mode)
-            a_to_b,                    // Direction: true = A→B, false = B→A
-            self.fee_rate,             // Static fee rate
-            self.sqrt_price,           // Current pool price in Q64 format
-            self.liquidity,            // Current pool liquidity
+            input_amount,     // Exact input amount
+            sqrt_price_limit, // Price limit (MIN for A→B, MAX for B→A)
+            true,             // amount_specified_is_input = true (exact input mode)
+            a_to_b,           // Direction: true = A→B, false = B→A
+            self.fee_rate,    // Static fee rate
+            self.sqrt_price,  // Current pool price in Q64 format
+            self.liquidity,   // Current pool liquidity
         ) {
             Ok(result) => {
                 // Log swap details for debugging
@@ -160,9 +155,9 @@ impl WhirlpoolPoolState {
                 //   amount_a = input - fees
                 //   amount_b = output calculated
                 if a_to_b {
-                    result.amount_b  // Output is token B when A→B
+                    result.amount_b // Output is token B when A→B
                 } else {
-                    result.amount_a  // Output is token A when B→A
+                    result.amount_a // Output is token A when B→A
                 }
             }
             Err(e) => {
@@ -237,7 +232,7 @@ struct SwapStepResult {
 }
 
 /// Implements the core compute_swap logic matching official Whirlpool SDK
-/// 
+///
 /// This function mirrors: pub fn swap(
 ///     whirlpool: &Whirlpool,
 ///     swap_tick_sequence: &mut SwapTickSequence,
@@ -259,7 +254,7 @@ struct SwapStepResult {
 /// 7. a_to_b: bool - Constant direction flag (Token A→B vs B→A)
 ///
 /// Documentation of the swap loop structure:
-/// 
+///
 /// OUTER LOOP (lines 102-216 in official):
 ///   while amount_remaining > 0 && adjusted_sqrt_price_limit != curr_sqrt_price
 ///   - Finds next initialized tick
@@ -302,7 +297,9 @@ pub fn compute_swap_simplified(
     };
 
     // Validate price bounds
-    if adjusted_sqrt_price_limit < MIN_SQRT_PRICE_X64 || adjusted_sqrt_price_limit > MAX_SQRT_PRICE_X64 {
+    if adjusted_sqrt_price_limit < MIN_SQRT_PRICE_X64
+        || adjusted_sqrt_price_limit > MAX_SQRT_PRICE_X64
+    {
         return Err("SqrtPriceOutOfBounds".to_string());
     }
 
@@ -327,7 +324,7 @@ pub fn compute_swap_simplified(
     // SIMPLIFIED VERSION: Single step (not multi-step like official)
     // Uses fee_rate directly instead of dynamic FeeRateManager
     // For multi-step swaps, would need full tick tracking and liquidity updates
-    
+
     // Execute single swap step with base fee rate
     let swap_computation = compute_swap(
         amount_remaining,
@@ -337,7 +334,8 @@ pub fn compute_swap_simplified(
         adjusted_sqrt_price_limit,
         amount_specified_is_input,
         a_to_b,
-    ).map_err(|e| format!("Swap step failed: {:?}", e))?;
+    )
+    .map_err(|e| format!("Swap step failed: {:?}", e))?;
 
     // Update amounts based on swap mode - mirror official logic (lines 125-141)
     if amount_specified_is_input {

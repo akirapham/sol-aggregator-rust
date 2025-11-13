@@ -191,37 +191,44 @@ impl PoolState {
     ) -> u64 {
         match self {
             PoolState::Pumpfun(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                let output_amount =
+                    state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
                 output_amount
             }
             PoolState::PumpSwap(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                let output_amount =
+                    state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
                 output_amount
             }
             PoolState::RaydiumAmmV4(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                let output_amount =
+                    state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
                 output_amount
             }
             PoolState::RaydiumCpmm(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                let output_amount =
+                    state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
                 output_amount
             }
             PoolState::Bonk(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                let output_amount =
+                    state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
                 output_amount
             }
             PoolState::RadyiumClmm(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher).await;
+                let output_amount = state
+                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .await;
                 // log::info!("1111 RadyiumClmm input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
                 output_amount
             }
             PoolState::MeteoraDbc(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
+                let output_amount =
+                    state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher);
                 output_amount
             }
             PoolState::OrcaWhirlpool(state) => {
-                let output_amount = state
-                    .calculate_output_amount(input_token, input_amount);
+                let output_amount = state.calculate_output_amount(input_token, input_amount);
                 // log::info!("1111 OrcaWhirlpool input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
                 output_amount
             }

@@ -30,10 +30,7 @@ impl fmt::Display for PoolPrice {
         write!(
             f,
             "{} ({}@{}) - ${:.6}/ETH",
-            self.token_address,
-            self.dex_version,
-            self.pool_address,
-            self.price_in_eth
+            self.token_address, self.dex_version, self.pool_address, self.price_in_eth
         )
     }
 }

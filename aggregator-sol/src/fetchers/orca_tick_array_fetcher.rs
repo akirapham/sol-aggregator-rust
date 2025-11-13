@@ -34,7 +34,10 @@ pub struct AdaptiveFeeConstants {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Oracle {
     pub discriminator: [u8; 8],
-    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
     pub whirlpool: Pubkey,
     pub trade_enable_timestamp: u64,
     pub adaptive_fee_constants: AdaptiveFeeConstants,
@@ -53,7 +56,6 @@ pub struct AdaptiveFeeVariables {
     pub volatility_accumulator: u32,
     pub reserved: [u8; 16],
 }
-
 
 #[allow(unused)]
 #[derive(Clone, Debug)]
@@ -523,7 +525,8 @@ impl OrcaTickArrayFetcher {
 
 pub fn get_oracle_address(whirlpool: &Pubkey) -> (Pubkey, u8) {
     let seeds: &[&[u8]; 2] = &[b"oracle", whirlpool.as_ref()];
-    let program_id = Pubkey::from_str(&ORCA_WHIRLPOOL_PROGRAM_ID.to_string()).unwrap_or_else(|_| Pubkey::default());
+    let program_id = Pubkey::from_str(&ORCA_WHIRLPOOL_PROGRAM_ID.to_string())
+        .unwrap_or_else(|_| Pubkey::default());
     Pubkey::try_find_program_address(seeds, &program_id).unwrap()
 }
 

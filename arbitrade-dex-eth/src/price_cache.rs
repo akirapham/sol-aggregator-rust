@@ -1,10 +1,10 @@
+use crate::types::PoolPrice;
 use dashmap::DashMap;
+use ethers::types::Address;
 use log::info;
 use std::collections::HashMap;
-use std::sync::Arc;
-use crate::types::PoolPrice;
-use ethers::types::Address;
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// Thread-safe in-memory price cache for all pools
 /// Indexed by token address, then by pool address
@@ -25,7 +25,7 @@ impl PriceCache {
     pub fn update_price(&self, pool_price: PoolPrice) {
         let token_addr = pool_price.token_address.to_string().to_lowercase();
         let pool_addr = pool_price.pool_address.to_string().to_lowercase();
-        
+
         self.prices
             .entry(token_addr)
             .or_insert_with(HashMap::new)
@@ -35,17 +35,23 @@ impl PriceCache {
     /// Get the best (lowest) price for a token across all pools
     pub fn get_best_buy_price(&self, token_address: &Address) -> Option<PoolPrice> {
         let token_addr = token_address.to_string().to_lowercase();
-        self.prices
-            .get(&token_addr)
-            .and_then(|pools| pools.values().min_by(|a, b| a.price_in_eth.partial_cmp(&b.price_in_eth).unwrap()).cloned())
+        self.prices.get(&token_addr).and_then(|pools| {
+            pools
+                .values()
+                .min_by(|a, b| a.price_in_eth.partial_cmp(&b.price_in_eth).unwrap())
+                .cloned()
+        })
     }
 
     /// Get the worst (highest) price for a token across all pools
     pub fn get_best_sell_price(&self, token_address: &Address) -> Option<PoolPrice> {
         let token_addr = token_address.to_string().to_lowercase();
-        self.prices
-            .get(&token_addr)
-            .and_then(|pools| pools.values().max_by(|a, b| a.price_in_eth.partial_cmp(&b.price_in_eth).unwrap()).cloned())
+        self.prices.get(&token_addr).and_then(|pools| {
+            pools
+                .values()
+                .max_by(|a, b| a.price_in_eth.partial_cmp(&b.price_in_eth).unwrap())
+                .cloned()
+        })
     }
 
     /// Get all prices for a token
@@ -88,7 +94,9 @@ impl PriceCache {
         let min_timestamp = now.saturating_sub(max_age_seconds);
 
         for mut entry in self.prices.iter_mut() {
-            entry.value_mut().retain(|_, price| price.last_updated >= min_timestamp);
+            entry
+                .value_mut()
+                .retain(|_, price| price.last_updated >= min_timestamp);
 
             // Remove token entry if no prices left
             if entry.value().is_empty() {

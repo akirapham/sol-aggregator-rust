@@ -76,7 +76,13 @@ impl ArbitrageDetector {
                 token_address
             );
             for (idx, opp) in opportunities.iter().take(3).enumerate() {
-                info!("  #{}: {} - {:.2}% profit ({:.6} ETH)", idx + 1, opp, opp.price_diff_percent, opp.potential_profit_eth);
+                info!(
+                    "  #{}: {} - {:.2}% profit ({:.6} ETH)",
+                    idx + 1,
+                    opp,
+                    opp.price_diff_percent,
+                    opp.potential_profit_eth
+                );
             }
         }
 
@@ -98,8 +104,7 @@ impl ArbitrageDetector {
         let price_diff_percent = (price_diff_eth / buy_pool.price_in_eth) * 100.0;
 
         // Filter by minimum thresholds
-        if price_diff_percent < self.min_profit_percent
-            || price_diff_eth < self.min_price_diff_eth
+        if price_diff_percent < self.min_profit_percent || price_diff_eth < self.min_price_diff_eth
         {
             return None;
         }
@@ -110,9 +115,9 @@ impl ArbitrageDetector {
             .as_secs();
 
         let potential_profit_eth = price_diff_eth;
-        let potential_profit_usd = sell_pool.price_in_usd.and_then(|sell_usd| {
-            buy_pool.price_in_usd.map(|buy_usd| sell_usd - buy_usd)
-        });
+        let potential_profit_usd = sell_pool
+            .price_in_usd
+            .and_then(|sell_usd| buy_pool.price_in_usd.map(|buy_usd| sell_usd - buy_usd));
 
         Some(DexArbitrageOpportunity {
             token_address: buy_pool.token_address,
@@ -167,16 +172,14 @@ mod tests {
         let cache = Arc::new(PriceCache::new());
         let detector = ArbitrageDetector::new(cache.clone(), 1.0, 0.001);
 
-        let token = Address::from_str("0x1234567890123456789012345678901234567890")
-            .unwrap();
+        let token = Address::from_str("0x1234567890123456789012345678901234567890").unwrap();
 
         // Create two pools with different prices
         let buy_pool = PoolPrice {
             token_address: token,
             price_in_eth: 1.0,
             price_in_usd: Some(2000.0),
-            pool_address: Address::from_str("0x0000000000000000000000000000000000000001")
-                .unwrap(),
+            pool_address: Address::from_str("0x0000000000000000000000000000000000000001").unwrap(),
             dex_version: "UniswapV2".to_string(),
             decimals: 18,
             last_updated: 100,
@@ -187,8 +190,7 @@ mod tests {
         let sell_pool = PoolPrice {
             price_in_eth: 1.02, // 2% more expensive
             price_in_usd: Some(2040.0),
-            pool_address: Address::from_str("0x0000000000000000000000000000000000000002")
-                .unwrap(),
+            pool_address: Address::from_str("0x0000000000000000000000000000000000000002").unwrap(),
             ..buy_pool.clone()
         };
 
@@ -197,7 +199,9 @@ mod tests {
 
         let opportunities = detector.find_opportunities(&token);
         assert_eq!(opportunities.len(), 1);
-        assert!(opportunities[0].price_diff_percent > 1.9 && opportunities[0].price_diff_percent < 2.1);
+        assert!(
+            opportunities[0].price_diff_percent > 1.9 && opportunities[0].price_diff_percent < 2.1
+        );
     }
 }
 

@@ -1,35 +1,5 @@
+use eth_dex_quote::EthChain;
 use ethers::types::Address;
-use serde::{Deserialize, Serialize};
-
-/// Token price information stored in memory
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenPrice {
-    pub token_address: Address,
-    pub price_in_eth: f64,
-    pub price_in_usd: Option<f64>,
-    pub last_updated: u64,
-    pub pool_address: Address,
-    pub dex_version: DexVersion,
-    pub decimals: u8,
-}
-
-/// DEX version identifier
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum DexVersion {
-    UniswapV2,
-    UniswapV3,
-    UniswapV4,
-}
-
-impl std::fmt::Display for DexVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DexVersion::UniswapV2 => write!(f, "UniswapV2"),
-            DexVersion::UniswapV3 => write!(f, "UniswapV3"),
-            DexVersion::UniswapV4 => write!(f, "UniswapV4"),
-        }
-    }
-}
 
 use std::sync::{Arc, RwLock};
 
@@ -46,6 +16,7 @@ pub struct EthConfig {
     pub native_address: Address,
     /// Shared ETH price updated from Binance WebSocket
     pub eth_price_usd: Arc<RwLock<Option<f64>>>,
+    pub eth_chain: EthChain,
 }
 
 impl Default for EthConfig {
@@ -75,6 +46,7 @@ impl Default for EthConfig {
                 .unwrap(),
             // ETH price will be updated from Binance WebSocket
             eth_price_usd: Arc::new(RwLock::new(None)),
+            eth_chain: EthChain::Mainnet,
         }
     }
 }

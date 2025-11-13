@@ -1,25 +1,19 @@
+use log;
+use serde::{Deserialize, Serialize};
+use solana_client::rpc_client::RpcClient;
 /// On-Chain Swap Execution Module
-/// 
+///
 /// Executes actual on-chain swaps by calling the swap functions from:
 /// - Whirlpools swap_manager.rs
 /// - Raydium CLMM swap instruction
 /// - Raydium CPMM swap instruction
 /// - Raydium AMM V4 swap instruction
-/// 
+///
 /// This module builds and submits actual transactions to the blockchain
-
 use solana_sdk::{
-    pubkey::Pubkey,
-    transaction::Transaction,
-    signer::Signer,
-    signer::keypair::Keypair,
-    hash::Hash,
-    message::Message,
-    instruction::Instruction,
+    hash::Hash, instruction::Instruction, message::Message, pubkey::Pubkey,
+    signer::keypair::Keypair, signer::Signer, transaction::Transaction,
 };
-use solana_client::rpc_client::RpcClient;
-use serde::{Deserialize, Serialize};
-use log;
 use std::str::FromStr;
 
 use crate::pool_data_types::DexType;
@@ -62,7 +56,7 @@ pub struct OrcaWhirlpoolSwapExecutor;
 impl OrcaWhirlpoolSwapExecutor {
     // Official Whirlpool Program ID
     const WHIRLPOOL_PROGRAM_ID: &'static str = "whirLbMiicVdio4KfUadKvucOnAjzGUUtnCiAsx5Lac";
-    
+
     // Swap v2 instruction discriminator (8 bytes)
     const SWAP_V2_DISCRIMINATOR: &'static [u8] = &[206, 176, 202, 18, 50, 56, 195, 174];
 
@@ -74,7 +68,11 @@ impl OrcaWhirlpoolSwapExecutor {
     ) -> Result<Instruction, String> {
         log::info!("🔄 Building Whirlpool swap v2 instruction using official SDK");
         log::info!("  Pool: {}", params.pool_address);
-        log::info!("  Input: {} → min {}", params.input_amount, params.min_output_amount);
+        log::info!(
+            "  Input: {} → min {}",
+            params.input_amount,
+            params.min_output_amount
+        );
 
         let program_id = Pubkey::from_str(Self::WHIRLPOOL_PROGRAM_ID)
             .map_err(|e| format!("Invalid Whirlpool program ID: {}", e))?;
@@ -92,7 +90,13 @@ impl OrcaWhirlpoolSwapExecutor {
         instruction_data.extend_from_slice(&params.min_output_amount.to_le_bytes());
         instruction_data.extend_from_slice(&[0u8; 16]); // sqrt_price_limit = 0 (no price limit)
         instruction_data.push(1); // amount_specified_is_input = true (exact input mode)
-        instruction_data.push(if params.input_token_mint.to_string() < params.output_token_mint.to_string() { 1 } else { 0 }); // a_to_b
+        instruction_data.push(
+            if params.input_token_mint.to_string() < params.output_token_mint.to_string() {
+                1
+            } else {
+                0
+            },
+        ); // a_to_b
 
         // Build swap_v2 accounts in order:
         // 0. token_program_a (SPL Token or Token2022)
@@ -129,17 +133,28 @@ impl OrcaWhirlpoolSwapExecutor {
 
         // Add tick arrays (up to 3)
         for tick_array in tick_arrays.iter().take(3) {
-            accounts.push(solana_sdk::instruction::AccountMeta::new(*tick_array, false));
+            accounts.push(solana_sdk::instruction::AccountMeta::new(
+                *tick_array,
+                false,
+            ));
         }
         // Fill missing tick arrays with default pubkey
         while accounts.len() < 14 {
-            accounts.push(solana_sdk::instruction::AccountMeta::new_readonly(Pubkey::default(), false));
+            accounts.push(solana_sdk::instruction::AccountMeta::new_readonly(
+                Pubkey::default(),
+                false,
+            ));
         }
 
         // Add oracle account
-        accounts.push(solana_sdk::instruction::AccountMeta::new_readonly(oracle, false));
+        accounts.push(solana_sdk::instruction::AccountMeta::new_readonly(
+            oracle, false,
+        ));
 
-        log::info!("✅ Whirlpool swap v2 instruction built with {} accounts", accounts.len());
+        log::info!(
+            "✅ Whirlpool swap v2 instruction built with {} accounts",
+            accounts.len()
+        );
 
         Ok(Instruction {
             program_id,
@@ -168,10 +183,7 @@ impl OrcaWhirlpoolSwapExecutor {
         log::info!("✅ Swap instruction generated from official SDK format");
 
         // Create and sign transaction
-        let mut tx = Transaction::new_unsigned(Message::new(
-            &[swap_instr],
-            Some(&payer.pubkey()),
-        ));
+        let mut tx = Transaction::new_unsigned(Message::new(&[swap_instr], Some(&payer.pubkey())));
 
         tx.sign(&[payer], recent_blockhash);
 
@@ -219,7 +231,11 @@ impl RaydiumClmmSwapExecutor {
     ) -> Result<Instruction, String> {
         log::info!("🔄 Building Raydium CLMM swap instruction");
         log::info!("  Pool: {}", params.pool_address);
-        log::info!("  Input: {} → min {}", params.input_amount, params.min_output_amount);
+        log::info!(
+            "  Input: {} → min {}",
+            params.input_amount,
+            params.min_output_amount
+        );
 
         let program_id = Pubkey::from_str(Self::PROGRAM_ID)
             .map_err(|e| format!("Invalid CLMM program ID: {}", e))?;
@@ -243,7 +259,10 @@ impl RaydiumClmmSwapExecutor {
             accounts.push(solana_sdk::instruction::AccountMeta::new(tick_array, false));
         }
 
-        log::info!("✅ CLMM swap instruction built with {} accounts", accounts.len());
+        log::info!(
+            "✅ CLMM swap instruction built with {} accounts",
+            accounts.len()
+        );
 
         Ok(Instruction {
             program_id,
@@ -316,7 +335,11 @@ impl RaydiumCpmmSwapExecutor {
     fn build_swap_instruction(params: &OnChainSwapParams) -> Result<Instruction, String> {
         log::info!("🔄 Building Raydium CPMM swap instruction");
         log::info!("  Pool: {}", params.pool_address);
-        log::info!("  Input: {} → min {}", params.input_amount, params.min_output_amount);
+        log::info!(
+            "  Input: {} → min {}",
+            params.input_amount,
+            params.min_output_amount
+        );
 
         let program_id = Pubkey::from_str(Self::PROGRAM_ID)
             .map_err(|e| format!("Invalid CPMM program ID: {}", e))?;
@@ -333,7 +356,10 @@ impl RaydiumCpmmSwapExecutor {
             solana_sdk::instruction::AccountMeta::new(params.user_output_ata, false),
         ];
 
-        log::info!("✅ CPMM swap instruction built with {} accounts", accounts.len());
+        log::info!(
+            "✅ CPMM swap instruction built with {} accounts",
+            accounts.len()
+        );
 
         Ok(Instruction {
             program_id,
@@ -405,7 +431,11 @@ impl RaydiumAmmV4SwapExecutor {
     fn build_swap_instruction(params: &OnChainSwapParams) -> Result<Instruction, String> {
         log::info!("🔄 Building Raydium AMM V4 swap instruction");
         log::info!("  Pool: {}", params.pool_address);
-        log::info!("  Input: {} → min {}", params.input_amount, params.min_output_amount);
+        log::info!(
+            "  Input: {} → min {}",
+            params.input_amount,
+            params.min_output_amount
+        );
 
         let program_id = Pubkey::from_str(Self::PROGRAM_ID)
             .map_err(|e| format!("Invalid AMM V4 program ID: {}", e))?;
@@ -422,7 +452,10 @@ impl RaydiumAmmV4SwapExecutor {
             solana_sdk::instruction::AccountMeta::new(params.user_output_ata, false),
         ];
 
-        log::info!("✅ AMM V4 swap instruction built with {} accounts", accounts.len());
+        log::info!(
+            "✅ AMM V4 swap instruction built with {} accounts",
+            accounts.len()
+        );
 
         Ok(Instruction {
             program_id,
@@ -495,8 +528,10 @@ impl OnChainArbitrageExecutor {
         rpc_client: &RpcClient,
         additional_params: Option<Vec<Pubkey>>,
     ) -> Result<OnChainSwapResult, String> {
-        log::info!("🔄 FORWARD SWAP: {} → {}", 
-            params.input_token_mint, params.output_token_mint
+        log::info!(
+            "🔄 FORWARD SWAP: {} → {}",
+            params.input_token_mint,
+            params.output_token_mint
         );
 
         match params.dex_type {
@@ -509,24 +544,33 @@ impl OnChainArbitrageExecutor {
                 };
                 let ta = tick_arrays[..3.min(tick_arrays.len())].to_vec();
                 OrcaWhirlpoolSwapExecutor::execute_swap(
-                    params, ta, oracle, recent_blockhash, payer, rpc_client
-                ).await
+                    params,
+                    ta,
+                    oracle,
+                    recent_blockhash,
+                    payer,
+                    rpc_client,
+                )
+                .await
             }
             DexType::RaydiumClmm => {
                 let tick_arrays = additional_params.unwrap_or_default();
                 RaydiumClmmSwapExecutor::execute_swap(
-                    params, tick_arrays, recent_blockhash, payer, rpc_client
-                ).await
+                    params,
+                    tick_arrays,
+                    recent_blockhash,
+                    payer,
+                    rpc_client,
+                )
+                .await
             }
             DexType::RaydiumCpmm => {
-                RaydiumCpmmSwapExecutor::execute_swap(
-                    params, recent_blockhash, payer, rpc_client
-                ).await
+                RaydiumCpmmSwapExecutor::execute_swap(params, recent_blockhash, payer, rpc_client)
+                    .await
             }
             DexType::Raydium => {
-                RaydiumAmmV4SwapExecutor::execute_swap(
-                    params, recent_blockhash, payer, rpc_client
-                ).await
+                RaydiumAmmV4SwapExecutor::execute_swap(params, recent_blockhash, payer, rpc_client)
+                    .await
             }
             _ => Err("Unsupported DEX type".to_string()),
         }
@@ -540,8 +584,10 @@ impl OnChainArbitrageExecutor {
         rpc_client: &RpcClient,
         additional_params: Option<Vec<Pubkey>>,
     ) -> Result<OnChainSwapResult, String> {
-        log::info!("🔄 REVERSE SWAP: {} → {}", 
-            params.input_token_mint, params.output_token_mint
+        log::info!(
+            "🔄 REVERSE SWAP: {} → {}",
+            params.input_token_mint,
+            params.output_token_mint
         );
 
         match params.dex_type {
@@ -554,24 +600,33 @@ impl OnChainArbitrageExecutor {
                 };
                 let ta = tick_arrays[..3.min(tick_arrays.len())].to_vec();
                 OrcaWhirlpoolSwapExecutor::execute_swap(
-                    params, ta, oracle, recent_blockhash, payer, rpc_client
-                ).await
+                    params,
+                    ta,
+                    oracle,
+                    recent_blockhash,
+                    payer,
+                    rpc_client,
+                )
+                .await
             }
             DexType::RaydiumClmm => {
                 let tick_arrays = additional_params.unwrap_or_default();
                 RaydiumClmmSwapExecutor::execute_swap(
-                    params, tick_arrays, recent_blockhash, payer, rpc_client
-                ).await
+                    params,
+                    tick_arrays,
+                    recent_blockhash,
+                    payer,
+                    rpc_client,
+                )
+                .await
             }
             DexType::RaydiumCpmm => {
-                RaydiumCpmmSwapExecutor::execute_swap(
-                    params, recent_blockhash, payer, rpc_client
-                ).await
+                RaydiumCpmmSwapExecutor::execute_swap(params, recent_blockhash, payer, rpc_client)
+                    .await
             }
             DexType::Raydium => {
-                RaydiumAmmV4SwapExecutor::execute_swap(
-                    params, recent_blockhash, payer, rpc_client
-                ).await
+                RaydiumAmmV4SwapExecutor::execute_swap(params, recent_blockhash, payer, rpc_client)
+                    .await
             }
             _ => Err("Unsupported DEX type".to_string()),
         }
@@ -596,10 +651,13 @@ impl OnChainArbitrageExecutor {
             payer,
             rpc_client,
             forward_additional,
-        ).await?;
+        )
+        .await?;
 
-        log::info!("✅ Forward swap complete: {} → {}", 
-            forward_result.amount_in, forward_result.amount_out.unwrap_or(0)
+        log::info!(
+            "✅ Forward swap complete: {} → {}",
+            forward_result.amount_in,
+            forward_result.amount_out.unwrap_or(0)
         );
 
         // Update reverse input with forward output
@@ -613,10 +671,13 @@ impl OnChainArbitrageExecutor {
             payer,
             rpc_client,
             reverse_additional,
-        ).await?;
+        )
+        .await?;
 
-        log::info!("✅ Reverse swap complete: {} → {}", 
-            reverse_result.amount_in, reverse_result.amount_out.unwrap_or(0)
+        log::info!(
+            "✅ Reverse swap complete: {} → {}",
+            reverse_result.amount_in,
+            reverse_result.amount_out.unwrap_or(0)
         );
 
         // Calculate profit
@@ -624,7 +685,8 @@ impl OnChainArbitrageExecutor {
         let final_amount = reverse_result.amount_out.unwrap_or(0);
         let profit = final_amount.saturating_sub(initial_amount);
 
-        log::info!("💰 ARBITRAGE PROFIT: {} ({:.4}%)",
+        log::info!(
+            "💰 ARBITRAGE PROFIT: {} ({:.4}%)",
             profit,
             (profit as f64 / initial_amount as f64) * 100.0
         );
@@ -654,11 +716,8 @@ mod tests {
             priority: ExecutionPriority::Medium,
         };
 
-        let result = OrcaWhirlpoolSwapExecutor::build_swap_instruction(
-            &params,
-            vec![],
-            Pubkey::default(),
-        );
+        let result =
+            OrcaWhirlpoolSwapExecutor::build_swap_instruction(&params, vec![], Pubkey::default());
 
         assert!(result.is_ok());
         let instruction = result.unwrap();

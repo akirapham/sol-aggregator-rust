@@ -277,7 +277,7 @@ pub async fn check_arbitrage(
         .calculate_arbitrage_profit(&swap_params, &token_b_key, request.slippage_bps)
         .await
     {
-        Some((profit, forward_route, reverse_route, reverse )) => {
+        Some((profit, forward_route, reverse_route, reverse)) => {
             if reverse {
                 let profit_percent = (profit as f64 / request.input_amount as f64) * 100.0;
 
@@ -375,7 +375,6 @@ pub async fn check_arbitrage(
                 };
                 Ok(Json(response))
             }
-
         }
         None => {
             // No profitable arbitrage found

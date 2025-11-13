@@ -1,8 +1,8 @@
 use crate::types::{DexArbitrageOpportunity, ExecutionResult, ExecutionStatus};
 use anyhow::{anyhow, Result};
 use ethers::providers::Provider;
-use ethers::signers::Signer;
 use ethers::signers::LocalWallet;
+use ethers::signers::Signer;
 use log::{error, info, warn};
 use std::str::FromStr;
 
@@ -62,9 +62,7 @@ impl ArbitrageExecutor {
         &self,
         opportunity: &DexArbitrageOpportunity,
     ) -> Result<ExecutionResult> {
-        let simulated_tx_hash = format!("0x{}", hex::encode(
-            uuid::Uuid::new_v4().as_bytes()
-        ));
+        let simulated_tx_hash = format!("0x{}", hex::encode(uuid::Uuid::new_v4().as_bytes()));
 
         // Estimate gas costs (1 ETH worth of gas for simulation)
         let estimated_gas_eth = 0.01; // Rough estimate
@@ -133,7 +131,7 @@ mod tests {
         // In a real scenario, we would mock the provider
         return;
     }
-    
+
     #[tokio::test]
     async fn test_arbitrage_opportunity_validation() {
         // This test validates opportunity structure and profit calculations

@@ -1,7 +1,8 @@
 use crate::price_store::PriceStore;
-use crate::types::{DexVersion, EthConfig, TokenPrice};
+use crate::types::EthConfig;
 use anyhow::{Context, Result};
 use dashmap::DashMap;
+use eth_dex_quote::{DexVersion, TokenPrice};
 use ethers::abi::RawLog;
 use ethers::prelude::*;
 use log::{debug, error, info, warn};
@@ -935,6 +936,12 @@ impl EthSwapListener {
             }
         }
 
+        let (token0, token1) = if token_address < paired_with {
+            (token_address, paired_with)
+        } else {
+            (paired_with, token_address)
+        };
+
         let token_price = TokenPrice {
             token_address,
             price_in_eth,
@@ -943,6 +950,9 @@ impl EthSwapListener {
             pool_address,
             dex_version,
             decimals,
+            pool_token0: token0,
+            pool_token1: token1,
+            eth_chain: config.eth_chain,
         };
 
         price_store.update_price(token_address, token_price);
@@ -1220,8 +1230,6 @@ impl EthSwapListener {
         config: &EthConfig,
         v4_cache: &Arc<DashMap<[u8; 32], (Address, Address, u8, u8, Address)>>,
     ) -> Result<()> {
-        info!("📥 Received V4 swap event from {:?}", log.address);
-
         // Try to parse as V4 Swap event
         let swap_event: uniswap_v4_pool_manager::SwapFilter =
             match <uniswap_v4_pool_manager::SwapFilter as ethers::contract::EthEvent>::decode_log(

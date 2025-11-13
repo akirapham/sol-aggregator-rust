@@ -1,17 +1,11 @@
+use log;
+use serde::{Deserialize, Serialize};
+use solana_client::rpc_client::RpcClient;
 /// Real Arbitrage Execution Handler
-/// 
+///
 /// Orchestrates actual on-chain arbitrage execution using the real swap executor
 /// Replaces the simulation-based handler with production-ready blockchain interaction
-
-use solana_sdk::{
-    pubkey::Pubkey,
-    signer::Signer,
-    signer::keypair::Keypair,
-    hash::Hash,
-};
-use solana_client::rpc_client::RpcClient;
-use serde::{Deserialize, Serialize};
-use log;
+use solana_sdk::{hash::Hash, pubkey::Pubkey, signer::keypair::Keypair, signer::Signer};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -46,24 +40,24 @@ pub struct ArbitrageExecutionRecord {
     pub opportunity_id: String,
     pub pair_name: String,
     pub status: ExecutionStatus,
-    
+
     // Initial state
     pub initial_amount: u64,
     pub initial_token: Pubkey,
     pub user_wallet: Pubkey,
-    
+
     // Execution details
     pub forward_result: Option<OnChainSwapResult>,
     pub reverse_result: Option<OnChainSwapResult>,
     pub final_profit: i64,
     pub profit_percent: f64,
-    
+
     // Transaction tracking
     pub forward_tx_signature: Option<String>,
     pub reverse_tx_signature: Option<String>,
     pub forward_slot: Option<u64>,
     pub reverse_slot: Option<u64>,
-    
+
     // Timing
     pub started_at: u64,
     pub completed_at: Option<u64>,
@@ -158,7 +152,8 @@ impl ArbitrageTransactionHandler {
             payer,
             rpc_client,
             None, // tick arrays would be fetched from on-chain
-        ).await;
+        )
+        .await;
 
         match forward_result {
             Ok(result) => {
@@ -218,7 +213,8 @@ impl ArbitrageTransactionHandler {
             payer,
             rpc_client,
             None, // tick arrays would be fetched from on-chain
-        ).await;
+        )
+        .await;
 
         match reverse_result {
             Ok(result) => {
@@ -252,8 +248,7 @@ impl ArbitrageTransactionHandler {
 
         // Calculate profit
         let profit = final_amount as i64 - record.initial_amount as i64;
-        let profit_percent =
-            (profit as f64 / record.initial_amount as f64) * 100.0;
+        let profit_percent = (profit as f64 / record.initial_amount as f64) * 100.0;
 
         record.final_profit = profit;
         record.profit_percent = profit_percent;
@@ -273,20 +268,24 @@ impl ArbitrageTransactionHandler {
     }
 
     /// Calculate minimum output with slippage
-    fn calculate_min_output(&self, input_amount: u64, dex_type: &DexType, slippage_bps: u16) -> u64 {
+    fn calculate_min_output(
+        &self,
+        input_amount: u64,
+        dex_type: &DexType,
+        slippage_bps: u16,
+    ) -> u64 {
         // Get estimated output based on DEX
         let (fee_bps, efficiency) = match dex_type {
-            DexType::Orca => (200, 0.985), // 0.2% fee, 98.5% efficiency
+            DexType::Orca => (200, 0.985),       // 0.2% fee, 98.5% efficiency
             DexType::RaydiumClmm => (500, 0.97), // 0.5% fee, 97% efficiency
             DexType::RaydiumCpmm => (250, 0.98), // 0.25% fee, 98% efficiency
-            DexType::Raydium => (500, 0.96), // 0.5% fee, 96% efficiency
+            DexType::Raydium => (500, 0.96),     // 0.5% fee, 96% efficiency
             _ => (300, 0.97),
         };
 
         let after_fee = (input_amount as f64) * (1.0 - (fee_bps as f64 / 10000.0));
         let with_efficiency = after_fee * efficiency;
-        let after_slippage =
-            with_efficiency * (1.0 - (slippage_bps as f64 / 10000.0));
+        let after_slippage = with_efficiency * (1.0 - (slippage_bps as f64 / 10000.0));
 
         after_slippage as u64
     }
@@ -380,7 +379,10 @@ mod tests {
     #[test]
     fn test_handler_creation() {
         let handler = ArbitrageTransactionHandler::new();
-        assert_eq!(handler.execution_records.try_read().ok().map(|r| r.len()), Some(0));
+        assert_eq!(
+            handler.execution_records.try_read().ok().map(|r| r.len()),
+            Some(0)
+        );
     }
 
     #[test]

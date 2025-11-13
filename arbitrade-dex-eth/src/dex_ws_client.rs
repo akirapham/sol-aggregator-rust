@@ -1,12 +1,12 @@
 use crate::types::{DexPriceMessage, DexSubscriptionMessage, PoolPrice};
 use anyhow::{anyhow, Result};
 use ethers::types::Address;
-use futures::stream::StreamExt;
 use futures::sink::SinkExt;
+use futures::stream::StreamExt;
 use log::{info, warn};
 use std::str::FromStr;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// WebSocket client for connecting to amm-eth price feed
 /// Returns a receiver that yields PoolPrice updates
@@ -23,9 +23,9 @@ impl DexWsClient {
     /// Connect to amm-eth WebSocket and return a receiver for price updates
     pub async fn start(&self) -> Result<mpsc::Receiver<PoolPrice>> {
         let (tx, rx) = mpsc::channel(1000);
-        
+
         let url = self.websocket_url.clone();
-        
+
         tokio::spawn(async move {
             if let Err(e) = Self::listen_loop(&url, tx).await {
                 warn!("WebSocket listener error: {}", e);
@@ -38,13 +38,13 @@ impl DexWsClient {
     /// Listen to WebSocket with auto-reconnect
     pub async fn start_with_reconnect(&self) -> Result<mpsc::Receiver<PoolPrice>> {
         let (tx, rx) = mpsc::channel(1000);
-        
+
         let url = self.websocket_url.clone();
-        
+
         tokio::spawn(async move {
             let mut backoff = 1;
             const MAX_BACKOFF: u64 = 60;
-            
+
             loop {
                 match Self::listen_loop(&url, tx.clone()).await {
                     Ok(_) => {
@@ -102,12 +102,16 @@ impl DexWsClient {
                                     Ok(price_msg) => {
                                         // Convert to PoolPrice
                                         let pool_price = PoolPrice {
-                                            token_address: Address::from_str(&price_msg.data.token_address)
-                                                .unwrap_or_else(|_| Address::zero()),
+                                            token_address: Address::from_str(
+                                                &price_msg.data.token_address,
+                                            )
+                                            .unwrap_or_else(|_| Address::zero()),
                                             price_in_eth: price_msg.data.price_in_eth,
                                             price_in_usd: Some(price_msg.data.price_in_usd),
-                                            pool_address: Address::from_str(&price_msg.data.pool_address)
-                                                .unwrap_or_else(|_| Address::zero()),
+                                            pool_address: Address::from_str(
+                                                &price_msg.data.pool_address,
+                                            )
+                                            .unwrap_or_else(|_| Address::zero()),
                                             dex_version: price_msg.data.dex_version,
                                             decimals: price_msg.data.decimals,
                                             last_updated: price_msg.data.last_updated,
@@ -118,7 +122,10 @@ impl DexWsClient {
                                         let _ = tx.send(pool_price).await;
                                     }
                                     Err(e) => {
-                                        warn!("Failed to parse price_update message: {} - Raw: {}", e, text);
+                                        warn!(
+                                            "Failed to parse price_update message: {} - Raw: {}",
+                                            e, text
+                                        );
                                     }
                                 }
                             }

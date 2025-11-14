@@ -1,5 +1,4 @@
 # Docker Compose for Solana DEX Aggregator
-version: '3.8'
 
 services:
   aggregator:
@@ -12,6 +11,8 @@ services:
       - "${API_PORT:-3000}:${API_PORT:-3000}"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
+      # Path inside the container where arbitrage_config.toml will be mounted
+      - ARBITRAGE_CONFIG_PATH=/app/arbitrage_config.toml
     env_file:
       - .env
     volumes:
@@ -20,6 +21,8 @@ services:
       # Optional: Mount logs directory
       - ./logs:/app/logs
       - ./rocksdb_data:/app/rocksdb_data
+      # Mount the arbitrage config so the service can find it at runtime
+      - ./aggregator-sol/arbitrage_config.toml:/app/arbitrage_config.toml:ro
     networks:
       - aggregator-network
     # healthcheck:

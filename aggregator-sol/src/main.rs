@@ -2,12 +2,14 @@ mod aggregator;
 mod api;
 mod arbitrage_config;
 mod arbitrage_monitor;
+mod arbitrage_transaction_handler;
 mod config;
 mod constants;
 mod dex;
 mod error;
 mod fetchers;
 mod grpc;
+mod on_chain_swap_executor;
 mod pool_data_types;
 mod pool_manager;
 mod types;
@@ -16,9 +18,11 @@ mod utils;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use dotenv::dotenv;
 use env_logger::Env;
-use std::sync::Arc;
-use std::path::PathBuf;
+use solana_sdk::signature::Signer;
+use solana_sdk::signer::keypair::read_keypair_file;
 use std::env;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
 
@@ -68,14 +72,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let aggregator = Arc::new(aggregator::DexAggregator::new(config, pool_manager.clone()));
 
     // 2.5. Load arbitrage configuration and start monitoring (optional)
-    let arb_config_path = env::var("ARBITRAGE_CONFIG_PATH").unwrap_or_else(|_| "arbitrage_config.toml".to_string());
+    let arb_config_path =
+        env::var("ARBITRAGE_CONFIG_PATH").unwrap_or_else(|_| "arbitrage_config.toml".to_string());
 
     // Helper to attempt loading and wiring up the arbitrage monitor from a provided config
     async fn try_setup_arb(
         arb_path: PathBuf,
         pool_manager: Arc<PoolStateManager>,
         aggregator: Arc<aggregator::DexAggregator>,
-    ) -> Option<(Arc<std::sync::RwLock<ArbitrageConfig>>, Arc<ArbitrageMonitor>)> {
+    ) -> Option<(
+        Arc<std::sync::RwLock<ArbitrageConfig>>,
+        Arc<ArbitrageMonitor>,
+    )> {
         if !arb_path.exists() {
             return None;
         }
@@ -133,10 +141,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await;
 
                 let aggregator_clone = aggregator.clone();
+
+                // Load mainnet configuration
+                let rpc_url = env::var("SOLANA_RPC_URL")
+                    .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+                log::info!("Using Solana RPC: {}", rpc_url);
+
+                // Load keypair for transaction signing
+                let keypair_path = env::var("SOLANA_KEYPAIR_PATH").unwrap_or_else(|_| {
+                    format!(
+                        "{}/.config/solana/id.json",
+                        std::env::var("HOME").unwrap_or_default()
+                    )
+                });
+                let keypair = read_keypair_file(&keypair_path).ok()?;
+                log::info!("Loaded keypair: {}", keypair.pubkey());
+
                 let monitor = ArbitrageMonitor::new(
                     aggregator_clone,
                     arb_config.clone(),
                     "rocksdb_data/arbitrage_opportunities",
+                    &rpc_url,
+                    Arc::new(keypair),
                 )
                 .expect("Failed to create arbitrage monitor");
 
@@ -151,7 +177,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Spawn a cleanup task to remove old opportunities periodically
                 let monitor_for_cleanup = monitor.clone();
                 tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
+                    let mut interval =
+                        tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
                     loop {
                         interval.tick().await;
                         match monitor_for_cleanup.cleanup_old_opportunities(86400) {
@@ -188,7 +215,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let requested = PathBuf::from(&arb_config_path);
     // If the requested path exists, try to load it
-    if let Some((cfg, mon)) = try_setup_arb(requested.clone(), pool_manager.clone(), aggregator.clone()).await {
+    if let Some((cfg, mon)) =
+        try_setup_arb(requested.clone(), pool_manager.clone(), aggregator.clone()).await
+    {
         arb_config_arc = Some(cfg);
         arbitrage_monitor = Some(mon);
     } else {
@@ -197,7 +226,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tried.push(requested.clone());
 
         // Fallback inside aggregator-sol directory
-        let fallback1 = PathBuf::from("aggregator-sol").join(&arb_config_path);
+        let fallback1 = (env::current_dir()?)
+            .join("aggregator-sol")
+            .join(&arb_config_path);
         tried.push(fallback1.clone());
 
         // Fallback to repo root's config directory
@@ -207,7 +238,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut found = false;
         for p in tried.into_iter() {
             if p.exists() {
-                if let Some((cfg, mon)) = try_setup_arb(p, pool_manager.clone(), aggregator.clone()).await {
+                if let Some((cfg, mon)) =
+                    try_setup_arb(p, pool_manager.clone(), aggregator.clone()).await
+                {
                     arb_config_arc = Some(cfg);
                     arbitrage_monitor = Some(mon);
                     found = true;
@@ -232,7 +265,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 3. Create and start the REST API server
     // read port from env or default to 3000
     let port = std::env::var("API_PORT").unwrap_or_else(|_| "3000".into());
     log::info!("Starting REST API server on port {}...", port);

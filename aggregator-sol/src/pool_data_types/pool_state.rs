@@ -76,6 +76,7 @@ pub enum PoolUpdateEventType {
     DbcPoolStateAccount,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
+    WhirlpoolOracleStateAccount,
     WhirlpoolSwap,
     WhirlpoolSwapV2,
     WhirlpoolDecreaseLiquidity,
@@ -205,17 +206,18 @@ impl PoolState {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RadyiumClmm(state) => {
-                state
+                let output_amount = state
                     .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
-                    .await
+                    .await;
+                // log::info!("1111 RadyiumClmm input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
+                output_amount
             }
             PoolState::MeteoraDbc(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::OrcaWhirlpool(state) => {
-                state
-                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
-                    .await
+                // log::info!("1111 OrcaWhirlpool input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
+                state.calculate_output_amount(input_token, input_amount)
             }
         }
     }

@@ -132,7 +132,8 @@ impl SwapMath {
             fee_amount: rug::Integer::ZERO,
         };
         let mut tick_array_start_index = last_saved_tick_array_start_index;
-        let mut tick_array_current = match tick_array_cache.get(&last_saved_tick_array_start_index) {
+        let mut tick_array_current = match tick_array_cache.get(&last_saved_tick_array_start_index)
+        {
             Some(cache) => cache,
             None => {
                 if catch_liquidity_insufficient {
@@ -232,7 +233,8 @@ impl SwapMath {
                                 if catch_liquidity_insufficient {
                                     return Ok(SwapComputeResult {
                                         all_trade: false,
-                                        amount_specified_remaining: state.amount_specified_remaining,
+                                        amount_specified_remaining: state
+                                            .amount_specified_remaining,
                                         amount_calculated: state.amount_calculated,
                                         fee_amount: state.fee_amount,
                                         sqrt_price_x64: state.sqrt_price_x64,

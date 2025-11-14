@@ -1,6 +1,7 @@
 pub mod bonk;
 pub mod clmm;
 pub mod dbc;
+pub mod orca;
 pub mod orca_whirlpool;
 pub mod pool_state;
 pub mod pumpfun;

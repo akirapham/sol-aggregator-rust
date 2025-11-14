@@ -1,6 +1,6 @@
-use crate::types::TokenPrice;
 use crate::ws_server::{broadcast_price_update, WsMessage};
 use dashmap::DashMap;
+use eth_dex_quote::{DexVersion, TokenPrice};
 use ethers::types::Address;
 use log::info;
 use std::sync::Arc;
@@ -98,9 +98,13 @@ impl PriceStore {
 
         for entry in self.prices.iter() {
             match entry.value().dex_version {
-                crate::types::DexVersion::UniswapV2 => v2_count += 1,
-                crate::types::DexVersion::UniswapV3 => v3_count += 1,
-                crate::types::DexVersion::UniswapV4 => v4_count += 1,
+                DexVersion::UniswapV2 => v2_count += 1,
+                DexVersion::UniswapV3 => v3_count += 1,
+                DexVersion::UniswapV4 => v4_count += 1,
+                DexVersion::SushiswapV2 => todo!(),
+                DexVersion::SushiswapV3 => todo!(),
+                DexVersion::PancakeswapV2 => todo!(),
+                DexVersion::PancakeswapV3 => todo!(),
             }
         }
 

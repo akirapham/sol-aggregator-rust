@@ -321,6 +321,10 @@ pub fn pool_update_event_to_pool_state(
                 );
             }
 
+            if let Some(ref oracle_state) = whirlpool_update.oracle_state {
+                pool_state.oracle_state = oracle_state.clone();
+            }
+
             (Some(PoolState::OrcaWhirlpool(pool_state)), true)
         }
         PoolUpdateEvent::MeteoraDbc(_dbc_pool_update) => todo!(),
@@ -680,6 +684,10 @@ pub fn update_pool_state_by_event(
                         tick_array_update.start_tick_index,
                         tick_array_update.clone(),
                     );
+                }
+
+                if let Some(ref oracle_state) = whirlpool_update.oracle_state {
+                    state.oracle_state = oracle_state.clone();
                 }
             }
         }

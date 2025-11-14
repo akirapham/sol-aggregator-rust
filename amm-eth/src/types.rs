@@ -76,4 +76,5 @@ pub struct PairInfo {
     pub decimals1: u8,
     pub factory: Address,
     pub fee_tier: Option<u32>,
+    pub tick_spacing: Option<i32>,
 }

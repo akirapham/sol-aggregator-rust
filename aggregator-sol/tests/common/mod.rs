@@ -744,7 +744,7 @@ impl MainnetForkSimulator {
                 Ok(account_data) => {
                     let lamports = self.rpc_client.get_balance(&account_pubkey).unwrap_or(0);
 
-                    let is_executable = account_data.is_empty() == false;
+                    let is_executable = !account_data.is_empty();
 
                     log::info!(
                         "Account info - Balance: {} lamports, Executable: {}",

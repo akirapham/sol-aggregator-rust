@@ -32,6 +32,7 @@ abigen!(
         function token1() external view returns (address)
         function factory() external view returns (address)
         function fee() external view returns (uint24)
+        function tickSpacing() external view returns (int24)
     ]"#
 );
 
@@ -479,6 +480,7 @@ impl EthSwapListener {
             price_store,
             config,
             pair_info.fee_tier,
+            pair_info.tick_spacing,
         );
 
         Self::update_token_price(
@@ -492,6 +494,7 @@ impl EthSwapListener {
             price_store,
             config,
             pair_info.fee_tier,
+            pair_info.tick_spacing,
         );
 
         Ok(())
@@ -760,6 +763,7 @@ impl EthSwapListener {
             price_store,
             config,
             pair_info.fee_tier,
+            pair_info.tick_spacing,
         );
 
         Self::update_token_price(
@@ -773,6 +777,7 @@ impl EthSwapListener {
             price_store,
             config,
             pair_info.fee_tier,
+            pair_info.tick_spacing,
         );
 
         Ok(())
@@ -833,7 +838,7 @@ impl EthSwapListener {
             )
             .await
             {
-                Ok((token0, token1, decimals0, decimals1, factory, fee_tier)) => {
+                Ok((token0, token1, decimals0, decimals1, factory, fee_tier, tick_spacing)) => {
                     let pair_info = PairInfo {
                         pool_address: pool_address.to_string().to_lowercase(),
                         pool_token0: token0,
@@ -843,6 +848,7 @@ impl EthSwapListener {
                         decimals1,
                         factory,
                         fee_tier,
+                        tick_spacing,
                     };
                     // Store in cache
                     token_cache.insert(pool_address.to_string().to_lowercase(), pair_info.clone());
@@ -883,7 +889,7 @@ impl EthSwapListener {
         provider: &Arc<Provider<Http>>,
         config: &EthConfig,
         is_v3: bool,
-    ) -> Result<(Address, Address, u8, u8, Address, Option<u32>)> {
+    ) -> Result<(Address, Address, u8, u8, Address, Option<u32>, Option<i32>)> {
         let pair_contract = UniswapV2Pair::new(pool_address, provider.clone());
 
         // Fetch token addresses in parallel
@@ -906,6 +912,24 @@ impl EthSwapListener {
                 Err(e) => {
                     warn!(
                         "Failed to fetch fee tier for V3 pool {:?}: {}",
+                        pool_address, e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let tick_spacing: Option<i32> = if is_v3 {
+            // For Uniswap V3, fetch tick spacing from the pool contract
+            let v3_pool_contract =
+                uniswap_v3_pool::UniswapV3Pool::new(pool_address, provider.clone());
+            match v3_pool_contract.tick_spacing().call().await {
+                Ok(tick_spacing) => Some(tick_spacing),
+                Err(e) => {
+                    warn!(
+                        "Failed to fetch tick spacing for V3 pool {:?}: {}",
                         pool_address, e
                     );
                     None
@@ -944,7 +968,15 @@ impl EthSwapListener {
                 .unwrap_or(18)
         };
 
-        Ok((token0, token1, decimals0, decimals1, factory, fee_tier))
+        Ok((
+            token0,
+            token1,
+            decimals0,
+            decimals1,
+            factory,
+            fee_tier,
+            tick_spacing,
+        ))
     }
 
     /// Update token price in the price store
@@ -959,6 +991,7 @@ impl EthSwapListener {
         price_store: &PriceStore,
         config: &EthConfig,
         fee_tier: Option<u32>,
+        tick_spacing: Option<i32>,
     ) {
         // we do nothing if token is WETH, USDC or USDT
         if token_address == config.weth_address
@@ -1015,6 +1048,7 @@ impl EthSwapListener {
             pool_token1: token1,
             eth_chain: config.eth_chain,
             fee_tier,
+            tick_spacing,
         };
 
         price_store.update_price(token_address, token_price);
@@ -1360,6 +1394,7 @@ impl EthSwapListener {
             price_store,
             config,
             pair_info.fee_tier,
+            pair_info.tick_spacing,
         );
 
         Self::update_token_price(
@@ -1373,6 +1408,7 @@ impl EthSwapListener {
             price_store,
             config,
             pair_info.fee_tier,
+            pair_info.tick_spacing,
         );
 
         Ok(())
@@ -1505,8 +1541,21 @@ impl EthSwapListener {
 
         let fee_tier = pool
             .get("feeTier")
-            .and_then(|v| v.as_u64())
+            .and_then(|v| {
+                // Try to parse as u64 first, then as string
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            })
             .context("Missing or invalid feeTier in pool")?;
+
+        let tick_spacing = pool
+            .get("tickSpacing")
+            .and_then(|v| {
+                // Try to parse as i64 first, then as string
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+            })
+            .context("Missing or invalid tickSpacing in pool")?;
 
         // Extract decimals directly from the nested objects
         let dec0 = token0_obj
@@ -1539,6 +1588,7 @@ impl EthSwapListener {
             dex_version: DexVersion::UniswapV4,
             factory: v4_pool_manager,
             fee_tier: Some(fee_tier as u32),
+            tick_spacing: Some(tick_spacing as i32),
         };
         v4_cache.insert(pool_id_hex, pool_info.clone());
 

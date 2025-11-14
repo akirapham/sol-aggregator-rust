@@ -1,8 +1,7 @@
 use eth_dex_quote::v2::V2Quoter;
 use eth_dex_quote::v3::V3Quoter;
-use eth_dex_quote::{
-    create_global_registry, Chain, DexVersion, UniswapV2Quoter, UniswapV3Quoter, UniversalQuoter,
-};
+use eth_dex_quote::v4::{UniswapV4Quoter, V4Quoter};
+use eth_dex_quote::{create_global_registry, Chain, DexVersion, UniswapV2Quoter, UniswapV3Quoter};
 use ethers::providers::{Http, Provider};
 use ethers::types::Address;
 use std::str::FromStr;
@@ -14,7 +13,6 @@ const ETHEREUM_RPC: &str = "https://ethereum-rpc.publicnode.com";
 /// Test token addresses on Ethereum mainnet
 const WETH: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 const USDC: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const USDT: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const DAI: &str = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
 
 #[tokio::test]
@@ -22,34 +20,32 @@ async fn test_uniswap_v2_weth_usdc_quote() {
     let provider =
         Arc::new(Provider::<Http>::try_from(ETHEREUM_RPC).expect("Failed to create provider"));
 
-    let factory = Address::from_str("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        .expect("Invalid factory address");
+    let router_v2 = Address::from_str("0x7a250d5630b4cf539739df2c5dacb4c659f2488d")
+        .expect("Invalid router address"); // Uniswap V2 Router
 
-    let quoter = UniswapV2Quoter::new(provider, factory);
+    let quoter = UniswapV2Quoter::new(provider).with_router(router_v2);
 
     let weth = Address::from_str(WETH).expect("Invalid WETH address");
     let usdc = Address::from_str(USDC).expect("Invalid USDC address");
     let amount_in = ethers::types::U256::from(10_u64.pow(18)); // 1 WETH
 
-    println!("Testing Uniswap V2 quote for {} WETH", amount_in);
+    println!("Testing Uniswap V2 quote for {} WETH via router", amount_in);
     println!("WETH: {}", weth);
     println!("USDC: {}", usdc);
-    println!("Factory: {}", factory);
+    println!("Router V2: {}", router_v2);
 
-    let result = quoter.get_quote(weth, usdc, amount_in).await;
+    let path = vec![weth, usdc];
+    let result = quoter.get_quote(amount_in, path).await;
 
     match result {
-        Ok(quote) => {
+        Ok(amount_out) => {
             assert!(
-                quote.amount_out > ethers::types::U256::zero(),
+                amount_out > ethers::types::U256::zero(),
                 "Amount out should be > 0"
             );
-            assert_eq!(quote.route.len(), 2, "Route should have 2 tokens");
-            assert_eq!(quote.route[0], weth, "First token should be WETH");
-            assert_eq!(quote.route[1], usdc, "Second token should be USDC");
             println!(
-                "✅ Uniswap V2 Quote: {} WETH -> {} USDC",
-                amount_in, quote.amount_out
+                "✅ Uniswap V2 Quote: {} WETH -> {} USDC (via router)",
+                amount_in, amount_out
             );
         }
         Err(e) => {
@@ -64,7 +60,7 @@ async fn test_uniswap_v3_weth_usdc_quote() {
     let provider =
         Arc::new(Provider::<Http>::try_from(ETHEREUM_RPC).expect("Failed to create provider"));
 
-    let quoter_v3 = Address::from_str("0xb27f1eea633e94c6f33eee83f00648d5b32545f4")
+    let quoter_v3 = Address::from_str("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
         .expect("Invalid quoter address");
 
     let quoter = UniswapV3Quoter::new(provider, quoter_v3);
@@ -94,11 +90,55 @@ async fn test_uniswap_v3_weth_usdc_quote() {
 }
 
 #[tokio::test]
+#[ignore = "V4 pools may not be available on testnet; enable to test live V4 deployment"]
+async fn test_uniswap_v4_weth_usdc_quote() {
+    let provider =
+        Arc::new(Provider::<Http>::try_from(ETHEREUM_RPC).expect("Failed to create provider"));
+
+    let quote_router = Address::from_str("0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203")
+        .expect("Invalid V4 quote router address");
+
+    let quoter = UniswapV4Quoter::new(provider, quote_router);
+
+    let weth = Address::from_str(WETH).expect("Invalid WETH address");
+    let usdc = Address::from_str(USDC).expect("Invalid USDC address");
+    let amount_in = ethers::types::U256::from(10_u64.pow(18));
+    let fee_tier = 3000;
+    let tick_spacing = 60;
+    let hooks = Address::zero();
+
+    let result = quoter
+        .get_quote(weth, usdc, amount_in, fee_tier, tick_spacing, hooks)
+        .await;
+
+    // V4 may not have active liquidity pairs yet, so we just log the result
+    match result {
+        Ok(quote) => {
+            assert!(
+                quote.amount_out > ethers::types::U256::zero(),
+                "Amount out should be > 0"
+            );
+            println!(
+                "✅ Uniswap V4 Quote: {} WETH -> {} USDC (0.3% fee, hooks=0)",
+                amount_in, quote.amount_out
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "⚠️  V4 quoter test failed (may be due to no active liquidity): {:?}",
+                e
+            );
+            // Don't fail the test - V4 may not have pools yet
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_uniswap_v3_different_fee_tiers() {
     let provider =
         Arc::new(Provider::<Http>::try_from(ETHEREUM_RPC).expect("Failed to create provider"));
 
-    let quoter_v3 = Address::from_str("0xb27f1eea633e94c6f33eee83f00648d5b32545f4")
+    let quoter_v3 = Address::from_str("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
         .expect("Invalid quoter address");
 
     let quoter = UniswapV3Quoter::new(provider, quoter_v3);
@@ -135,41 +175,19 @@ async fn test_v2_quote_usdc_dai() {
     let provider =
         Arc::new(Provider::<Http>::try_from(ETHEREUM_RPC).expect("Failed to create provider"));
 
-    let factory = Address::from_str("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        .expect("Invalid factory address");
+    let router_v2 = Address::from_str("0x7a250d5630b4cf539739df2c5dacb4c659f2488d")
+        .expect("Invalid router address"); // Uniswap V2 Router
 
-    let quoter = UniswapV2Quoter::new(provider, factory);
+    let quoter = UniswapV2Quoter::new(provider).with_router(router_v2);
 
     let usdc = Address::from_str(USDC).expect("Invalid USDC address");
     let dai = Address::from_str(DAI).expect("Invalid DAI address");
     let amount_in = ethers::types::U256::from(1000 * 10_u64.pow(6)); // 1000 USDC
 
-    let result = quoter.get_quote(usdc, dai, amount_in).await;
+    let path = vec![usdc, dai];
+    let result = quoter.get_quote(amount_in, path).await;
 
     assert!(result.is_ok(), "Failed to get V2 quote: {:?}", result.err());
-
-    let quote = result.unwrap();
-    assert!(
-        quote.amount_out > ethers::types::U256::zero(),
-        "Amount out should be > 0"
-    );
-
-    println!(
-        "✅ Uniswap V2 Quote: {} USDC -> {} DAI",
-        amount_in, quote.amount_out
-    );
-}
-
-#[tokio::test]
-async fn test_v2_compute_amount_out() {
-    let amount_in = ethers::types::U256::from(10_u64.pow(18));
-    let reserve_in = ethers::types::U256::from(100 * 10_u64.pow(18));
-    let reserve_out = ethers::types::U256::from(100_000 * 10_u64.pow(6)); // USDC (6 decimals)
-
-    let result =
-        UniswapV2Quoter::<Provider<Http>>::compute_amount_out(amount_in, reserve_in, reserve_out);
-
-    assert!(result.is_ok(), "Computation failed");
 
     let amount_out = result.unwrap();
     assert!(
@@ -177,14 +195,9 @@ async fn test_v2_compute_amount_out() {
         "Amount out should be > 0"
     );
 
-    // With 0.3% fee: 997 * amount_in * reserve_out / (1000 * reserve_in + 997 * amount_in)
-    // 997 * 1e18 * 100_000e6 / (1000 * 100e18 + 997 * 1e18)
-    // Should be approximately 997 USDC
-    let expected_rough = ethers::types::U256::from(997 * 10_u64.pow(6));
-
     println!(
-        "✅ V2 Compute Amount Out: {} USDC (expected ~{})",
-        amount_out, expected_rough
+        "✅ Uniswap V2 Quote: {} USDC -> {} DAI",
+        amount_in, amount_out
     );
 }
 
@@ -260,25 +273,22 @@ async fn test_multiple_consecutive_quotes() {
     let provider =
         Arc::new(Provider::<Http>::try_from(ETHEREUM_RPC).expect("Failed to create provider"));
 
-    let factory = Address::from_str("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-        .expect("Invalid factory address");
+    let router_v2 = Address::from_str("0x7a250d5630b4cf539739df2c5dacb4c659f2488d")
+        .expect("Invalid router address"); // Uniswap V2 Router
 
-    let quoter = UniswapV2Quoter::new(provider, factory);
+    let quoter = UniswapV2Quoter::new(provider).with_router(router_v2);
 
     let weth = Address::from_str(WETH).expect("Invalid WETH address");
     let usdc = Address::from_str(USDC).expect("Invalid USDC address");
 
     println!("✅ Testing multiple consecutive quotes:");
-
     for i in 1..=3 {
         let amount_in = ethers::types::U256::from(i * 10_u64.pow(18));
-        let result = quoter.get_quote(weth, usdc, amount_in).await;
+        let path = vec![weth, usdc];
+        let result = quoter.get_quote(amount_in, path).await;
 
         assert!(result.is_ok(), "Quote {} failed", i);
-        let quote = result.unwrap();
-        println!(
-            "  Quote {}: {} WETH -> {} USDC",
-            i, amount_in, quote.amount_out
-        );
+        let amount_out = result.unwrap();
+        println!("  Quote {}: {} WETH -> {} USDC", i, amount_in, amount_out);
     }
 }

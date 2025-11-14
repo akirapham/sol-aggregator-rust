@@ -156,6 +156,11 @@ pub fn ethereum_registry() -> ChainDexRegistry {
     let mut registry = ChainDexRegistry::new(Chain::Ethereum);
 
     // Uniswap V2
+    let v2_init_code = [
+        0x96, 0xe8, 0xac, 0x42, 0x77, 0x19, 0x8f, 0xf8, 0xb6, 0xf7, 0x85, 0x47, 0x8a, 0xa9, 0xa3,
+        0x9f, 0x40, 0x3c, 0xb7, 0x68, 0xdd, 0x02, 0xcb, 0xee, 0x32, 0x6c, 0x3e, 0x26, 0x5c, 0xbd,
+        0x36, 0x27,
+    ];
     registry.register(
         DexVersion::UniswapV2,
         DexConfig::V2(V2Config {
@@ -163,13 +168,7 @@ pub fn ethereum_registry() -> ChainDexRegistry {
                 .parse()
                 .unwrap(),
             fee_bps: 30,
-            init_code_hash: hex::decode(
-                "96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e265cbd3627",
-            )
-            .unwrap()
-            .as_slice()
-            .try_into()
-            .unwrap(),
+            init_code_hash: v2_init_code,
         }),
     );
 
@@ -193,6 +192,11 @@ pub fn ethereum_registry() -> ChainDexRegistry {
     );
 
     // Sushiswap V2
+    let sushi_v2_init_code = [
+        0xe1, 0x8a, 0x34, 0xeb, 0x0e, 0x04, 0xb0, 0x4f, 0x7a, 0x0a, 0xc2, 0x9a, 0x6e, 0x80, 0x74,
+        0x8d, 0xca, 0x56, 0xea, 0x3f, 0x40, 0xe8, 0xe2, 0x1e, 0x02, 0xc3, 0x35, 0x82, 0x0c, 0x3e,
+        0xad, 0x02,
+    ];
     registry.register(
         DexVersion::SushiswapV2,
         DexConfig::V2(V2Config {
@@ -200,13 +204,7 @@ pub fn ethereum_registry() -> ChainDexRegistry {
                 .parse()
                 .unwrap(),
             fee_bps: 30,
-            init_code_hash: hex::decode(
-                "e18a34eb0e04b04f7a0ac29a6e80748dca56ea3f40e8e21e02c335820c3ead02",
-            )
-            .unwrap()
-            .as_slice()
-            .try_into()
-            .unwrap(),
+            init_code_hash: sushi_v2_init_code,
         }),
     );
 
@@ -259,11 +257,17 @@ pub fn polygon_registry() -> ChainDexRegistry {
     registry.register(
         DexVersion::SushiswapV3,
         DexConfig::V3(V3Config {
-            factory: "0x917933899bAD1b60b8E7f0753f1Ddb0a00514f0".parse().unwrap(),
+            factory: "0xbACEB8f6f2f64F4ad4cAFFA62f3b326D883c3213"
+                .parse()
+                .unwrap(),
             quoter: "0x49d1f43Cc02eA0F9D1dB95eAc4cDb65C1B83A33c"
                 .parse()
                 .unwrap(),
-            router: Some("0xf5bfF680d6B7407853715DDcaB550c2a7Fb0DaB".parse().unwrap()),
+            router: Some(
+                "0x2214A42d8e2830BEe360331851FD07b3BA109244"
+                    .parse()
+                    .unwrap(),
+            ),
             fee_tiers: vec![100, 500, 3000, 10000],
         }),
     );

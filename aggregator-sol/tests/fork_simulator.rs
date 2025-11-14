@@ -1,5 +1,27 @@
 mod common;
 
+/// ========================================================================
+/// COMPARISON TABLE: Testing Approaches
+/// ========================================================================
+///
+/// | Approach | Setup | Speed | Data | Accuracy | Cost |
+/// |----------|-------|-------|------|----------|------|
+/// | Mock (default) | None | ✅ Fast | Hardcoded | Low | Free |
+/// | Devnet | None | ⚠️ Slow | Real | Medium | Free |
+/// | Mainnet Fork | ⚠️ Amman | ✅ Fast | Real | High | Free |
+/// | Mainnet RPC | None | ❌ Slow | Real | High | Free* |
+/// | Live Mainnet | None | ❌ Slow | Real | ✅ Perfect | ⚠️ $$$ |
+///
+/// * Free = Only read operations
+///
+/// RECOMMENDATION FOR ARBITRAGE TESTING:
+/// 1. Development: Use mock simulator (current)
+/// 2. Integration: Use mainnet fork (Amman)
+/// 3. Validation: Use mainnet RPC read-only
+/// 4. Production: Use live mainnet with small amounts
+#[allow(dead_code)]
+const _TESTING_NOTES: &str = "See comments above for testing strategies";
+
 #[cfg(test)]
 mod fork_tests {
     use crate::common::*;
@@ -400,10 +422,10 @@ mod fork_tests {
                     calculated_percent
                 );
                 // Profit might be slightly different due to fees, but should be in same ballpark
-                let profit_variance = ((calculated_profit as i64 - opp.profit_amount as i64).abs()
+                let profit_variance = (calculated_profit as i64 - opp.profit_amount as i64).abs()
                     as f64
                     / opp.profit_amount as f64
-                    * 100.0);
+                    * 100.0;
                 log::info!("Variance from detected: {:.2}%", profit_variance);
                 log::info!("✅ Arbitrage calculation validated");
             }
@@ -522,25 +544,3 @@ mod fork_tests {
         log::info!("\n✅ MAINNET TEST COMPLETE - All opportunities validated");
     }
 }
-
-/// ========================================================================
-/// COMPARISON TABLE: Testing Approaches
-/// ========================================================================
-///
-/// | Approach | Setup | Speed | Data | Accuracy | Cost |
-/// |----------|-------|-------|------|----------|------|
-/// | Mock (default) | None | ✅ Fast | Hardcoded | Low | Free |
-/// | Devnet | None | ⚠️ Slow | Real | Medium | Free |
-/// | Mainnet Fork | ⚠️ Amman | ✅ Fast | Real | High | Free |
-/// | Mainnet RPC | None | ❌ Slow | Real | High | Free* |
-/// | Live Mainnet | None | ❌ Slow | Real | ✅ Perfect | ⚠️ $$$ |
-///
-/// * Free = Only read operations
-///
-/// RECOMMENDATION FOR ARBITRAGE TESTING:
-/// 1. Development: Use mock simulator (current)
-/// 2. Integration: Use mainnet fork (Amman)
-/// 3. Validation: Use mainnet RPC read-only
-/// 4. Production: Use live mainnet with small amounts
-#[allow(dead_code)]
-const _TESTING_NOTES: &str = "See comments above for testing strategies";

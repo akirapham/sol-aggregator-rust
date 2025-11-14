@@ -4,19 +4,11 @@ use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
     parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::OracleState, types::TickArrayState,
 };
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
 
-use crate::{
-    constants::is_base_token,
-    pool_data_types::{orca::fee_rate_manager::FeeRateManager, GetAmmConfig, PoolUpdateEventType},
-    utils::tokens_equal,
-};
+use crate::{constants::is_base_token, pool_data_types::PoolUpdateEventType, utils::tokens_equal};
 
-use crate::pool_data_types::orca::{math::*, state::*};
+use crate::pool_data_types::orca::math::*;
 
 // Whirlpool sqrt price limits (same as Raydium CLMM)
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
@@ -297,9 +289,7 @@ pub fn compute_swap_simplified(
     };
 
     // Validate price bounds
-    if adjusted_sqrt_price_limit < MIN_SQRT_PRICE_X64
-        || adjusted_sqrt_price_limit > MAX_SQRT_PRICE_X64
-    {
+    if !(MIN_SQRT_PRICE_X64..=MAX_SQRT_PRICE_X64).contains(&adjusted_sqrt_price_limit) {
         return Err("SqrtPriceOutOfBounds".to_string());
     }
 
@@ -318,7 +308,7 @@ pub fn compute_swap_simplified(
     let mut amount_remaining: u64 = amount;
     let mut amount_calculated: u64 = 0;
     let mut curr_sqrt_price_mut = curr_sqrt_price;
-    let mut curr_liquidity_mut = curr_liquidity;
+    let curr_liquidity_mut = curr_liquidity;
     let mut fee_sum: u64 = 0;
 
     // SIMPLIFIED VERSION: Single step (not multi-step like official)

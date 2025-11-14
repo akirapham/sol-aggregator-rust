@@ -1,4 +1,3 @@
-use log;
 use serde::{Deserialize, Serialize};
 use solana_client::rpc_client::RpcClient;
 /// Real Arbitrage Execution Handler

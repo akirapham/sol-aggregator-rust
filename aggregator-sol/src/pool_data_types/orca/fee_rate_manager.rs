@@ -1,8 +1,5 @@
 use crate::pool_data_types::orca::{
-    math::{
-        ceil_division_u128, ceil_division_u32, floor_division, sqrt_price_from_tick_index,
-        tick_index_from_sqrt_price,
-    },
+    math::{ceil_division_u128, ceil_division_u32, floor_division, sqrt_price_from_tick_index},
     state::{
         AdaptiveFeeConstants, AdaptiveFeeInfo, AdaptiveFeeVariables,
         ADAPTIVE_FEE_CONTROL_FACTOR_DENOMINATOR, MAX_TICK_INDEX, MIN_TICK_INDEX,

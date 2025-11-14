@@ -226,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tried.push(requested.clone());
 
         // Fallback inside aggregator-sol directory
-        let fallback1 = PathBuf::from(env::current_dir()?)
+        let fallback1 = (env::current_dir()?)
             .join("aggregator-sol")
             .join(&arb_config_path);
         tried.push(fallback1.clone());

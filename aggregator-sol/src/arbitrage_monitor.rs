@@ -3,7 +3,6 @@ use crate::arbitrage_config::ArbitrageConfig;
 use crate::on_chain_swap_executor::OnChainArbitrageExecutor;
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
-use log;
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use solana_client::rpc_client::RpcClient;

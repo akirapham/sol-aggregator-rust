@@ -1,4 +1,3 @@
-use log;
 use serde::{Deserialize, Serialize};
 use solana_client::rpc_client::RpcClient;
 /// On-Chain Swap Execution Module
@@ -206,7 +205,7 @@ impl OrcaWhirlpoolSwapExecutor {
             amount_in: params.input_amount,
             amount_out: Some(params.min_output_amount),
             error_message: None,
-            dex_type: params.dex_type.clone(),
+            dex_type: params.dex_type,
             executed_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -721,7 +720,7 @@ mod tests {
 
         assert!(result.is_ok());
         let instruction = result.unwrap();
-        assert!(instruction.data.len() > 0);
+        assert!(!instruction.data.is_empty());
     }
 
     #[test]

@@ -135,7 +135,7 @@ impl DbcPoolState {
         _input_token: &Pubkey,
         _input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-    ) -> u64 {
+    ) -> Result<u64, Box<dyn std::error::Error>> {
         // let is_buy = tokens_equal(input_token, &get_sol_mint());
 
         // if is_buy {
@@ -157,7 +157,7 @@ impl DbcPoolState {
         //         0,
         //     )
         // }
-        0
+        Ok(0)
     }
 
     pub fn calculate_token_prices(

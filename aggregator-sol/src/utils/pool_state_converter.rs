@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-
+use crate::pool_data_types::DexType;
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::MutexGuard;
 

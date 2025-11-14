@@ -20,7 +20,7 @@ max_concurrent_checks = 10  # Maximum concurrent arbitrage checks
 [[monitored_tokens]]
 address = "So11111111111111111111111111111111111111112"  # SOL (Wrapped)
 symbol = "SOL"
-enabled = false
+enabled = true
 
 [[monitored_tokens]]
 address = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"  # USDT

@@ -74,10 +74,14 @@ impl BonkPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-    ) -> u64 {
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        if input_amount == 0 {
+            return Err("Input amount cannot be zero".into());
+        }
+        
         let is_buy = tokens_equal(input_token, &get_sol_mint());
 
-        if is_buy {
+        let output = if is_buy {
             get_buy_token_amount_from_sol_amount(
                 input_amount,
                 self.base_reserve as u128,
@@ -95,7 +99,9 @@ impl BonkPoolState {
                 self.real_quote as u128,
                 0,
             )
-        }
+        };
+        
+        Ok(output)
     }
 
     pub fn calculate_token_prices(

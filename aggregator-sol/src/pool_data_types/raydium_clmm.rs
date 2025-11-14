@@ -145,13 +145,17 @@ impl RaydiumClmmPoolState {
         Pubkey::new_from_array(*RAYDIUM_CLMM_PROGRAM_ID.as_array())
     }
 
-    /// Calculate output amount for PumpFun bonding curve
+    /// Calculate output amount using Raydium CLMM pool state
     pub async fn calculate_output_amount(
         &self,
         input_token: &Pubkey,
         input_amount: u64,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> u64 {
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        if input_amount == 0 {
+            return Err("Input amount cannot be zero".into());
+        }
+
         let (token0, _) = (self.token_mint0, self.token_mint1);
         let input_is_token0 = tokens_equal(input_token, &token0);
         let sqrt_price_limit_x64 = if input_is_token0 {
@@ -160,7 +164,6 @@ impl RaydiumClmmPoolState {
             MAX_SQRT_PRICE_X64 - 1
         };
 
-        // dont take transfer tax into account for now, users should account for it un their slippage
         let real_input_amount = input_amount;
         self.get_output_amount(
             real_input_amount,
@@ -177,28 +180,34 @@ impl RaydiumClmmPoolState {
         input_token: &Pubkey,
         _sqrt_price_limit_x64: u128,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> u64 {
-        // create pool info
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        let amm_config = amm_config_fetcher
+            .get_raydium_clmm_amm_config(&self.amm_config)
+            .await?
+            .ok_or("AMM config not found")?;
+
         let pool_info = ComputeClmmPoolInfo::new(
             self.address,
             Self::get_program_id(),
             self,
             self.tick_array_bitmap_extension.as_ref(),
-            amm_config_fetcher
-                .get_raydium_clmm_amm_config(&self.amm_config)
-                .await
-                .unwrap_or(None),
+            Some(amm_config),
         );
+
         let result = PoolUtils::get_output_amount_and_remain_accounts(
             &pool_info,
             &self.tick_array_state,
             input_token,
             rug::Integer::from(input_amount),
-        );
-        match result {
-            Ok(output) => output.expected_amount_out.abs().to_u64().unwrap_or(0),
-            Err(_) => 0,
-        }
+        )?;
+
+        let output_amount = result
+            .expected_amount_out
+            .abs()
+            .to_u64()
+            .ok_or("Failed to convert output amount to u64")?;
+
+        Ok(output_amount)
     }
 
     pub fn calculate_token_prices(

@@ -48,18 +48,6 @@ pub enum OpportunityStatus {
     Failed,
 }
 
-/// Dashboard summary of arbitrage opportunities
-#[derive(Debug, Clone)]
-pub struct DashboardSummary {
-    pub total_pending: usize,
-    pub total_executing: usize,
-    pub total_executed: usize,
-    pub total_profit: u64,
-    pub pending_opportunities: Vec<ArbitrageOpportunity>,
-    pub executing_opportunities: Vec<ArbitrageOpportunity>,
-    pub executed_opportunities: Vec<ArbitrageOpportunity>,
-}
-
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
 #[derive(Clone)]
 pub struct ArbitrageMonitor {
@@ -265,8 +253,8 @@ impl ArbitrageMonitor {
                         profit
                     );
 
-                    // Execute the transaction (await directly, no spawn needed)
-                    self.execute_opportunity(opportunity).await;
+                    // // Execute the transaction (await directly, no spawn needed)
+                    // self.execute_opportunity(opportunity).await;
                 }
             }
             None => {

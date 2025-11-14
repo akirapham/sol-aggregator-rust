@@ -76,7 +76,11 @@ impl RaydiumAmmV4PoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-    ) -> u64 {
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        if input_amount == 0 {
+            return Err("Input amount cannot be zero".into());
+        }
+        
         let (base_token, _) = (self.base_mint, self.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);
         let (input_reserve, output_reserve) = if input_is_base {
@@ -89,7 +93,7 @@ impl RaydiumAmmV4PoolState {
             (input_reserve as u128 * output_reserve as u128 / new_input_reserve) as u64;
         let output_amount = output_reserve - new_output_reserve;
 
-        output_amount * 9975 / 10000 // Apply 0.25% fee
+        Ok(output_amount * 9975 / 10000) // Apply 0.25% fee
     }
 
     pub fn calculate_token_prices(

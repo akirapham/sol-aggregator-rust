@@ -364,7 +364,7 @@ impl PoolStateManager {
         let pending_pools_to_fetch_tick_arrays =
             Arc::clone(&self.pending_pools_to_fetch_tick_arrays);
         let pools = Arc::clone(&self.pools);
-        let rpc_client = self.rpc_client.clone();
+        let rpc_client: Arc<RpcClient> = self.rpc_client.clone();
         let tick_synced_pools = Arc::clone(&self.tick_synced_pools);
         let pool_update_tx = self.get_pool_update_sender();
 

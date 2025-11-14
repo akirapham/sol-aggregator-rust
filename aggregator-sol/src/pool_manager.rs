@@ -9,7 +9,7 @@ use crate::pool_data_types::{
     WhirlpoolPoolUpdate,
 };
 use crate::types::Token;
-use crate::types::{ChainStateUpdate, PoolUpdateEvent};
+use crate::types::{AggregatorConfig, ChainStateUpdate, PoolUpdateEvent};
 use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ use futures::stream::{self, StreamExt};
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_commitment_config::CommitmentConfig;
+use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
@@ -112,13 +112,15 @@ pub struct PoolStateManager {
     arbitrage_monitored_tokens: Arc<RwLock<HashSet<Pubkey>>>,
     /// Timestamp when the application started (used to filter stale pools)
     startup_time: SystemTime,
+    /// Application configuration with DEX enable/disable flags
+    config: AggregatorConfig,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SerializablePools(HashMap<Pubkey, PoolState>);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SerializableTokenCache(HashMap<Pubkey, Token>);
 
 #[allow(dead_code)]
@@ -127,6 +129,9 @@ impl PoolStateManager {
         grpc_service: Arc<GrpcService>,
         price_service: Arc<BinancePriceStream>,
     ) -> Self {
+        // Load configuration from environment
+        let config = ConfigLoader::load().expect("Failed to load configuration");
+
         // Initialize RocksDB
         let db_path = "./rocksdb_data"; // Customize path as needed
         let mut opts = Options::default();
@@ -147,7 +152,7 @@ impl PoolStateManager {
             token_cache: Arc::new(RwLock::new(HashMap::new())),
             pool_update_tx,
             rpc_client: Arc::new(RpcClient::new_with_commitment(
-                ConfigLoader::load().unwrap().rpc_url.clone(),
+                config.rpc_url.clone(),
                 CommitmentConfig::processed(),
             )),
             arbitrage_pool_tx,
@@ -163,6 +168,7 @@ impl PoolStateManager {
             tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
             arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
             startup_time: SystemTime::now(),
+            config,
         };
 
         // Load data from RocksDB on startup
@@ -497,7 +503,10 @@ impl PoolStateManager {
                                                         pool_state_part: None,
                                                         reserve_part: None,
                                                         tick_array_state: Some(orca_whirlpools::types::TickArrayState {
-                                                            whirlpool: tick_array_state.whirlpool(),
+                                                            whirlpool: {
+                                                                let pk_str = tick_array_state.whirlpool().to_string();
+                                                                pk_str.parse().unwrap_or_else(|_| Default::default())
+                                                            },
                                                             start_tick_index: tick_array_state.start_tick_index(),
                                                             ticks: {
                                                                 let tick_vec: Vec<_> = tick_array_state.ticks().iter().map(|tick| orca_whirlpools::types::Tick {
@@ -513,6 +522,7 @@ impl PoolStateManager {
                                                                 })
                                                             },
                                                         }),
+                                                        oracle_state: None,
                                                         last_updated: recv_us as u64,
                                                         is_account_state_update: true,
                                                         pool_update_event_type: PoolUpdateEventType::WhirlpoolTickArrayStateAccount,
@@ -524,11 +534,17 @@ impl PoolStateManager {
                                                 });
                                             }
                                             Err(e) => {
-                                                log::error!(
-                                                    "Failed to fetch tick arrays for Raydium CLMM pool {:?}: {:?}",
+                                                log::warn!(
+                                                    "Failed to fetch tick arrays for Orca Whirlpool {:?}: {:?}. Marking as synced anyway to allow routing.",
                                                     whirlpool_pool_state.address,
                                                     e
                                                 );
+                                                // Even if tick array fetch fails, mark as synced so the pool can be used for routing
+                                                // This allows routing with just the current pool state without full tick traversal
+                                                {
+                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
+                                                    tick_synced.insert(pool_id);
+                                                }
                                             }
                                         }
                                     }
@@ -1157,7 +1173,11 @@ impl PoolStateManager {
         let pools = self.pools.read().await;
         if let Some(pool_mutex) = pools.get(pool_address) {
             let pool_guard = pool_mutex.lock().await;
-            Some((*pool_guard).clone())
+            if !self.is_pool_stale(&(*pool_guard).clone()) {
+                Some((*pool_guard).clone())
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -1365,7 +1385,61 @@ impl PoolStateManager {
             let pool_state = &*pool_guard;
 
             match &pool_state {
+                PoolState::Pumpfun(_) => {
+                    if !self.config.enable_pumpfun {
+                        log::debug!(
+                            "Skipping Pumpfun pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
+                PoolState::PumpSwap(_) => {
+                    if !self.config.enable_pumpfun_swap {
+                        log::debug!(
+                            "Skipping PumpSwap pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
+                PoolState::RaydiumAmmV4(_) => {
+                    if !self.config.enable_raydium_amm_v4 {
+                        log::debug!(
+                            "Skipping Raydium AMM V4 pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
+                PoolState::RaydiumCpmm(cpmm_pool_state) => {
+                    if !self.config.enable_raydium_cpmm {
+                        log::debug!(
+                            "Skipping Raydium CPMM pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                    raydium_cpmm_amm_configs_set.insert(cpmm_pool_state.amm_config);
+                }
+                PoolState::Bonk(_) => {
+                    if !self.config.enable_bonk {
+                        log::debug!(
+                            "Skipping Bonk pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
                 PoolState::RadyiumClmm(clmm_pool_state) => {
+                    if !self.config.enable_raydium_clmm {
+                        log::debug!(
+                            "Skipping Raydium CLMM pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+
                     // add pool to pending pools to fetch tick arrays
                     let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
                     pending.insert(PoolForTickFetching {
@@ -1376,7 +1450,24 @@ impl PoolStateManager {
 
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);
                 }
+                PoolState::MeteoraDbc(_) => {
+                    if !self.config.enable_meteora_dbc {
+                        log::debug!(
+                            "Skipping Meteora DBC pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
                 PoolState::OrcaWhirlpool(_) => {
+                    if !self.config.enable_orca_whirlpools {
+                        log::debug!(
+                            "Skipping OrcaWhirlpool pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+
                     // add pool to pending pools to fetch tick arrays
                     let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
                     pending.insert(PoolForTickFetching {
@@ -1385,10 +1476,6 @@ impl PoolStateManager {
                     });
                     drop(pending); // release lock early
                 }
-                PoolState::RaydiumCpmm(cpmm_pool_state) => {
-                    raydium_cpmm_amm_configs_set.insert(cpmm_pool_state.amm_config);
-                }
-                _ => {}
             }
 
             let (token_a, token_b) = pool_state.get_tokens();

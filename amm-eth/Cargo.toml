@@ -23,3 +23,4 @@ num-bigint = { workspace = true }
 num-traits = { workspace = true }
 reqwest = { workspace = true }
 hex = { workspace = true }
+eth-dex-quote = { path = "../crates/eth-dex-quote" }

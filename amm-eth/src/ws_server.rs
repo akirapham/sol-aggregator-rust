@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use dashmap::DashMap;
+use eth_dex_quote::{EthChain, TokenPrice};
 use ethers::types::Address;
 use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
@@ -11,8 +12,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
-
-use crate::types::TokenPrice;
 
 /// Message types that can be sent to clients
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +35,10 @@ pub struct TokenPriceUpdate {
     pub pool_address: String,
     pub dex_version: String,
     pub decimals: u8,
+    pub pool_token0: Address,
+    pub pool_token1: Address,
+    pub eth_chain: EthChain,
+    pub fee_tier: Option<u32>,
 }
 
 impl From<TokenPrice> for TokenPriceUpdate {
@@ -48,6 +51,10 @@ impl From<TokenPrice> for TokenPriceUpdate {
             pool_address: format!("{:?}", price.pool_address),
             dex_version: format!("{:?}", price.dex_version),
             decimals: price.decimals,
+            pool_token0: price.pool_token0,
+            pool_token1: price.pool_token1,
+            eth_chain: price.eth_chain,
+            fee_tier: price.fee_tier,
         }
     }
 }

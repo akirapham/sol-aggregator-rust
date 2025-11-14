@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::parser::ORCA_WHIRLPOOL_PROGRAM_ID;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::pool_data_types::orca_whirlpool::WhirlpoolPoolState;
@@ -33,7 +34,10 @@ pub struct AdaptiveFeeConstants {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Oracle {
     pub discriminator: [u8; 8],
-    #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
     pub whirlpool: Pubkey,
     pub trade_enable_timestamp: u64,
     pub adaptive_fee_constants: AdaptiveFeeConstants,
@@ -52,7 +56,6 @@ pub struct AdaptiveFeeVariables {
     pub volatility_accumulator: u32,
     pub reserved: [u8; 16],
 }
-
 
 #[allow(unused)]
 #[derive(Clone, Debug)]
@@ -511,15 +514,20 @@ impl OrcaTickArrayFetcher {
             return Ok(None);
         }
         let oracle_address = get_oracle_address(whirlpool).0;
-        let oracle_info = rpc.get_account(&oracle_address).await?;
-        Ok(Some(Oracle::from_bytes(&oracle_info.data)?))
+        let oracle_info = self.rpc_client.get_account(&oracle_address).await?;
+        // Ok(Some(Oracle::from_bytes(&oracle_info.data)?))
+
+        let oracle = Oracle::try_from_slice(&oracle_info.data)
+            .map_err(|e| anyhow!("Failed to deserialize oracle: {}", e))?;
+        Ok(Some(oracle))
     }
 }
 
 pub fn get_oracle_address(whirlpool: &Pubkey) -> (Pubkey, u8) {
     let seeds: &[&[u8]; 2] = &[b"oracle", whirlpool.as_ref()];
-
-    Pubkey::try_find_program_address(seeds, &ORCA_WHIRLPOOL_PROGRAM_ID).unwrap()
+    let program_id = Pubkey::from_str(&ORCA_WHIRLPOOL_PROGRAM_ID.to_string())
+        .unwrap_or_else(|_| Pubkey::default());
+    Pubkey::try_find_program_address(seeds, &program_id).unwrap()
 }
 
 #[cfg(test)]

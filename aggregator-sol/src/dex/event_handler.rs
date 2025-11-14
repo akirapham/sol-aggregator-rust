@@ -25,9 +25,10 @@ use solana_streamer_sdk::{
                     WhirlpoolConfigAccountEvent, WhirlpoolDecreaseLiquidityEvent,
                     WhirlpoolDecreaseLiquidityV2Event, WhirlpoolIncreaseLiquidityEvent,
                     WhirlpoolIncreaseLiquidityV2Event, WhirlpoolInitializePoolEvent,
-                    WhirlpoolInitializePoolV2Event, WhirlpoolPoolStateAccountEvent,
-                    WhirlpoolSwapEvent, WhirlpoolSwapV2Event, WhirlpoolTickArrayStateAccountEvent,
-                    WhirlpoolTwoHopSwapEvent, WhirlpoolTwoHopSwapV2Event,
+                    WhirlpoolInitializePoolV2Event, WhirlpoolOracleStateAccountEvent,
+                    WhirlpoolPoolStateAccountEvent, WhirlpoolSwapEvent, WhirlpoolSwapV2Event,
+                    WhirlpoolTickArrayStateAccountEvent, WhirlpoolTwoHopSwapEvent,
+                    WhirlpoolTwoHopSwapV2Event,
                 },
                 pumpfun::{
                     PumpFunBondingCurveAccountEvent, PumpFunCreateTokenEvent,
@@ -753,6 +754,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwapV2,
                                     additional_event_type: 0,
@@ -783,6 +785,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwapV2,
                                     additional_event_type: 1,
@@ -808,6 +811,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolSwap,
                                 additional_event_type: 0,
@@ -832,6 +836,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolSwapV2,
                                 additional_event_type: 0,
@@ -856,6 +861,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolDecreaseLiquidityV2,
                                 additional_event_type: 0,
@@ -880,6 +886,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolDecreaseLiquidity,
                                 additional_event_type: 0,
@@ -904,6 +911,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidityV2,
                                 additional_event_type: 0,
@@ -928,6 +936,7 @@ pub fn handle_dex_event(
                                     token_b_reserve: rb_b.amount
                                 }),
                                 tick_array_state: None,
+                                oracle_state: None,
                                 is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidity,
                                 additional_event_type: 0,
@@ -962,6 +971,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwap,
                                     additional_event_type: 0,
@@ -987,6 +997,7 @@ pub fn handle_dex_event(
                                         token_b_reserve: rb_b.amount
                                     }),
                                     tick_array_state: None,
+                                    oracle_state: None,
                                     is_account_state_update: false,
                                     pool_update_event_type: PoolUpdateEventType::WhirlpoolTwoHopSwap,
                                     additional_event_type: 0,
@@ -1203,6 +1214,7 @@ pub fn handle_dex_event(
                         }),
                         reserve_part: None,
                         tick_array_state: None,
+                        oracle_state: None,
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::WhirlpoolPoolStateAccount,
                         additional_event_type: 0, // for tick array index tracking, 0 for others
@@ -1220,9 +1232,26 @@ pub fn handle_dex_event(
                         pool_state_part: None,
                         reserve_part: None,
                         tick_array_state: Some(e.tick_array_state.clone()),
+                        oracle_state: None,
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::WhirlpoolTickArrayStateAccount,
                         additional_event_type: e.tick_array_state.start_tick_index,
+                    })));
+            },
+            WhirlpoolOracleStateAccountEvent => |e: WhirlpoolOracleStateAccountEvent| {
+                pool_update_events.push(PoolUpdateEvent::Whirlpool(
+                    Box::new(WhirlpoolPoolUpdate {
+                        address:e.oracle_state.whirlpool,
+                        slot:e.metadata.slot,
+                        transaction_index:e.metadata.transaction_index,
+                        last_updated: e.metadata.recv_us as u64,
+                        pool_state_part: None,
+                        reserve_part: None,
+                        tick_array_state: None,
+                        oracle_state: Some(e.oracle_state.clone()),
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::WhirlpoolOracleStateAccount,
+                        additional_event_type: 0,
                     })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {

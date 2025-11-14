@@ -1,13 +1,19 @@
 use crate::aggregator::DexAggregator;
 use crate::arbitrage_config::ArbitrageConfig;
+use crate::on_chain_swap_executor::OnChainArbitrageExecutor;
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
+use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signer::keypair::Keypair;
+use solana_sdk::signer::Signer;
+use std::collections::HashSet;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 
 /// Detected arbitrage opportunity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,29 +27,73 @@ pub struct ArbitrageOpportunity {
     pub forward_output: u64,
     pub reverse_output: u64,
     pub detected_at: u64,
+    #[serde(default)]
+    pub status: OpportunityStatus, // Track execution status
+    #[serde(default)]
+    pub swapped_at: u64, // Timestamp when executed
 }
 
-/// Active arbitrage monitor that watches pool updates
+/// Status of an arbitrage opportunity
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum OpportunityStatus {
+    #[default]
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "executing")]
+    Executing,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
+/// Dashboard summary of arbitrage opportunities
+#[derive(Debug, Clone)]
+pub struct DashboardSummary {
+    pub total_pending: usize,
+    pub total_executing: usize,
+    pub total_executed: usize,
+    pub total_profit: u64,
+    pub pending_opportunities: Vec<ArbitrageOpportunity>,
+    pub executing_opportunities: Vec<ArbitrageOpportunity>,
+    pub executed_opportunities: Vec<ArbitrageOpportunity>,
+}
+
+/// Active arbitrage monitor that watches pool updates and executes on mainnet
+#[derive(Clone)]
 pub struct ArbitrageMonitor {
     aggregator: Arc<DexAggregator>,
     config: ArbitrageConfig,
     db: Arc<DB>,
+    executing_opportunities: Arc<RwLock<HashSet<String>>>, // Track opportunities being executed
+    rpc_client: Arc<RpcClient>,                            // Mainnet RPC connection
+    keypair: Arc<Keypair>,                                 // Keypair for transaction signing
 }
 
 impl ArbitrageMonitor {
+    /// Create a new arbitrage monitor configured for mainnet execution
     pub fn new(
         aggregator: Arc<DexAggregator>,
         config: ArbitrageConfig,
         db_path: impl AsRef<Path>,
+        rpc_url: &str,
+        keypair: Arc<Keypair>,
     ) -> Result<Self, rocksdb::Error> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         let db = DB::open(&opts, db_path)?;
+        let rpc_client = Arc::new(RpcClient::new(rpc_url.to_string()));
+
+        log::info!("🌐 Arbitrage Monitor initialized for mainnet: {}", rpc_url);
+        log::info!("📍 Signer pubkey: {}", keypair.pubkey());
 
         Ok(Self {
             aggregator,
             config,
             db: Arc::new(db),
+            executing_opportunities: Arc::new(RwLock::new(HashSet::new())),
+            rpc_client,
+            keypair,
         })
     }
 
@@ -158,27 +208,53 @@ impl ArbitrageMonitor {
             .calculate_arbitrage_profit(&swap_params, &token_b, self.config.settings.slippage_bps)
             .await
         {
-            Some((profit, forward_route, reverse_route)) => {
+            Some((profit, forward_route, reverse_route, reverse)) => {
                 let profit_percent =
                     (profit as f64 / self.config.settings.base_amount as f64) * 100.0;
-
                 // Check if profit meets minimum threshold
                 let profit_bps = (profit_percent * 100.0) as u64;
                 if profit_bps >= self.config.settings.min_profit_bps {
-                    let opportunity = ArbitrageOpportunity {
-                        pair_name: format!("{}-{}", token_a, token_b),
-                        token_a: token_a.to_string(),
-                        token_b: token_b.to_string(),
-                        profit_amount: profit,
-                        profit_percent,
-                        input_amount: self.config.settings.base_amount,
-                        forward_output: forward_route.output_amount,
-                        reverse_output: reverse_route.output_amount,
-                        detected_at: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
-                    };
+                    let opportunity;
+                    if reverse {
+                        opportunity = ArbitrageOpportunity {
+                            pair_name: format!("{}-{}", token_b, token_a),
+                            token_a: token_b.to_string(),
+                            token_b: token_a.to_string(),
+                            profit_amount: profit,
+                            profit_percent,
+                            input_amount: self.config.settings.base_amount,
+                            forward_output: reverse_route.output_amount,
+                            reverse_output: forward_route.output_amount,
+                            detected_at: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                            status: OpportunityStatus::Pending,
+                            swapped_at: 0,
+                        };
+                    } else {
+                        opportunity = ArbitrageOpportunity {
+                            pair_name: format!("{}-{}", token_a, token_b),
+                            token_a: token_a.to_string(),
+                            token_b: token_b.to_string(),
+                            profit_amount: profit,
+                            profit_percent,
+                            input_amount: self.config.settings.base_amount,
+                            forward_output: forward_route.output_amount,
+                            reverse_output: reverse_route.output_amount,
+                            detected_at: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                            status: OpportunityStatus::Pending,
+                            swapped_at: 0,
+                        };
+                    }
+
+                    // Save opportunity with Pending status
+                    if let Err(e) = self.save_opportunity(&opportunity) {
+                        log::error!("Failed to save arbitrage opportunity: {}", e);
+                    }
 
                     log::info!(
                         "🎯 ARBITRAGE: {} <-> {} | Profit: {:.4}% ({} lamports)",
@@ -188,16 +264,87 @@ impl ArbitrageMonitor {
                         profit
                     );
 
-                    // Save opportunity to RocksDB
-                    if let Err(e) = self.save_opportunity(&opportunity) {
-                        log::error!("Failed to save arbitrage opportunity: {}", e);
-                    }
+                    // Execute the transaction (await directly, no spawn needed)
+                    self.execute_opportunity(opportunity).await;
                 }
             }
             None => {
                 // No profitable arbitrage
                 log::debug!("No profitable arbitrage for {} -> {}", token_a, token_b);
             }
+        }
+    }
+
+    /// Execute an arbitrage opportunity
+    async fn execute_opportunity(&self, mut opportunity: ArbitrageOpportunity) {
+        let opp_key = format!("{}:{}", opportunity.detected_at, opportunity.pair_name);
+
+        // Check if this opportunity is already being executed
+        {
+            let executing = self.executing_opportunities.read().await;
+            if executing.contains(&opp_key) {
+                log::warn!(
+                    "Opportunity {} is already executing, skipping duplicate execution",
+                    opp_key
+                );
+                return;
+            }
+        }
+
+        // Mark as executing
+        {
+            let mut executing = self.executing_opportunities.write().await;
+            executing.insert(opp_key.clone());
+        }
+
+        // Update status to Executing and save
+        opportunity.status = OpportunityStatus::Executing;
+        if let Err(e) = self.save_opportunity(&opportunity) {
+            log::error!("Failed to save opportunity with Executing status: {}", e);
+            // Remove from executing set
+            let mut executing = self.executing_opportunities.write().await;
+            executing.remove(&opp_key);
+            return;
+        }
+
+        log::info!(
+            "🚀 Executing arbitrage opportunity: {} -> {}",
+            opportunity.token_a,
+            opportunity.token_b
+        );
+
+        // Execute real arbitrage on mainnet
+        let execution_result = self.execute_arbitrage_on_mainnet(&opportunity).await;
+
+        // Update status based on execution result
+        if execution_result.is_ok() {
+            opportunity.status = OpportunityStatus::Completed;
+            opportunity.swapped_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            log::info!(
+                "✅ Arbitrage opportunity executed successfully: {}",
+                opp_key
+            );
+        } else {
+            opportunity.status = OpportunityStatus::Failed;
+            log::error!(
+                "❌ Arbitrage opportunity execution failed: {} - {:?}",
+                opp_key,
+                execution_result.err()
+            );
+        }
+
+        // Save opportunity with updated status
+        if let Err(e) = self.save_opportunity(&opportunity) {
+            log::error!("Failed to save opportunity with final status: {}", e);
+        }
+
+        // Remove from executing set
+        {
+            let mut executing = self.executing_opportunities.write().await;
+            executing.remove(&opp_key);
         }
     }
 
@@ -277,5 +424,81 @@ impl ArbitrageMonitor {
         }
 
         Ok(deleted_count)
+    }
+
+    /// Execute arbitrage transaction on mainnet
+    async fn execute_arbitrage_on_mainnet(
+        &self,
+        opportunity: &ArbitrageOpportunity,
+    ) -> Result<(), String> {
+        log::info!(
+            "💰 Executing mainnet arbitrage: {} {} -> {}",
+            opportunity.input_amount,
+            opportunity.token_a,
+            opportunity.token_b
+        );
+
+        // Get latest blockhash for transaction
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
+
+        log::debug!("Latest blockhash: {}", recent_blockhash);
+
+        // Build forward swap parameters
+        let forward_params = crate::on_chain_swap_executor::OnChainSwapParams {
+            dex_type: crate::pool_data_types::DexType::Orca, // Detect from opportunity
+            input_token_mint: Pubkey::from_str(&opportunity.token_a)
+                .map_err(|e| format!("Invalid token_a: {}", e))?,
+            output_token_mint: Pubkey::from_str(&opportunity.token_b)
+                .map_err(|e| format!("Invalid token_b: {}", e))?,
+            input_amount: opportunity.input_amount,
+            min_output_amount: (opportunity.forward_output as f64 * 0.99) as u64, // 1% slippage
+            pool_address: Pubkey::default(), // Should come from opportunity
+            user_wallet: self.keypair.pubkey(),
+            user_input_ata: Pubkey::default(), // Should be resolved
+            user_output_ata: Pubkey::default(), // Should be resolved
+            fee_payer: self.keypair.pubkey(),
+            slippage_tolerance_bps: self.config.settings.slippage_bps,
+            priority: ExecutionPriority::High,
+        };
+
+        // Build reverse swap parameters
+        let reverse_params = crate::on_chain_swap_executor::OnChainSwapParams {
+            dex_type: crate::pool_data_types::DexType::Orca,
+            input_token_mint: Pubkey::from_str(&opportunity.token_b)
+                .map_err(|e| format!("Invalid token_b: {}", e))?,
+            output_token_mint: Pubkey::from_str(&opportunity.token_a)
+                .map_err(|e| format!("Invalid token_a: {}", e))?,
+            input_amount: opportunity.forward_output,
+            min_output_amount: (opportunity.reverse_output as f64 * 0.99) as u64, // 1% slippage
+            pool_address: Pubkey::default(),
+            user_wallet: self.keypair.pubkey(),
+            user_input_ata: Pubkey::default(),
+            user_output_ata: Pubkey::default(),
+            fee_payer: self.keypair.pubkey(),
+            slippage_tolerance_bps: self.config.settings.slippage_bps,
+            priority: ExecutionPriority::High,
+        };
+
+        // Execute on mainnet using OnChainArbitrageExecutor
+        log::info!("📤 Submitting arbitrage transaction to mainnet...");
+
+        let _execution_result = OnChainArbitrageExecutor::execute_arbitrage_cycle(
+            &forward_params,
+            &reverse_params,
+            recent_blockhash,
+            self.keypair.as_ref(),
+            self.rpc_client.as_ref(),
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| format!("Arbitrage execution failed: {}", e))?;
+
+        log::info!("✅ Mainnet arbitrage executed successfully");
+
+        Ok(())
     }
 }

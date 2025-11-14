@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -125,7 +126,7 @@ pub struct DbcPoolUpdate {
 #[allow(dead_code)]
 impl DbcPoolState {
     pub fn get_program_id() -> Pubkey {
-        DBC_PROGRAM_ID
+        Pubkey::from_str(&DBC_PROGRAM_ID.to_string()).unwrap_or_else(|_| Pubkey::default())
     }
 
     /// Calculate output amount for PumpFun bonding curve

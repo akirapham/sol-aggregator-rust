@@ -44,20 +44,42 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 } else {
                     0.0
                 };
+
+                // Format status based on OpportunityStatus
+                let status_html = match &opp.status {
+                    crate::arbitrage_monitor::OpportunityStatus::Completed => {
+                        let swapped_secs = opp.swapped_at;
+                        let swapped_timestamp =
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(swapped_secs);
+                        let swapped_datetime = format!("{:?}", swapped_timestamp);
+                        format!("<span class='status-badge completed'>✅ Completed<br><small>{}</small></span>", swapped_datetime)
+                    }
+                    crate::arbitrage_monitor::OpportunityStatus::Executing => {
+                        "<span class='status-badge executing'>🔄 Executing</span>".to_string()
+                    }
+                    crate::arbitrage_monitor::OpportunityStatus::Failed => {
+                        "<span class='status-badge failed'>❌ Failed</span>".to_string()
+                    }
+                    crate::arbitrage_monitor::OpportunityStatus::Pending => {
+                        "<span class='status-badge pending'>⏳ Pending</span>".to_string()
+                    }
+                };
+
                 opp_html.push_str(&format!(
-                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td></tr>",
+                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
                     datetime,
                     &opp.pair_name,
                     opp.token_a.chars().take(6).collect::<String>(),
                     opp.token_b.chars().take(6).collect::<String>(),
                     opp.profit_amount as f64 / 1_000_000.0,
-                    profit_pct
+                    profit_pct,
+                    status_html
                 ));
             }
 
             if opp_html.is_empty() {
                 opp_html =
-                    "<tr><td colspan='5' class='no-data'>No opportunities found yet</td></tr>"
+                    "<tr><td colspan='6' class='no-data'>No opportunities found yet</td></tr>"
                         .to_string();
             }
 
@@ -194,6 +216,31 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             color: #999;
         }}
 
+        .status-badge {{
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+
+        .status-badge.pending {{
+            background: #fff3cd;
+            color: #856404;
+        }}
+
+        .status-badge.swapped {{
+            background: #d4edda;
+            color: #155724;
+        }}
+
+        .status-badge small {{
+            display: block;
+            font-size: 10px;
+            margin-top: 2px;
+            font-weight: 400;
+        }}
+
         .footer {{
             text-align: center;
             color: white;
@@ -256,6 +303,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                         <th>Route</th>
                         <th>Profit</th>
                         <th>Profit %</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>

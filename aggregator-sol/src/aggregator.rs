@@ -379,7 +379,7 @@ impl DexAggregator {
                             self_arc.clone(),
                         )
                         .await;
-                    splits_with_distributions[split_index][i] = Some(SwapPath {
+                    splits_with_distributions[0][i] = Some(SwapPath {
                         steps: vec![SwapStepInternal {
                             dex: swap_step.dex,
                             input_token: swap_step.input_token,
@@ -529,7 +529,7 @@ impl DexAggregator {
         token_a: &SwapParams,
         token_b_address: &Pubkey,
         slippage_bps: u16,
-    ) -> Option<(u64, SwapRoute, SwapRoute)> {
+    ) -> Option<(u64, SwapRoute, SwapRoute, bool)> {
         let exclude_pools: HashSet<Pubkey> = HashSet::new();
 
         // Step 1: Get best forward route from tokenA -> tokenB
@@ -576,9 +576,11 @@ impl DexAggregator {
         // Step 5: Calculate profit
         if final_token_a_amount > token_a.input_amount {
             let profit = final_token_a_amount - token_a.input_amount;
-            Some((profit, forward_route, reverse_route))
+            Some((profit, forward_route, reverse_route, false))
         } else {
-            None
+            // None
+            let profit = token_a.input_amount - final_token_a_amount;
+            Some((profit, forward_route, reverse_route, true))
         }
     }
 

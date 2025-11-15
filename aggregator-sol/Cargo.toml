@@ -91,7 +91,7 @@ toml = { workspace = true }
 binance-price-stream = { path = "../crates/binance-price-stream" }
 uint = "0.10.0"
 orca_whirlpools_client = { git = "https://github.com/orca-so/whirlpools", branch = "main" }
-orca_whirlpools_core = { workspace = true }
+orca_whirlpools_core = { git = "https://github.com/orca-so/whirlpools", branch = "main" }
 
 [features]
 default = ["bincode", "serde"]

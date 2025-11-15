@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use solana_client::nonblocking::rpc_client::RpcClient;
 use sol_trade_sdk::utils::calc::bonk::{
     get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount,
 };
@@ -74,9 +75,10 @@ impl BonkPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+        _rpc_client: &RpcClient,
+    ) -> u64 {
         if input_amount == 0 {
-            return Err("Input amount cannot be zero".into());
+            return 0;
         }
         
         let is_buy = tokens_equal(input_token, &get_sol_mint());
@@ -101,7 +103,7 @@ impl BonkPoolState {
             )
         };
         
-        Ok(output)
+        output
     }
 
     pub fn calculate_token_prices(

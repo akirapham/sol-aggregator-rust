@@ -10,6 +10,7 @@ use crate::{
 };
 use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
 
@@ -151,9 +152,10 @@ impl RaydiumClmmPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+        rpc_client: &RpcClient,
+    ) -> u64 {
         if input_amount == 0 {
-            return Err("Input amount cannot be zero".into());
+            return 0;
         }
 
         let (token0, _) = (self.token_mint0, self.token_mint1);
@@ -180,11 +182,14 @@ impl RaydiumClmmPoolState {
         input_token: &Pubkey,
         _sqrt_price_limit_x64: u128,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
-        let amm_config = amm_config_fetcher
+    ) -> u64 {
+        let amm_config = match amm_config_fetcher
             .get_raydium_clmm_amm_config(&self.amm_config)
-            .await?
-            .ok_or("AMM config not found")?;
+            .await
+        {
+            Ok(Some(config)) => config,
+            _ => return 0,
+        };
 
         let pool_info = ComputeClmmPoolInfo::new(
             self.address,
@@ -194,20 +199,21 @@ impl RaydiumClmmPoolState {
             Some(amm_config),
         );
 
-        let result = PoolUtils::get_output_amount_and_remain_accounts(
+        match PoolUtils::get_output_amount_and_remain_accounts(
             &pool_info,
             &self.tick_array_state,
             input_token,
             rug::Integer::from(input_amount),
-        )?;
-
-        let output_amount = result
-            .expected_amount_out
-            .abs()
-            .to_u64()
-            .ok_or("Failed to convert output amount to u64")?;
-
-        Ok(output_amount)
+        ) {
+            Ok(result) => {
+                result
+                    .expected_amount_out
+                    .abs()
+                    .to_u64()
+                    .unwrap_or(0)
+            }
+            Err(_) => 0,
+        }
     }
 
     pub fn calculate_token_prices(

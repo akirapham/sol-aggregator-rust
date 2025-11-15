@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID;
 
@@ -75,9 +76,10 @@ impl RaydiumCpmmPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+        _rpc_client: &RpcClient,
+    ) -> u64 {
         if input_amount == 0 {
-            return Err("Input amount cannot be zero".into());
+            return 0;
         }
         
         let (base_token, _) = (self.token0, self.token1);
@@ -92,7 +94,7 @@ impl RaydiumCpmmPoolState {
             (input_reserve as u128 * output_reserve as u128 / new_input_reserve) as u64;
         let output_amount = output_reserve - new_output_reserve;
 
-        Ok(output_amount * 9975 / 10000) // Apply 0.25% fee
+        output_amount * 9975 / 10000 // Apply 0.25% fee
     }
 
     pub fn calculate_token_prices(

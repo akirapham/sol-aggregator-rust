@@ -88,7 +88,7 @@ tokio-test = "0.4"
 rocksdb = { version = "0.24.0" }
 bincode = {version = "2.0.1", features = ["serde"] }
 validator = { version = "0.16", features = ["derive"] }
-tokio-tungstenite = { version = "0.27.0", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.27.0", features = ["native-tls", "connect"] }
 url = "2.4"
 futures-util = "0.3"
 sol-trade-sdk = "1.1.1"

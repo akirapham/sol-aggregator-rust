@@ -5,13 +5,14 @@ use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
     parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::TickArrayState, types::OracleState
 };
-use solana_client::rpc_client::RpcClient;
+use solana_client::nonblocking::rpc_client::RpcClient;
 use std::sync::Arc;
+use log;
 
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PoolUpdateEventType, orca::fee_rate_manager::FeeRateManager
+        PoolUpdateEventType, orca::fee_rate_manager::FeeRateManager, GetAmmConfig
     },
     utils::tokens_equal,
 };
@@ -29,10 +30,16 @@ use orca_whirlpools_core::{
     get_tick_array_start_tick_index, swap_quote_by_input_token, swap_quote_by_output_token,
     ExactInSwapQuote, ExactOutSwapQuote, TickArrayFacade, TickFacade, TICK_ARRAY_SIZE,
 };
+use orca_whirlpools_core::TransferFee;
 
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use std::error::Error;
+use std::iter::zip;
+use solana_sdk::account::Account as SolanaAccount;
+use spl_token_2022::extension::transfer_fee::TransferFeeConfig;
+use spl_token_2022::extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions};
+use spl_token_2022::state::{Account, Mint};
 
 // Whirlpool sqrt price limits (same as Raydium CLMM)
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
@@ -123,40 +130,37 @@ impl WhirlpoolPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
-        let rpc = Arc::new(RpcClient::new("https://api.mainnet-beta.solana.com"));
+        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        rpc_client: &RpcClient,
+    ) -> u64 {
+        // Return 0 on any errors to avoid stack overflow
+        let result = self.calculate_output_amount_internal(
+            input_token,
+            input_amount,
+            rpc_client,
+        )
+        .await;
+        
+        match result {
+            Ok(amount) => amount,
+            Err(_e) => 0, // Return 0 on any error instead of unwrapping
+        }
+    }
 
-        // let whirlpool_address = self.address;
-        // let whirlpool_info = rpc.get_account(&whirlpool_address);
-        // let whirlpool = Whirlpool::from_bytes(&whirlpool_info.unwrap().data);
-
-        // let oracle_address = get_oracle_address(&whirlpool_address);
-        // let oracle = match rpc.get_account(&oracle_address) {
-        //     Ok(account) => {
-        //         match Oracle::from_bytes(&account.data) {
-        //             Ok(oracle) => {
-        //                 println!("✓ Oracle found (volatility index: {})", oracle.last_update_timestamp);
-        //                 Some(oracle)
-        //             }
-        //             Err(_) => {
-        //                 println!("⚠ Could not parse oracle data (static fees only)");
-        //                 None
-        //             }
-        //         }
-        //     }
-        //     Err(_) => {
-        //         println!("⚠ Oracle not found (static fees only)");
-        //         None
-        //     }
-        // };
-
+    async fn calculate_output_amount_internal(
+        &self,
+        input_token: &Pubkey,
+        input_amount: u64,
+        rpc_client: &RpcClient,
+    ) -> Result<u64, Box<dyn Error>> {
         let whirlpool_address = self.address;
-        let whirlpool_info = rpc.get_account(&whirlpool_address)?;
+        let slippage_tolerance_bps = 50;
+        
+        let whirlpool_info = rpc_client.get_account(&whirlpool_address).await?;
         let whirlpool = Whirlpool::from_bytes(&whirlpool_info.data)?;
-
-        let tick_arrays = fetch_tick_arrays_or_default(rpc, whirlpool_address, &whirlpool).await?;
-
-        let mint_infos = rpc
+        let (token_a, _) = (self.token_mint_a, self.token_mint_b);
+        let specified_token_a = tokens_equal(input_token, &token_a);
+        let mint_infos = rpc_client
             .get_multiple_accounts(&[whirlpool.token_mint_a, whirlpool.token_mint_b])
             .await?;
 
@@ -169,175 +173,41 @@ impl WhirlpoolPoolState {
             .ok_or(format!("Mint b not found: {}", whirlpool.token_mint_b))?;
 
         let oracle_address = get_oracle_address(&whirlpool_address)?.0;
-        let oracle = fetch_oracle(rpc, oracle_address, &whirlpool).await?;
+        let oracle_info = rpc_client.get_account(&oracle_address).await;
+        let oracle = oracle_info.ok().and_then(|acc| Oracle::from_bytes(&acc.data).ok());
 
-        let current_epoch = rpc.get_epoch_info()?.epoch;
+        let current_epoch = rpc_client.get_epoch_info().await?.epoch;
         let transfer_fee_a = get_current_transfer_fee(Some(mint_a_info), current_epoch);
         let transfer_fee_b = get_current_transfer_fee(Some(mint_b_info), current_epoch);
 
         let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .duration_since(UNIX_EPOCH)?
             .as_secs();
 
-        let slippage_tolerance_bps = 50; // 1% slippage tolerance
-        let specified_token_a = true;     // USDC is token A in this whirlpool
+        let tick_arrays = fetch_tick_arrays_or_default(rpc_client, whirlpool_address, &whirlpool).await?;
+
         
-        let swap_quote = swap_quote_by_input_token(
-            input_amount,
-            specified_token_a,
-            slippage_tolerance_bps,
-            whirlpool.clone().into(),
-            oracle.map(|oracle| oracle.into()),
-            tick_arrays.map(|x| x.1).into(),
-            timestamp,
-            transfer_fee_a,
-            transfer_fee_b,
-        )?;
-        Ok(swap_quote.token_est_out)
-
-
-        // // Input validation
-        // let a_to_b = tokens_equal(input_token, &self.token_mint_a);
-        // if self.sqrt_price == 0 || self.liquidity == 0 || input_amount == 0 {
-        //     return 0;
-        // }
-
-        // // Set adjusted_sqrt_price_limit based on direction (matches official logic)
-        // let adjusted_sqrt_price_limit = if a_to_b {
-        //     MIN_SQRT_PRICE_X64
-        // } else {
-        //     MAX_SQRT_PRICE_X64
-        // };
-
-        // // Validate price limit direction (matches official validation)
-        // if (a_to_b && adjusted_sqrt_price_limit >= self.sqrt_price)
-        //     || (!a_to_b && adjusted_sqrt_price_limit <= self.sqrt_price)
-        // {
-        //     return 0;
-        // }
-
-        // // Initialize swap state variables (mirrors official swap() initialization)
-        // let mut amount_remaining: u64 = input_amount;
-        // let mut amount_calculated: u64 = 0;  // This is what we want to return
-        // let mut curr_sqrt_price = self.sqrt_price;
-        // let curr_liquidity = self.liquidity;
-
-        // // Create FeeRateManager for dynamic fee calculation
-        // let current_timestamp = std::time::SystemTime::now()
-        //     .duration_since(std::time::UNIX_EPOCH)
-        //     .unwrap_or_default()
-        //     .as_secs();
+        let quote = tokio::task::spawn_blocking(move || {
+            swap_quote_by_input_token(
+                input_amount,
+                specified_token_a,
+                slippage_tolerance_bps,
+                whirlpool.into(),
+                oracle.map(|o| o.into()),
+                tick_arrays.map(|x| x.1).into(),
+                timestamp,
+                transfer_fee_a,
+                transfer_fee_b,
+            )
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking error: {}", e))?
+        .map_err(|e| format!("swap quote error: {:?}", e))?;
         
-        // let adaptive_fee_info;
-        // if self.oracle_state.whirlpool == Pubkey::default() {
-        //     adaptive_fee_info = None;
-        // } else {
-        //     adaptive_fee_info = Some(AdaptiveFeeInfo {
-        //         constants: AdaptiveFeeConstants {
-        //             filter_period: self.oracle_state.adaptive_fee_constants.filter_period,
-        //             decay_period: self.oracle_state.adaptive_fee_constants.decay_period,
-        //             reduction_factor: self.oracle_state.adaptive_fee_constants.reduction_factor,
-        //             adaptive_fee_control_factor: self.oracle_state.adaptive_fee_constants.adaptive_fee_control_factor,
-        //             max_volatility_accumulator: self.oracle_state.adaptive_fee_constants.max_volatility_accumulator,
-        //             tick_group_size: self.oracle_state.adaptive_fee_constants.tick_group_size,
-        //             major_swap_threshold_ticks: self.oracle_state.adaptive_fee_constants.major_swap_threshold_ticks,
-        //             reserved: self.oracle_state.adaptive_fee_constants.reserved,
-        //         },
-        //         variables: AdaptiveFeeVariables {
-        //             last_reference_update_timestamp: self.oracle_state.adaptive_fee_variables.last_reference_update_timestamp,
-        //             last_major_swap_timestamp: self.oracle_state.adaptive_fee_variables.last_major_swap_timestamp,
-        //             volatility_reference: self.oracle_state.adaptive_fee_variables.volatility_reference,
-        //             tick_group_index_reference: self.oracle_state.adaptive_fee_variables.tick_group_index_reference,
-        //             volatility_accumulator: self.oracle_state.adaptive_fee_variables.volatility_accumulator,
-        //             reserved: self.oracle_state.adaptive_fee_variables.reserved,
-        //         },
-        //     });
-        // }
-        // let mut fee_rate_manager = match FeeRateManager::new(
-        //     a_to_b,
-        //     self.tick_current_index,
-        //     current_timestamp,
-        //     self.fee_rate,
-        //     &adaptive_fee_info,
-        // ) {
-        //     Ok(manager) => manager,
-        //     Err(_) => return 0,
-        // };
-
-        // // Main swap loop - matches official: while amount_remaining > 0 && adjusted_sqrt_price_limit != curr_sqrt_price
-        // while amount_remaining > 0 && adjusted_sqrt_price_limit != curr_sqrt_price {
-        //     // Update volatility accumulator (matches official line 111)
-        //     if fee_rate_manager.update_volatility_accumulator().is_err() {
-        //         break;
-        //     }
-
-        //     // Get total fee rate (matches official line 115)
-        //     let total_fee_rate = fee_rate_manager.get_total_fee_rate();
-            
-        //     log::info!("AAAAAAAAAAAAAAAAAA total_fee_rate {}", total_fee_rate);
-        //     log::info!("AAAAAAAAAAAAAAAAAA self.fee_rate {}", self.fee_rate);
-        //     log::info!("AAAAAAAAAAAAAAAAAA adaptive_fee_info {:?}", adaptive_fee_info);
-
-        //     // Get bounded sqrt price target (matches official line 115-120)
-        //     let (bounded_sqrt_price_target, _adaptive_fee_update_skipped) = 
-        //         fee_rate_manager.get_bounded_sqrt_price_target(adjusted_sqrt_price_limit, curr_liquidity);
-
-        //     // Execute swap computation (matches official line 121-129)
-        //     let swap_computation = match compute_swap(
-        //         amount_remaining,
-        //         total_fee_rate,
-        //         curr_liquidity,
-        //         curr_sqrt_price,
-        //         bounded_sqrt_price_target,
-        //         true, // amount_specified_is_input = true (exact input mode)
-        //         a_to_b,
-        //     ) {
-        //         Ok(comp) => comp,
-        //         Err(_) => break,
-        //     };
-
-        //     // Update amounts based on exact input mode (matches official lines 130-134)
-        //     // In exact input mode: amount_calculated accumulates OUTPUT amounts
-        //     amount_remaining = match amount_remaining
-        //         .checked_sub(swap_computation.amount_in)
-        //         .and_then(|r| r.checked_sub(swap_computation.fee_amount)) 
-        //     {
-        //         Some(remaining) => remaining,
-        //         None => break, // Overflow protection
-        //     };
-
-        //     amount_calculated = match amount_calculated.checked_add(swap_computation.amount_out) {
-        //         Some(calculated) => calculated,
-        //         None => break, // Overflow protection  
-        //     };
-
-        //     // Update current price for next iteration
-        //     curr_sqrt_price = swap_computation.next_price;
-
-        //     // For simplified implementation, assume no tick crossings
-        //     // (In full implementation, this would handle liquidity updates at tick boundaries)
-            
-        //     // Break if we've hit our target or no progress
-        //     if curr_sqrt_price == bounded_sqrt_price_target {
-        //         break;
-        //     }
-        // }
-
-        // log::debug!(
-        //     "Swap calculation complete: direction={}, input={}, amount_calculated={}", 
-        //     if a_to_b { "A→B" } else { "B→A" }, 
-        //     input_amount, 
-        //     amount_calculated
-        // );
-
-        // // Return amount_calculated which represents the accumulated output tokens
-        // // This matches the official swap() return logic where amount_calculated 
-        // // is used as the output amount in exact input mode
-        // amount_calculated
+        Ok(quote.token_est_out)
     }
 
-        /// Helper function to get tick array start index
+       /// Helper function to get tick array start index
     fn get_tick_array_start_tick_index(current_tick: i32, tick_spacing: u16) -> i32 {
         let tick_spacing = tick_spacing as i32;
         let array_size = 72; // TICK_ARRAY_SIZE
@@ -410,7 +280,7 @@ struct SwapStepResult {
 }
 
 async fn fetch_tick_arrays_or_default(
-    rpc: &RpcClient,
+    rpc_client: &RpcClient,
     whirlpool_address: Pubkey,
     whirlpool: &Whirlpool,
 ) -> Result<[(Pubkey, TickArrayFacade); 5], Box<dyn Error>> {
@@ -431,7 +301,7 @@ async fn fetch_tick_arrays_or_default(
         .map(|&x| get_tick_array_address(&whirlpool_address, x).map(|y| y.0))
         .collect::<Result<Vec<Pubkey>, _>>()?;
 
-    let tick_array_infos = rpc.get_multiple_accounts(&tick_array_addresses)?;
+    let tick_array_infos = rpc_client.get_multiple_accounts(&tick_array_addresses).await?;
 
     let maybe_tick_arrays: Vec<Option<TickArrayFacade>> = tick_array_infos
         .iter()
@@ -454,7 +324,7 @@ async fn fetch_tick_arrays_or_default(
 }
 
 async fn fetch_oracle(
-    rpc: &RpcClient,
+    rpc_client: &RpcClient,
     oracle_address: Pubkey,
     whirlpool: &Whirlpool,
 ) -> Result<Option<Oracle>, Box<dyn Error>> {
@@ -462,11 +332,24 @@ async fn fetch_oracle(
     if whirlpool.tick_spacing == u16::from_le_bytes(whirlpool.fee_tier_index_seed) {
         return Ok(None);
     }
-    let oracle_info = rpc.get_account(&oracle_address)?;
-    Ok(Some(Oracle::from_bytes(&oracle_info.data)?))
+    match rpc_client.get_account(&oracle_address).await {
+        Ok(oracle_info) => {
+            match Oracle::from_bytes(&oracle_info.data) {
+                Ok(oracle) => Ok(Some(oracle)),
+                Err(e) => {
+                    log::warn!("Failed to deserialize oracle: {}", e);
+                    Ok(None)
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to fetch oracle: {}", e);
+            Ok(None)
+        }
+    }
 }
 
-pub(crate) fn get_current_transfer_fee(
+pub fn get_current_transfer_fee(
     mint_account_info: Option<&SolanaAccount>,
     current_epoch: u64,
 ) -> Option<TransferFee> {
@@ -482,4 +365,11 @@ pub(crate) fn get_current_transfer_fee(
     }
 
     None
+}
+
+fn uninitialized_tick_array(start_tick_index: i32) -> TickArrayFacade {
+    TickArrayFacade {
+        start_tick_index,
+        ticks: [TickFacade::default(); TICK_ARRAY_SIZE],
+    }
 }

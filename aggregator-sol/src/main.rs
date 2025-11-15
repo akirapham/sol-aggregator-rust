@@ -141,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 
                 // Load mainnet configuration
                 let rpc_url = env::var("SOLANA_RPC_URL")
-                    .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+                    .unwrap_or_else(|_| "https://sol-rpc.degalabs.fi/jsdh7483-0543-skdjs-84738-d383438e4sdfd".to_string());
                 log::info!("Using Solana RPC: {}", rpc_url);
 
                 // // Load keypair for transaction signing
@@ -278,9 +278,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
 
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
 
-    log::info!("Server running on http://0.0.0.0:{}", port);
+    log::info!("Server running on http://127.0.0.1:{}", port);
     log::info!("API endpoints:");
     log::info!("  POST /quote - Get swap quotes");
     log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");

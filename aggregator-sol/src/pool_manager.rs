@@ -1188,6 +1188,11 @@ impl PoolStateManager {
         Arc::clone(&self.db)
     }
 
+    /// Get access to the RPC client
+    pub fn get_rpc_client(&self) -> Arc<RpcClient> {
+        Arc::clone(&self.rpc_client)
+    }
+
     pub async fn get_pool_addresses_for_pair(
         &self,
         token_a: &Pubkey,

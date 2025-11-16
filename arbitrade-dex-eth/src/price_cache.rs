@@ -178,6 +178,7 @@ impl Default for PriceCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_price_cache_operations() {

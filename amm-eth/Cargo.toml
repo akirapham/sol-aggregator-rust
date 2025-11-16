@@ -24,3 +24,6 @@ num-traits = { workspace = true }
 reqwest = { workspace = true }
 hex = { workspace = true }
 eth-dex-quote = { path = "../crates/eth-dex-quote" }
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }

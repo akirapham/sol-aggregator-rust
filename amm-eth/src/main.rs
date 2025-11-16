@@ -1,4 +1,4 @@
-use amm_eth::{EthConfig, EthSwapListener, PriceStore, TokenPairDb, WsServer};
+use amm_eth::{start_http_server, EthConfig, EthSwapListener, PriceStore, TokenPairDb, WsServer};
 use anyhow::Result;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use dotenv::dotenv;
@@ -30,8 +30,13 @@ async fn main() -> Result<()> {
         Err(e) => debug!("WARNING: ETH_WEBSOCKET_URL not set: {}", e),
     }
 
-    // Initialize logger
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    // Initialize logger with filters
+    env_logger::Builder::from_env(Env::default().default_filter_or("info").write_style("auto"))
+        .filter_module(
+            "ethers_providers::rpc::transports::ws",
+            log::LevelFilter::Warn,
+        )
+        .init();
     debug!("DEBUG: logger initialized");
 
     info!("Starting Ethereum Uniswap swap listener");
@@ -103,11 +108,45 @@ async fn main() -> Result<()> {
     // Load existing token pairs and decimals from database
     let token_pair_cache = listener.get_token_pair_cache();
     let token_decimal_cache = listener.get_token_decimal_cache();
+    let token_to_pools = listener.get_token_to_pools();
     let loaded_count =
         token_pair_db.load_all_into_cache(&token_pair_cache, &token_decimal_cache)?;
     info!("Loaded {} token pairs from RocksDB", loaded_count);
     debug!("DEBUG: Loaded {} token pairs from RocksDB", loaded_count);
     info!("Loaded {} token pairs from RocksDB", loaded_count);
+
+    // Rebuild token-to-pools mapping from loaded pairs
+    for entry in token_pair_cache.iter() {
+        let pair_info = entry.value();
+        let token0_str = format!("{:?}", pair_info.pool_token0).to_lowercase();
+        let token1_str = format!("{:?}", pair_info.pool_token1).to_lowercase();
+        let pool_address = pair_info.pool_address.clone();
+
+        token_to_pools
+            .entry(token0_str)
+            .or_insert_with(std::collections::HashSet::new)
+            .insert(pool_address.clone());
+        token_to_pools
+            .entry(token1_str)
+            .or_insert_with(std::collections::HashSet::new)
+            .insert(pool_address);
+    }
+    info!("Built token-to-pools mapping for HTTP API");
+
+    // Start HTTP API server in background
+    let http_port = std::env::var("ETH_API_PORT").unwrap_or_else(|_| "2222".to_string());
+    let http_addr = format!("0.0.0.0:{}", http_port);
+    info!("Starting HTTP API server on: {}", http_addr);
+    let pair_cache_for_http = token_pair_cache.clone();
+    let token_to_pools_for_http = token_to_pools.clone();
+    tokio::spawn(async move {
+        if let Err(e) =
+            start_http_server(http_addr, pair_cache_for_http, token_to_pools_for_http).await
+        {
+            log::error!("HTTP server error: {}", e);
+        }
+    });
+    debug!("DEBUG: HTTP API server spawned");
 
     // Start a background task to save token pairs and decimals to RocksDB 60s
     let save_pair_cache = token_pair_cache.clone();

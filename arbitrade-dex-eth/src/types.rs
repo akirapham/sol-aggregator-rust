@@ -1,3 +1,4 @@
+use eth_dex_quote::TokenPriceUpdate;
 use ethers::types::Address;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -40,21 +41,13 @@ impl fmt::Display for PoolPrice {
 pub struct DexArbitrageOpportunity {
     pub token_address: Address,
     /// Buy pool (lowest price)
-    pub buy_pool: PoolPrice,
+    pub buy_pool: TokenPriceUpdate,
     /// Sell pool (highest price)
-    pub sell_pool: PoolPrice,
-    /// Price difference in ETH
-    pub price_diff_eth: f64,
+    pub sell_pool: TokenPriceUpdate,
     /// Price difference percentage
     pub price_diff_percent: f64,
-    /// Profit in ETH (before slippage and gas)
-    pub potential_profit_eth: f64,
     /// Potential profit in USD
     pub potential_profit_usd: Option<f64>,
-    /// Gas cost estimate in ETH
-    pub gas_cost_eth: Option<f64>,
-    /// Final profit after gas costs
-    pub net_profit_eth: Option<f64>,
     /// Timestamp when opportunity was detected
     pub detected_at: u64,
 }
@@ -63,28 +56,17 @@ impl fmt::Display for DexArbitrageOpportunity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "ARB {} - Buy@${:.6} ({}), Sell@${:.6} ({}) = {:.2}% profit ({:.6} ETH)",
+            "ARB {} - Buy@${:.6} ({}@{}), Sell@${:.6} ({}@{}) = {:.2}% profit",
             self.token_address,
-            self.buy_pool.price_in_eth,
+            self.buy_pool.price_in_usd.unwrap_or(0.0),
             self.buy_pool.dex_version,
-            self.sell_pool.price_in_eth,
+            self.buy_pool.pool_address,
+            self.sell_pool.price_in_usd.unwrap_or(0.0),
             self.sell_pool.dex_version,
+            self.sell_pool.pool_address,
             self.price_diff_percent,
-            self.potential_profit_eth
         )
     }
-}
-
-/// Token price update from amm-eth WebSocket
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenPriceUpdate {
-    pub token_address: String,
-    pub price_in_eth: f64,
-    pub price_in_usd: f64,
-    pub last_updated: u64,
-    pub pool_address: String,
-    pub dex_version: String,
-    pub decimals: u8,
 }
 
 /// WebSocket message from amm-eth

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use dashmap::DashMap;
-use eth_dex_quote::{EthChain, TokenPrice};
+use eth_dex_quote::{TokenPrice, TokenPriceUpdate};
 use ethers::types::Address;
 use futures::{SinkExt, StreamExt};
 use log::{error, info, warn};
@@ -23,40 +23,6 @@ pub enum WsMessage {
     Heartbeat { timestamp: u64 },
     #[serde(rename = "welcome")]
     Welcome { client_id: String },
-}
-
-/// Token price update message
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenPriceUpdate {
-    pub token_address: String,
-    pub price_in_eth: f64,
-    pub price_in_usd: Option<f64>,
-    pub last_updated: u64,
-    pub pool_address: String,
-    pub dex_version: String,
-    pub decimals: u8,
-    pub pool_token0: Address,
-    pub pool_token1: Address,
-    pub eth_chain: EthChain,
-    pub fee_tier: Option<u32>,
-}
-
-impl From<TokenPrice> for TokenPriceUpdate {
-    fn from(price: TokenPrice) -> Self {
-        Self {
-            token_address: format!("{:?}", price.token_address),
-            price_in_eth: price.price_in_eth,
-            price_in_usd: price.price_in_usd,
-            last_updated: price.last_updated,
-            pool_address: format!("{:?}", price.pool_address),
-            dex_version: format!("{:?}", price.dex_version),
-            decimals: price.decimals,
-            pool_token0: price.pool_token0,
-            pool_token1: price.pool_token1,
-            eth_chain: price.eth_chain,
-            fee_tier: price.fee_tier,
-        }
-    }
 }
 
 /// Client connection information

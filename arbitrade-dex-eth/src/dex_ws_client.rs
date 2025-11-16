@@ -1,15 +1,15 @@
-use crate::types::{DexPriceMessage, DexSubscriptionMessage, PoolPrice};
+use crate::types::{DexPriceMessage, DexSubscriptionMessage};
 use anyhow::{anyhow, Result};
-use ethers::types::Address;
+use bytes::Bytes;
+use eth_dex_quote::TokenPriceUpdate;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use log::{info, warn};
-use std::str::FromStr;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// WebSocket client for connecting to amm-eth price feed
-/// Returns a receiver that yields PoolPrice updates
+/// Returns a receiver that yields TokenPriceUpdate messages
 #[derive(Clone)]
 pub struct DexWsClient {
     websocket_url: String,
@@ -21,7 +21,7 @@ impl DexWsClient {
     }
 
     /// Connect to amm-eth WebSocket and return a receiver for price updates
-    pub async fn start(&self) -> Result<mpsc::Receiver<PoolPrice>> {
+    pub async fn start(&self) -> Result<mpsc::Receiver<TokenPriceUpdate>> {
         let (tx, rx) = mpsc::channel(1000);
 
         let url = self.websocket_url.clone();
@@ -36,7 +36,7 @@ impl DexWsClient {
     }
 
     /// Listen to WebSocket with auto-reconnect
-    pub async fn start_with_reconnect(&self) -> Result<mpsc::Receiver<PoolPrice>> {
+    pub async fn start_with_reconnect(&self) -> Result<mpsc::Receiver<TokenPriceUpdate>> {
         let (tx, rx) = mpsc::channel(1000);
 
         let url = self.websocket_url.clone();
@@ -63,7 +63,7 @@ impl DexWsClient {
         Ok(rx)
     }
 
-    async fn listen_loop(url: &str, tx: mpsc::Sender<PoolPrice>) -> Result<()> {
+    async fn listen_loop(url: &str, tx: mpsc::Sender<TokenPriceUpdate>) -> Result<()> {
         info!("Connecting to DEX WebSocket: {}", url);
 
         let (ws_stream, _) = connect_async(url)
@@ -88,66 +88,81 @@ impl DexWsClient {
 
         info!("📡 Subscribed to price updates");
 
-        // Listen for price updates
-        while let Some(msg) = read.next().await {
-            match msg {
-                Ok(Message::Text(text)) => {
-                    // Try to parse as generic JSON first to check message type
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                        // Only process price_update messages, ignore welcome/heartbeat
-                        if let Some(msg_type) = value.get("type").and_then(|t| t.as_str()) {
-                            if msg_type == "price_update" {
-                                // Now parse as DexPriceMessage
-                                match serde_json::from_str::<DexPriceMessage>(&text) {
-                                    Ok(price_msg) => {
-                                        // Convert to PoolPrice
-                                        let pool_price = PoolPrice {
-                                            token_address: Address::from_str(
-                                                &price_msg.data.token_address,
-                                            )
-                                            .unwrap_or_else(|_| Address::zero()),
-                                            price_in_eth: price_msg.data.price_in_eth,
-                                            price_in_usd: Some(price_msg.data.price_in_usd),
-                                            pool_address: Address::from_str(
-                                                &price_msg.data.pool_address,
-                                            )
-                                            .unwrap_or_else(|_| Address::zero()),
-                                            dex_version: price_msg.data.dex_version,
-                                            decimals: price_msg.data.decimals,
-                                            last_updated: price_msg.data.last_updated,
-                                            liquidity_eth: None,
-                                            liquidity_usd: None,
-                                        };
+        // Use a timeout-based select! to send ping heartbeat every 15 seconds
+        let mut heartbeat_interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
 
-                                        let _ = tx.send(pool_price).await;
+        // Listen for price updates
+        loop {
+            tokio::select! {
+                // Send ping heartbeat every 15 seconds
+                _ = heartbeat_interval.tick() => {
+                    if let Err(e) = write.send(Message::Ping(Bytes::new())).await {
+                        warn!("Failed to send ping heartbeat: {}", e);
+                        break;
+                    }
+                    log::debug!("Sent ping heartbeat");
+                }
+
+                // Receive messages from websocket
+                msg = read.next() => {
+                    match msg {
+                        Some(Ok(Message::Text(text))) => {
+                            // Try to parse as generic JSON first to check message type
+                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                                // Only process price_update messages, ignore welcome/heartbeat
+                                if let Some(msg_type) = value.get("type").and_then(|t| t.as_str()) {
+                                    if msg_type == "price_update" {
+                                        // Now parse as DexPriceMessage
+                                        match serde_json::from_str::<DexPriceMessage>(&text) {
+                                            Ok(price_msg) => {
+                                                log::debug!("Parsed price_update: {:?}", price_msg.data);
+
+                                                // Use try_send so the websocket loop doesn't await if receiver is slow.
+                                                // If the channel is full or closed, log a warning and continue.
+                                                match tx.try_send(price_msg.data) {
+                                                    Ok(_) => {}
+                                                    Err(e) => {
+                                                        warn!(
+                                                            "Failed to forward price_update to channel: {}. Channel may be full or closed",
+                                                            e
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!(
+                                                    "Failed to parse price_update message: {} - Raw: {}",
+                                                    e, text
+                                                );
+                                            }
+                                        }
                                     }
-                                    Err(e) => {
-                                        warn!(
-                                            "Failed to parse price_update message: {} - Raw: {}",
-                                            e, text
-                                        );
-                                    }
+                                    // Silently ignore other message types (welcome, heartbeat, etc.)
                                 }
                             }
-                            // Silently ignore other message types (welcome, heartbeat, etc.)
+                        }
+                        Some(Ok(Message::Close(_))) => {
+                            info!("WebSocket closed by server");
+                            break;
+                        }
+                        Some(Ok(Message::Ping(data))) => {
+                            let _ = write.send(Message::Pong(data)).await;
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(e)) => {
+                            warn!("WebSocket error: {}", e);
+                            break;
+                        }
+                        None => {
+                            info!("WebSocket stream ended");
+                            break;
                         }
                     }
-                }
-                Ok(Message::Close(_)) => {
-                    info!("WebSocket closed by server");
-                    break;
-                }
-                Ok(Message::Ping(data)) => {
-                    let _ = write.send(Message::Pong(data)).await;
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("WebSocket error: {}", e);
-                    break;
                 }
             }
         }
 
+        info!("WebSocket listener loop ended");
         Err(anyhow!("WebSocket connection closed"))
     }
 }

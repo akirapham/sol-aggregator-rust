@@ -8,6 +8,7 @@ use ethers::prelude::*;
 use log::{debug, error, info, warn};
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Semaphore;
@@ -85,6 +86,8 @@ pub struct EthSwapListener {
     token_pair_cache: Arc<DashMap<String, PairInfo>>,
     // Cache for token decimals: token_address -> decimals
     token_decimal_cache: Arc<DashMap<Address, u8>>,
+    // Mapping for fast lookups: token_address (lowercase) -> Set of pool addresses
+    token_to_pools: Arc<DashMap<String, HashSet<String>>>,
     // Semaphore to limit concurrent event processing
     processing_semaphore: Arc<Semaphore>,
 }
@@ -103,6 +106,7 @@ impl EthSwapListener {
             price_store,
             token_pair_cache: Arc::new(DashMap::new()),
             token_decimal_cache: Arc::new(DashMap::new()),
+            token_to_pools: Arc::new(DashMap::new()),
             processing_semaphore,
         })
     }
@@ -117,6 +121,11 @@ impl EthSwapListener {
         self.token_decimal_cache.clone()
     }
 
+    /// Get reference to the token-to-pools mapping for HTTP API
+    pub fn get_token_to_pools(&self) -> Arc<DashMap<String, HashSet<String>>> {
+        self.token_to_pools.clone()
+    }
+
     /// Start listening to swap events
     pub async fn start(&self) -> Result<()> {
         info!("Starting Ethereum swap event listener (V2, V3, V4)");
@@ -127,11 +136,18 @@ impl EthSwapListener {
             let price_store = self.price_store.clone();
             let config = self.config.clone();
             let token_cache = self.token_pair_cache.clone();
+            let token_to_pools = self.token_to_pools.clone();
             let semaphore = self.processing_semaphore.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    Self::listen_v2_sync(websocket_url, price_store, config, token_cache, semaphore)
-                        .await
+                if let Err(e) = Self::listen_v2_sync(
+                    websocket_url,
+                    price_store,
+                    config,
+                    token_cache,
+                    token_to_pools,
+                    semaphore,
+                )
+                .await
                 {
                     error!("Uniswap V2 listener error: {}", e);
                 }
@@ -144,6 +160,7 @@ impl EthSwapListener {
             let price_store = self.price_store.clone();
             let config = self.config.clone();
             let token_cache = self.token_pair_cache.clone();
+            let token_to_pools = self.token_to_pools.clone();
             let semaphore = self.processing_semaphore.clone();
             tokio::spawn(async move {
                 if let Err(e) = Self::listen_v3_swaps(
@@ -151,6 +168,7 @@ impl EthSwapListener {
                     price_store,
                     config,
                     token_cache,
+                    token_to_pools,
                     semaphore,
                 )
                 .await
@@ -166,11 +184,18 @@ impl EthSwapListener {
             let price_store = self.price_store.clone();
             let config = self.config.clone();
             let v4_cache = self.token_pair_cache.clone();
+            let token_to_pools = self.token_to_pools.clone();
             let semaphore = self.processing_semaphore.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    Self::listen_v4_swaps(websocket_url, price_store, config, v4_cache, semaphore)
-                        .await
+                if let Err(e) = Self::listen_v4_swaps(
+                    websocket_url,
+                    price_store,
+                    config,
+                    v4_cache,
+                    token_to_pools,
+                    semaphore,
+                )
+                .await
                 {
                     error!("Uniswap V4 listener error: {}", e);
                 }
@@ -189,6 +214,7 @@ impl EthSwapListener {
         price_store: PriceStore,
         config: EthConfig,
         token_cache: Arc<DashMap<String, PairInfo>>,
+        token_to_pools: Arc<DashMap<String, HashSet<String>>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
         info!("Starting Uniswap V2 Sync event listener with auto-reconnection");
@@ -212,6 +238,7 @@ impl EthSwapListener {
                         &price_store,
                         &config,
                         &token_cache,
+                        &token_to_pools,
                         &semaphore,
                     )
                     .await
@@ -249,6 +276,7 @@ impl EthSwapListener {
         price_store: &PriceStore,
         config: &EthConfig,
         token_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
         semaphore: &Arc<Semaphore>,
     ) -> Result<()> {
         // Create a filter for V2 Sync events
@@ -317,6 +345,7 @@ impl EthSwapListener {
                                 let price_store_clone = price_store.clone();
                                 let config_clone = config.clone();
                                 let token_cache_clone = token_cache.clone();
+                                let token_to_pools_clone = token_to_pools.clone();
 
                                 tokio::spawn(async move {
                                     // Permit will be dropped when task completes
@@ -328,6 +357,7 @@ impl EthSwapListener {
                                         &price_store_clone,
                                         &config_clone,
                                         &token_cache_clone,
+                                        &token_to_pools_clone,
                                     )
                                     .await
                                     {
@@ -382,6 +412,7 @@ impl EthSwapListener {
         price_store: &PriceStore,
         config: &EthConfig,
         token_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
     ) -> Result<()> {
         let pool_address = log.address;
 
@@ -399,6 +430,7 @@ impl EthSwapListener {
         let pair_info = match Self::get_or_fetch_token_pair(
             pool_address,
             token_cache,
+            token_to_pools,
             config,
             DexVersion::UniswapV2,
         )
@@ -506,6 +538,7 @@ impl EthSwapListener {
         price_store: PriceStore,
         config: EthConfig,
         token_cache: Arc<DashMap<String, PairInfo>>,
+        token_to_pools: Arc<DashMap<String, HashSet<String>>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
         info!("Starting Uniswap V3 swap listener with auto-reconnection");
@@ -529,6 +562,7 @@ impl EthSwapListener {
                         &price_store,
                         &config,
                         &token_cache,
+                        &token_to_pools,
                         &semaphore,
                     )
                     .await
@@ -566,6 +600,7 @@ impl EthSwapListener {
         price_store: &PriceStore,
         config: &EthConfig,
         token_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
         semaphore: &Arc<Semaphore>,
     ) -> Result<()> {
         // Create a filter for V3 Swap events
@@ -635,6 +670,7 @@ impl EthSwapListener {
                                 let price_store_clone = price_store.clone();
                                 let config_clone = config.clone();
                                 let token_cache_clone = token_cache.clone();
+                                let token_to_pools_clone = token_to_pools.clone();
 
                                 tokio::spawn(async move {
                                     // Permit will be dropped when task completes
@@ -646,6 +682,7 @@ impl EthSwapListener {
                                         &price_store_clone,
                                         &config_clone,
                                         &token_cache_clone,
+                                        &token_to_pools_clone,
                                     )
                                     .await
                                     {
@@ -700,6 +737,7 @@ impl EthSwapListener {
         price_store: &PriceStore,
         config: &EthConfig,
         token_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
     ) -> Result<()> {
         let pool_address = log.address;
 
@@ -717,6 +755,7 @@ impl EthSwapListener {
         let pair_info = match Self::get_or_fetch_token_pair(
             pool_address,
             token_cache,
+            token_to_pools,
             config,
             DexVersion::UniswapV3,
         )
@@ -810,6 +849,7 @@ impl EthSwapListener {
     async fn get_or_fetch_token_pair(
         pool_address: Address,
         token_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
         config: &EthConfig,
         dex_version: DexVersion,
     ) -> Result<PairInfo> {
@@ -839,8 +879,9 @@ impl EthSwapListener {
             .await
             {
                 Ok((token0, token1, decimals0, decimals1, factory, fee_tier, tick_spacing)) => {
+                    let pool_address_str = format!("{:?}", pool_address).to_lowercase();
                     let pair_info = PairInfo {
-                        pool_address: pool_address.to_string().to_lowercase(),
+                        pool_address: pool_address_str.clone(),
                         pool_token0: token0,
                         pool_token1: token1,
                         dex_version,
@@ -851,7 +892,20 @@ impl EthSwapListener {
                         tick_spacing,
                     };
                     // Store in cache
-                    token_cache.insert(pool_address.to_string().to_lowercase(), pair_info.clone());
+                    token_cache.insert(pool_address_str.clone(), pair_info.clone());
+
+                    // Update token-to-pools mapping for fast lookups
+                    let token0_str = format!("{:?}", token0).to_lowercase();
+                    let token1_str = format!("{:?}", token1).to_lowercase();
+
+                    token_to_pools
+                        .entry(token0_str)
+                        .or_insert_with(HashSet::new)
+                        .insert(pool_address.to_string().to_lowercase());
+                    token_to_pools
+                        .entry(token1_str)
+                        .or_insert_with(HashSet::new)
+                        .insert(pool_address.to_string().to_lowercase());
 
                     debug!(
                         "Cached token pair for pool {:?}: token0={:?}, token1={:?}, decimals0={}, decimals1={}",
@@ -1004,6 +1058,15 @@ impl EthSwapListener {
 
         let mut price_in_eth = 0.0;
         let mut price_in_usd = None;
+        let eth_price_usd = config.eth_price_usd.read();
+        if eth_price_usd.is_err() {
+            return;
+        }
+        let eth_price_usd = eth_price_usd.unwrap();
+        if eth_price_usd.is_none() {
+            return;
+        }
+        let eth_usd = eth_price_usd.unwrap();
 
         // Determine price based on what token it's paired with
         if paired_with == config.weth_address || paired_with == config.native_address {
@@ -1011,23 +1074,13 @@ impl EthSwapListener {
             price_in_eth = price_in_paired_token;
 
             // Calculate USD price if ETH/USD rate is available
-            if let Ok(eth_price) = config.eth_price_usd.read() {
-                if let Some(eth_usd) = *eth_price {
-                    price_in_usd = Some(price_in_eth * eth_usd);
-                }
-            }
+            price_in_usd = Some(price_in_eth * eth_usd);
         } else if paired_with == config.usdc_address || paired_with == config.usdt_address {
             // Paired with USDC or USDT: we have the USD price directly
             price_in_usd = Some(price_in_paired_token);
 
             // Calculate ETH price if ETH/USD rate is available
-            if let Ok(eth_price) = config.eth_price_usd.read() {
-                if let Some(eth_usd) = *eth_price {
-                    if eth_usd > 0.0 {
-                        price_in_eth = price_in_paired_token / eth_usd;
-                    }
-                }
-            }
+            price_in_eth = price_in_paired_token / eth_usd;
         }
 
         let (token0, token1) = if token_address < paired_with {
@@ -1049,6 +1102,7 @@ impl EthSwapListener {
             eth_chain: config.eth_chain,
             fee_tier,
             tick_spacing,
+            eth_price_usd: eth_usd,
         };
 
         price_store.update_price(token_address, token_price);
@@ -1119,6 +1173,7 @@ impl EthSwapListener {
         price_store: PriceStore,
         config: EthConfig,
         v4_cache: Arc<DashMap<String, PairInfo>>,
+        token_to_pools: Arc<DashMap<String, HashSet<String>>>,
         semaphore: Arc<Semaphore>,
     ) -> Result<()> {
         info!("Starting Uniswap V4 swap listener with auto-reconnection");
@@ -1142,6 +1197,7 @@ impl EthSwapListener {
                         &price_store,
                         &config,
                         &v4_cache,
+                        &token_to_pools,
                         &semaphore,
                     )
                     .await
@@ -1179,6 +1235,7 @@ impl EthSwapListener {
         price_store: &PriceStore,
         config: &EthConfig,
         v4_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
         semaphore: &Arc<Semaphore>,
     ) -> Result<()> {
         // V4 PoolManager address on Ethereum mainnet
@@ -1259,6 +1316,7 @@ impl EthSwapListener {
                                 let price_store_clone = price_store.clone();
                                 let config_clone = config.clone();
                                 let v4_cache_clone = v4_cache.clone();
+                                let token_to_pools_clone = token_to_pools.clone();
 
                                 tokio::spawn(async move {
                                     // Permit will be dropped when task completes
@@ -1270,6 +1328,7 @@ impl EthSwapListener {
                                         &price_store_clone,
                                         &config_clone,
                                         &v4_cache_clone,
+                                        &token_to_pools_clone,
                                     )
                                     .await
                                     {
@@ -1325,6 +1384,7 @@ impl EthSwapListener {
         price_store: &PriceStore,
         config: &EthConfig,
         v4_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
     ) -> Result<()> {
         // Try to parse as V4 Swap event
         let swap_event: uniswap_v4_pool_manager::SwapFilter =
@@ -1346,7 +1406,14 @@ impl EthSwapListener {
         let pool_id_hex = format!("0x{}", hex::encode(pool_id));
 
         // Get or fetch token information for this pool ID
-        let pair_info = match Self::get_or_fetch_v4_pool_info(pool_id, v4_cache, config).await {
+        let pair_info = match Self::get_or_fetch_v4_pool_info(
+            pool_id,
+            v4_cache,
+            token_to_pools,
+            config,
+        )
+        .await
+        {
             Ok(info) => info,
             Err(e) => {
                 // V4 pool info not cached and couldn't be fetched
@@ -1420,6 +1487,7 @@ impl EthSwapListener {
     async fn get_or_fetch_v4_pool_info(
         pool_id: [u8; 32],
         v4_cache: &Arc<DashMap<String, PairInfo>>,
+        token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
         _config: &EthConfig,
     ) -> Result<PairInfo> {
         let pool_id_hex = format!("0x{}", hex::encode(pool_id));
@@ -1590,7 +1658,19 @@ impl EthSwapListener {
             fee_tier: Some(fee_tier as u32),
             tick_spacing: Some(tick_spacing as i32),
         };
-        v4_cache.insert(pool_id_hex, pool_info.clone());
+        v4_cache.insert(pool_id_hex.clone(), pool_info.clone());
+
+        // Update token-to-pools mapping for fast lookups
+        let token0_str = format!("{:?}", token0).to_lowercase();
+        let token1_str = format!("{:?}", token1).to_lowercase();
+        token_to_pools
+            .entry(token0_str)
+            .or_insert_with(HashSet::new)
+            .insert(pool_id_hex.clone());
+        token_to_pools
+            .entry(token1_str)
+            .or_insert_with(HashSet::new)
+            .insert(pool_id_hex);
 
         Ok(pool_info)
     }

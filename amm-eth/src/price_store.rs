@@ -1,15 +1,20 @@
 use crate::ws_server::{broadcast_price_update, WsMessage};
 use dashmap::DashMap;
-use eth_dex_quote::{DexVersion, TokenPrice};
+use eth_dex_quote::TokenPrice;
 use ethers::types::Address;
-use log::info;
+use log::{debug, info};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// In-memory price storage using DashMap for concurrent access
+/// Structure: token_address -> pool_address_string -> TokenPrice
+/// This allows storing multiple prices for the same token from different pools
+/// Pool addresses are stored as strings to support both Address (0x...) and bytes32 (V4 pools)
 #[derive(Debug, Clone)]
 pub struct PriceStore {
-    prices: Arc<DashMap<Address, TokenPrice>>,
+    /// prices[token_address][pool_address_string] = TokenPrice
+    /// Inner key is String to support V2/V3 (Address format) and V4 (bytes32 hex format) pools
+    prices: Arc<DashMap<Address, Arc<DashMap<String, TokenPrice>>>>,
     broadcaster: Option<mpsc::UnboundedSender<WsMessage>>,
 }
 
@@ -30,19 +35,29 @@ impl PriceStore {
         }
     }
 
-    /// Store or update a token price
+    /// Store or update a token price from a specific pool
     pub fn update_price(&self, token_address: Address, price: TokenPrice) {
+        // Use pool_address as String key (supports Address and bytes32 formats)
+        let pool_key = price.pool_address.clone();
+
+        // Get or create the per-pool prices map for this token
+        let pools = self
+            .prices
+            .entry(token_address)
+            .or_insert_with(|| Arc::new(DashMap::new()))
+            .clone();
+
         // Check if this is a new price or an update with different USD price
-        let should_broadcast = if let Some(old_price) = self.prices.get(&token_address) {
+        let should_broadcast = if let Some(old_price) = pools.get(&pool_key) {
             // Only broadcast if USD price changed
             old_price.price_in_usd != price.price_in_usd && price.price_in_usd.is_some()
         } else {
-            // New token price with USD value
+            // New pool price with USD value
             price.price_in_usd.is_some()
         };
 
-        // Insert the new price
-        self.prices.insert(token_address, price.clone());
+        // Insert the new price for this pool
+        pools.insert(pool_key, price.clone());
 
         // Broadcast if conditions are met
         if should_broadcast {
@@ -52,24 +67,43 @@ impl PriceStore {
         }
     }
 
-    /// Get the price of a token
-    pub fn get_price(&self, token_address: &Address) -> Option<TokenPrice> {
+    /// Get the price of a token from a specific pool
+    pub fn get_price(&self, token_address: &Address, pool_address: &str) -> Option<TokenPrice> {
         self.prices
             .get(token_address)
-            .map(|entry| entry.value().clone())
+            .and_then(|pools| pools.get(pool_address).map(|entry| entry.value().clone()))
     }
 
-    /// Get all stored prices
+    /// Get all prices for a token across all pools
+    pub fn get_prices_for_token(&self, token_address: &Address) -> Vec<TokenPrice> {
+        self.prices
+            .get(token_address)
+            .map(|pools| pools.iter().map(|entry| entry.value().clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all stored prices across all tokens and pools
     pub fn get_all_prices(&self) -> Vec<TokenPrice> {
         self.prices
             .iter()
-            .map(|entry| entry.value().clone())
+            .flat_map(|token_entry| {
+                token_entry
+                    .value()
+                    .iter()
+                    .map(|pool_entry| pool_entry.value().clone())
+                    .collect::<Vec<_>>()
+            })
             .collect()
     }
 
     /// Get the number of tokens tracked
-    pub fn len(&self) -> usize {
+    pub fn token_count(&self) -> usize {
         self.prices.len()
+    }
+
+    /// Get total number of prices stored across all tokens and pools
+    pub fn total_price_count(&self) -> usize {
+        self.prices.iter().map(|entry| entry.value().len()).sum()
     }
 
     /// Check if the store is empty
@@ -82,35 +116,20 @@ impl PriceStore {
         self.prices.clear();
     }
 
-    /// Get prices for multiple tokens
-    pub fn get_prices(&self, tokens: &[Address]) -> Vec<Option<TokenPrice>> {
-        tokens.iter().map(|token| self.get_price(token)).collect()
-    }
-
     /// Log statistics about stored prices
     pub fn log_stats(&self) {
-        info!("Price store statistics:");
-        info!("  Total tokens tracked: {}", self.len());
-
-        let mut v2_count = 0;
-        let mut v3_count = 0;
-        let mut v4_count = 0;
+        let token_count = self.prices.len();
+        let total_prices = self.total_price_count();
+        info!(
+            "[PriceStore] {} tokens with {} total prices across pools",
+            token_count, total_prices
+        );
 
         for entry in self.prices.iter() {
-            match entry.value().dex_version {
-                DexVersion::UniswapV2 => v2_count += 1,
-                DexVersion::UniswapV3 => v3_count += 1,
-                DexVersion::UniswapV4 => v4_count += 1,
-                DexVersion::SushiswapV2 => todo!(),
-                DexVersion::SushiswapV3 => todo!(),
-                DexVersion::PancakeswapV2 => todo!(),
-                DexVersion::PancakeswapV3 => todo!(),
-            }
+            let token = entry.key();
+            let pools = entry.value();
+            debug!("  Token {}: {} pools", token, pools.len());
         }
-
-        info!("  Uniswap V2 prices: {}", v2_count);
-        info!("  Uniswap V3 prices: {}", v3_count);
-        info!("  Uniswap V4 prices: {}", v4_count);
     }
 }
 

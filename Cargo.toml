@@ -104,4 +104,5 @@ base64 = "0.22"
 ethers = "2.0"
 toml = "0.8"
 orca_whirlpools_core = "2.0"
+bytes = "1.5"
 

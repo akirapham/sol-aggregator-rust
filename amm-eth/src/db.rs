@@ -61,9 +61,9 @@ impl TokenPairDb {
         fee_tier: Option<u32>,
         tick_spacing: Option<i32>,
     ) -> Result<()> {
-        let key = format!("pair:{:?}", pool_address);
+        let key = format!("pair:{}", pool_address);
         let data = TokenPairData {
-            pool_address: format!("{:?}", pool_address),
+            pool_address: pool_address.clone(),
             token0: format!("{:?}", token0),
             token1: format!("{:?}", token1),
             token0_decimals,
@@ -82,7 +82,7 @@ impl TokenPairDb {
 
     /// Load token pair from database
     pub fn load_token_pair(&self, pool_address: String) -> Result<Option<PairInfo>> {
-        let key = format!("pair:{:?}", pool_address);
+        let key = format!("pair:{}", pool_address);
 
         match self.db.get(key.as_bytes())? {
             Some(value) => {
@@ -219,9 +219,9 @@ impl TokenPairDb {
                                 match DexVersion::from_str(&data.dex_version) {
                                     Ok(dex_version) => {
                                         pair_cache.insert(
-                                            pool_address,
+                                            pool_address.clone(),
                                             PairInfo {
-                                                pool_address: data.pool_address,
+                                                pool_address: pool_address,
                                                 pool_token0: token0,
                                                 pool_token1: token1,
                                                 dex_version,

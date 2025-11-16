@@ -57,6 +57,7 @@ pub struct TokenPrice {
     pub eth_chain: EthChain,
     pub fee_tier: Option<u32>,
     pub tick_spacing: Option<i32>,
+    pub eth_price_usd: f64,
 }
 
 /// DEX type identifier
@@ -119,6 +120,44 @@ impl std::fmt::Display for EthChain {
             EthChain::Mainnet => write!(f, "Mainnet"),
             EthChain::Base => write!(f, "Base"),
             EthChain::Arbitrum => write!(f, "Arbitrum"),
+        }
+    }
+}
+
+/// Token price update message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenPriceUpdate {
+    pub token_address: String,
+    pub price_in_eth: f64,
+    pub price_in_usd: Option<f64>,
+    pub last_updated: u64,
+    pub pool_address: String,
+    pub dex_version: String,
+    pub decimals: u8,
+    pub pool_token0: Address,
+    pub pool_token1: Address,
+    pub eth_chain: EthChain,
+    pub fee_tier: Option<u32>,
+    pub tick_spacing: Option<i32>,
+    pub eth_price_usd: f64,
+}
+
+impl From<TokenPrice> for TokenPriceUpdate {
+    fn from(price: TokenPrice) -> Self {
+        Self {
+            token_address: format!("{:?}", price.token_address),
+            price_in_eth: price.price_in_eth,
+            price_in_usd: price.price_in_usd,
+            last_updated: price.last_updated,
+            pool_address: format!("{:?}", price.pool_address),
+            dex_version: format!("{:?}", price.dex_version),
+            decimals: price.decimals,
+            pool_token0: price.pool_token0,
+            pool_token1: price.pool_token1,
+            eth_chain: price.eth_chain,
+            fee_tier: price.fee_tier,
+            tick_spacing: price.tick_spacing,
+            eth_price_usd: price.eth_price_usd,
         }
     }
 }

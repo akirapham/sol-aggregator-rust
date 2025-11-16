@@ -37,6 +37,9 @@ pub struct ChainConfig {
     pub chain_name: String,
     /// RPC endpoint
     pub rpc_url: String,
+    /// Base tokens that can be borrowed for flashloan arbitrage
+    #[serde(default)]
+    pub base_tokens: Vec<(String, bool)>, // (token address, is_stable)
     /// DEXes configured for this chain, keyed by DEX name
     pub dexes: HashMap<String, DexConfig>,
 }

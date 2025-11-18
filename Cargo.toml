@@ -71,7 +71,7 @@ spl-token = "8.0.0"
 
 solana-streamer-sdk = { path = "./crates/solana-streamer" }
 
-spl-token-2022 = "9.0.0"
+spl-token-2022 = { version = "9.0.0", default-features = false, features = ["no-entrypoint"] }
 
 solana-commitment-config = "3.0.0"
 yellowstone-grpc-proto = {  version = "9.0.0" }

@@ -90,8 +90,11 @@ serde-big-array = { workspace = true }
 toml = { workspace = true }
 binance-price-stream = { path = "../crates/binance-price-stream" }
 uint = "0.10.0"
-orca_whirlpools_client = { git = "https://github.com/orca-so/whirlpools", branch = "main" }
-orca_whirlpools_core = { git = "https://github.com/orca-so/whirlpools", branch = "main" }
+spl-associated-token-account = "8.0.0"
+orca_whirlpools_client = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools_client" }
+orca_whirlpools_core = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools_core" }
+orca_whirlpools_sdk = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools"}
+#raydium_clmm_client = { git = "https://github.com/raydium-io/raydium-amm-v3", package = "client"}
 
 [features]
 default = ["bincode", "serde"]
@@ -101,3 +104,4 @@ serde = []
 [dev-dependencies]
 tokio-test = { workspace = true}
 env_logger = { workspace = true}
+

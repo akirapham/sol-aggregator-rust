@@ -12,25 +12,17 @@ use log;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PoolUpdateEventType, orca::fee_rate_manager::FeeRateManager, GetAmmConfig
+        PoolUpdateEventType, GetAmmConfig
     },
     utils::tokens_equal,
 };
 
-use crate::pool_data_types::orca::{
-    math::*,
-    state::*,
-};
-
 use orca_whirlpools_client::{
-    get_oracle_address, get_tick_array_address, AccountsType, Oracle, RemainingAccountsInfo,
-    RemainingAccountsSlice, SwapV2, SwapV2InstructionArgs, TickArray, Whirlpool,
+    get_oracle_address, get_tick_array_address, Oracle, TickArray, Whirlpool
 };
 use orca_whirlpools_core::{
-    get_tick_array_start_tick_index, swap_quote_by_input_token, swap_quote_by_output_token,
-    ExactInSwapQuote, ExactOutSwapQuote, TickArrayFacade, TickFacade, TICK_ARRAY_SIZE,
+    get_tick_array_start_tick_index, swap_quote_by_input_token, TickArrayFacade, TickFacade, TICK_ARRAY_SIZE, TransferFee,
 };
-use orca_whirlpools_core::TransferFee;
 
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -38,8 +30,8 @@ use std::error::Error;
 use std::iter::zip;
 use solana_sdk::account::Account as SolanaAccount;
 use spl_token_2022::extension::transfer_fee::TransferFeeConfig;
-use spl_token_2022::extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions};
-use spl_token_2022::state::{Account, Mint};
+use spl_token_2022::extension::{BaseStateWithExtensions, StateWithExtensions};
+use spl_token_2022::state::{Mint};
 
 // Whirlpool sqrt price limits (same as Raydium CLMM)
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
@@ -186,7 +178,6 @@ impl WhirlpoolPoolState {
 
         let tick_arrays = fetch_tick_arrays_or_default(rpc_client, whirlpool_address, &whirlpool).await?;
 
-        
         let quote = tokio::task::spawn_blocking(move || {
             swap_quote_by_input_token(
                 input_amount,

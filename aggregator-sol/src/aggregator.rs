@@ -590,9 +590,9 @@ impl DexAggregator {
             let profit = final_token_a_amount - token_a.input_amount;
             Some((profit, forward_route, reverse_route, false))
         } else {
-            // None
-            let profit = token_a.input_amount - final_token_a_amount;
-            Some((profit, forward_route, reverse_route, true))
+            None
+            // let profit = token_a.input_amount - final_token_a_amount;
+            // Some((profit, forward_route, reverse_route, true))
         }
     }
 

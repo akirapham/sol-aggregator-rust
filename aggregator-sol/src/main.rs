@@ -5,7 +5,6 @@ mod arbitrage_monitor;
 mod config;
 mod constants;
 mod dex;
-mod on_chain_swap_executor;
 mod arbitrage_transaction_handler;
 mod error;
 mod fetchers;
@@ -23,10 +22,9 @@ use std::path::PathBuf;
 use std::env;
 use tokio::net::TcpListener;
 use tokio::signal;
-use solana_sdk::signer::keypair::read_keypair_file;
 use solana_sdk::signer::keypair::Keypair;
 use solana_sdk::signature::Signer;
-
+use solana_sdk::signer::keypair::read_keypair_file;
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
 use crate::config::ConfigLoader;
@@ -144,12 +142,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or_else(|_| "https://sol-rpc.degalabs.fi/jsdh7483-0543-skdjs-84738-d383438e4sdfd".to_string());
                 log::info!("Using Solana RPC: {}", rpc_url);
 
-                // // Load keypair for transaction signing
-                // let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
-                //     .unwrap_or_else(|_| format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap_or_default()));
-                // let keypair = read_keypair_file(&keypair_path).ok()?;
-                let keypair = Keypair::new();
+                // Load keypair for transaction signing
+                let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
+                    .unwrap_or_else(|_| format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap_or_default()));
+                let keypair = read_keypair_file(&keypair_path).ok()?;
                 log::info!("Loaded keypair: {}", keypair.pubkey());
+
+                // let private_key_str = std::env::var("PRIVATE_KEY")
+                //     .ok()?;
+                // let keypair = Keypair::from_base58_string(&private_key_str);
+                // log::info!("Loaded keypair: {}", keypair.pubkey());
 
                 let monitor = ArbitrageMonitor::new(
                     aggregator_clone,

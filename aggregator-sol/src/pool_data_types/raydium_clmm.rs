@@ -152,7 +152,7 @@ impl RaydiumClmmPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-        rpc_client: &RpcClient,
+        _rpc_client: &RpcClient,
     ) -> u64 {
         if input_amount == 0 {
             return 0;

@@ -68,6 +68,7 @@ borsh = "1.5.7"
 
 # Spl token program
 spl-token = "8.0.0"
+spl-associated-token-account = "8.0.0"
 
 solana-streamer-sdk = { path = "./crates/solana-streamer" }
 

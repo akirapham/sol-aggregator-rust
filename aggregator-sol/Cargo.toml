@@ -91,10 +91,14 @@ toml = { workspace = true }
 binance-price-stream = { path = "../crates/binance-price-stream" }
 uint = "0.10.0"
 spl-associated-token-account = "8.0.0"
+solana-address = "1.0.0"
 orca_whirlpools_client = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools_client" }
 orca_whirlpools_core = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools_core" }
 orca_whirlpools_sdk = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools"}
 #raydium_clmm_client = { git = "https://github.com/raydium-io/raydium-amm-v3", package = "client"}
+raydium_clmm_client = { path = "../../raydium-amm-v3/client", package = "client"}
+configparser = "3.1.0"
+arrayref = { version = "0.3.6" }
 
 [features]
 default = ["bincode", "serde"]

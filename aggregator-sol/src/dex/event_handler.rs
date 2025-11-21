@@ -912,7 +912,7 @@ pub fn handle_dex_event(
                                 }),
                                 tick_array_state: None,
                                 oracle_state: None,
-                                is_account_state_update: false,
+                                is_account_state_update: false, 
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidityV2,
                                 additional_event_type: 0,
                             })));
@@ -1070,7 +1070,21 @@ pub fn handle_dex_event(
                     }));
             },
             PumpFunBondingCurveAccountEvent => |e: PumpFunBondingCurveAccountEvent| {
-                // println!("PumpFunBondingCurveAccountEvent: {e:?}");
+                // pool_update_events.push(PoolUpdateEvent::Pumpfun(
+                //     PumpfunPoolUpdate {
+                //         address: e.bonding_curve,
+                //         last_updated: e.metadata.recv_us as u64,
+                //         mint: e.mint,
+                //         token_reserve: e.virtual_token_reserves,
+                //         sol_reserve: e.virtual_sol_reserves,
+                //         real_token_reserve: e.real_token_reserves,
+                //         slot: e.metadata.slot,
+                //         transaction_index: e.metadata.transaction_index,
+                //         complete: false,
+                //         is_account_state_update: true,
+                //         pool_update_event_type: PoolUpdateEventType::PumpFunTrade,
+                //         additional_event_type: 0,
+                //     }));
             },
             PumpFunGlobalAccountEvent => |e: PumpFunGlobalAccountEvent| {
                 // println!("PumpFunGlobalAccountEvent: {e:?}");

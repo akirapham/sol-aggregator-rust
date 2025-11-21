@@ -34,9 +34,8 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             let top_20 = all_opportunities.iter().take(20);
             let mut opp_html = String::new();
             for opp in top_20 {
-                // Format timestamp as human readable
-                let secs = opp.detected_at / 1000; // Convert milliseconds to seconds
-                let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+                 // Format timestamp as human readable (already in seconds)
+                let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
                 let datetime = format!("{:?}", timestamp);
 
                 let profit_pct = if opp.input_amount > 0 {
@@ -48,23 +47,22 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 // Format status based on OpportunityStatus
                 let status_html = match &opp.status {
                     crate::arbitrage_monitor::OpportunityStatus::Completed => {
-                        let swapped_secs = opp.swapped_at;
-                        let swapped_timestamp =
-                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(swapped_secs);
-                        let swapped_datetime = format!("{:?}", swapped_timestamp);
-                        format!("<span class='status-badge completed'>✅ Completed<br><small>{}</small></span>", swapped_datetime)
+                        "<span class='status-badge completed'>✅ Completed</span>".to_string()
                     }
                     crate::arbitrage_monitor::OpportunityStatus::Executing => {
                         "<span class='status-badge executing'>🔄 Executing</span>".to_string()
                     }
                     crate::arbitrage_monitor::OpportunityStatus::Failed => {
-                        "<span class='status-badge failed'>❌ Failed</span>".to_string()
+                        if let Some(err) = &opp.error_message {
+                            format!("<span class='status-badge failed' title='{}'>❌ Failed</span>", err)
+                        } else {
+                            "<span class='status-badge failed'>❌ Failed</span>".to_string()
+                        }
                     }
                     crate::arbitrage_monitor::OpportunityStatus::Pending => {
                         "<span class='status-badge pending'>⏳ Pending</span>".to_string()
                     }
                 };
-
                 opp_html.push_str(&format!(
                     "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
                     datetime,

@@ -2,13 +2,37 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
-    parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::OracleState, types::TickArrayState,
+    parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::TickArrayState, types::OracleState
 };
+use solana_client::nonblocking::rpc_client::RpcClient;
+use std::sync::Arc;
 use std::collections::HashMap;
+use crate::{
+    constants::is_base_token,
+    pool_data_types::{
+        PoolUpdateEventType, GetAmmConfig
+    },
+    utils::tokens_equal,
+};
+use orca_whirlpools_client::{
+    get_oracle_address, get_tick_array_address, Oracle, TickArray, Whirlpool
+};
+use orca_whirlpools_core::{
+    get_tick_array_start_tick_index, swap_quote_by_input_token, TickArrayFacade, TickFacade, TICK_ARRAY_SIZE, TransferFee,
+};
 
-use crate::{constants::is_base_token, pool_data_types::PoolUpdateEventType, utils::tokens_equal};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+use std::error::Error;
+use std::iter::zip;
+use std::str::FromStr;
+use solana_sdk::account::Account as SolanaAccount;
+use spl_token_2022::extension::transfer_fee::TransferFeeConfig;
+use spl_token_2022::extension::{BaseStateWithExtensions, StateWithExtensions};
+use spl_token_2022::state::{Mint};
 
 use crate::pool_data_types::orca::math::*;
+use solana_address::Address;
 
 // Whirlpool sqrt price limits (same as Raydium CLMM)
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
@@ -85,78 +109,158 @@ impl WhirlpoolPoolState {
         Pubkey::new_from_array(*ORCA_WHIRLPOOL_PROGRAM_ID.as_array())
     }
 
-    /// Calculate output amount for Whirlpool swap using compute_swap_simplified
-    ///
-    /// Uses the core compute_swap_simplified() function which mirrors the official
-    /// Whirlpool SDK's pub fn swap() (swap_manager.rs lines 29-244).
-    ///
-    /// This simplified implementation provides:
-    /// - Exact input mode: Input fixed, output calculated
-    /// - Core swap computation with official math
-    /// - Proper fee deduction
-    /// - Price limit validation
-    /// - Direction-aware price movements
-    ///
-    /// For multi-tick traversal with dynamic fees and liquidity updates,
-    /// use the full loop implementation below (kept as reference).
-    pub fn calculate_output_amount(&self, input_token: &Pubkey, input_amount: u64) -> u64 {
-        // Input validation
-        let a_to_b = tokens_equal(input_token, &self.token_mint_a);
-        if self.sqrt_price == 0 || self.liquidity == 0 || input_amount == 0 {
-            return 0;
+    pub async fn calculate_output_amount(
+        &self,
+        input_token: &Pubkey,
+        input_amount: u64,
+        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        rpc_client: &RpcClient,
+    ) -> u64 {
+        // Return 0 on any errors to avoid stack overflow
+        let result = self.calculate_output_amount_internal(
+            input_token,
+            input_amount,
+            rpc_client,
+        )
+        .await;
+        
+        match result {
+            Ok(amount) => amount,
+            Err(_e) => 0, // Return 0 on any error instead of unwrapping
         }
+    }
 
-        // Set price limit based on direction
-        let sqrt_price_limit = if a_to_b {
-            MIN_SQRT_PRICE_X64
-        } else {
-            MAX_SQRT_PRICE_X64
-        };
+    async fn calculate_output_amount_internal(
+        &self,
+        input_token: &Pubkey,
+        _input_amount: u64,
+        rpc_client: &RpcClient,
+    ) -> Result<u64, Box<dyn Error>> {
+        // let whirlpool_address = self.address;
+        // let slippage_tolerance_bps = 50;
 
-        // Validate price limit direction
-        if (a_to_b && sqrt_price_limit >= self.sqrt_price)
-            || (!a_to_b && sqrt_price_limit <= self.sqrt_price)
-        {
-            return 0;
-        }
+        // let whirlpool_info = rpc.get_account(&whirlpool_address).await?;
+        
+        // let whirlpool = Whirlpool::from_bytes(&whirlpool_info.data)?;
+        // let specified_input = swap_type == SwapType::ExactIn;
+        // let specified_token_a = specified_mint == whirlpool.token_mint_a;
+        // let a_to_b = specified_token_a == specified_input;
 
-        // Call compute_swap_simplified with current pool state
-        // This executes the core swap computation from the official Whirlpool SDK
-        match compute_swap_simplified(
-            input_amount,     // Exact input amount
-            sqrt_price_limit, // Price limit (MIN for A→B, MAX for B→A)
-            true,             // amount_specified_is_input = true (exact input mode)
-            a_to_b,           // Direction: true = A→B, false = B→A
-            self.fee_rate,    // Static fee rate
-            self.sqrt_price,  // Current pool price in Q64 format
-            self.liquidity,   // Current pool liquidity
-        ) {
-            Ok(result) => {
-                // Log swap details for debugging
-                log::debug!(
-                    "Swap computed: direction={}, input={}, output_a={}, output_b={}, fee={}",
-                    if a_to_b { "A→B" } else { "B→A" },
-                    input_amount,
-                    result.amount_a,
-                    result.amount_b,
-                    result.fee_amount
-                );
+        // let tick_arrays = fetch_tick_arrays_or_default(rpc, whirlpool_address, &whirlpool).await?;
 
-                // Return the output amount based on direction
-                // In exact-input mode with compute_swap_simplified():
-                //   amount_a = input - fees
-                //   amount_b = output calculated
-                if a_to_b {
-                    result.amount_b // Output is token B when A→B
-                } else {
-                    result.amount_a // Output is token A when B→A
-                }
-            }
-            Err(e) => {
-                log::warn!("Swap computation failed: {}", e);
-                0
-            }
-        }
+        // let mint_infos = rpc
+        //     .get_multiple_accounts(&[whirlpool.token_mint_a, whirlpool.token_mint_b])
+        //     .await?;
+
+        // let mint_a_info = mint_infos[0]
+        //     .as_ref()
+        //     .ok_or(format!("Mint a not found: {}", whirlpool.token_mint_a))?;
+
+        // let mint_b_info = mint_infos[1]
+        //     .as_ref()
+        //     .ok_or(format!("Mint b not found: {}", whirlpool.token_mint_b))?;
+
+        // let oracle_address = get_oracle_address(&whirlpool_address)?.0;
+        // let oracle = fetch_oracle(rpc, oracle_address, &whirlpool).await?;
+
+        // let current_epoch = rpc.get_epoch_info().await?.epoch;
+        // let transfer_fee_a = get_current_transfer_fee(Some(mint_a_info), current_epoch);
+        // let transfer_fee_b = get_current_transfer_fee(Some(mint_b_info), current_epoch);
+
+        // let timestamp = SystemTime::now()
+        //     .duration_since(UNIX_EPOCH)
+        //     .unwrap()
+        //     .as_secs();
+        // let trade_enable_timestamp = oracle
+        //     .as_ref()
+        //     .map(|x| x.trade_enable_timestamp)
+        //     .unwrap_or(0);
+
+        // let quote = match swap_type {
+        //     SwapType::ExactIn => SwapQuote::ExactIn(swap_quote_by_input_token(
+        //         amount,
+        //         specified_token_a,
+        //         slippage_tolerance_bps,
+        //         whirlpool.clone().into(),
+        //         oracle.map(|oracle| oracle.into()),
+        //         tick_arrays.map(|x| x.1).into(),
+        //         timestamp,
+        //         transfer_fee_a,
+        //         transfer_fee_b,
+        //     )?),
+        //     SwapType::ExactOut => SwapQuote::ExactOut(swap_quote_by_output_token(
+        //         amount,
+        //         specified_token_a,
+        //         slippage_tolerance_bps,
+        //         whirlpool.clone().into(),
+        //         oracle.map(|oracle| oracle.into()),
+        //         tick_arrays.map(|x| x.1).into(),
+        //         timestamp,
+        //         transfer_fee_a,
+        //         transfer_fee_b,
+        //     )?),
+        // };
+        // Ok(quote.token_est_out)
+        Ok(0)
+
+
+
+        // let whirlpool_address = self.address;
+        // let slippage_tolerance_bps = 50;
+        
+        // let whirlpool_addr = Address::from_str(&whirlpool_address.to_string()).unwrap();
+        // let whirlpool_info = rpc_client.get_account(&whirlpool_address).await?;
+        // let whirlpool = Whirlpool::from_bytes(&whirlpool_info.data)?;
+        // let (token_a, _) = (self.token_mint_a, self.token_mint_b);
+        // let specified_token_a = tokens_equal(input_token, &token_a);
+        // let mint_infos = rpc_client
+        //     .get_multiple_accounts(&[Pubkey::from_str(&whirlpool.token_mint_a.to_string()).unwrap(), Pubkey::from_str(&whirlpool.token_mint_b.to_string()).unwrap()])
+        //     .await?;
+
+        // let mint_a_info = mint_infos[0]
+        //     .as_ref()
+        //     .ok_or(format!("Mint a not found: {}", whirlpool.token_mint_a))?;
+
+        // let mint_b_info = mint_infos[1]
+        //     .as_ref()
+        //     .ok_or(format!("Mint b not found: {}", whirlpool.token_mint_b))?;
+
+        //     //             let whirlpool_addr = Address::from_str(&whirlpool_address.to_string()).unwrap();
+        //     // get_tick_array_address(&whirlpool_addr, x)
+        //     //     .map(|(addr, _)| Pubkey::from_str(&addr.to_string()).unwrap())
+
+        // let oracle_address = get_oracle_address(&whirlpool_addr)?.0;
+        // let oracle_info = rpc_client.get_account(&Pubkey::from_str(&oracle_address.to_string()).unwrap()).await;
+        // let oracle = oracle_info.ok().and_then(|acc| Oracle::from_bytes(&acc.data).ok());
+
+        // let current_epoch = rpc_client.get_epoch_info().await?.epoch;
+        // let transfer_fee_a = get_current_transfer_fee(Some(mint_a_info), current_epoch);
+        // let transfer_fee_b = get_current_transfer_fee(Some(mint_b_info), current_epoch);
+
+        // let timestamp = SystemTime::now()
+        //     .duration_since(UNIX_EPOCH)?
+        //     .as_secs();
+
+        // let tick_arrays = fetch_tick_arrays_or_default(rpc_client, whirlpool_address, &whirlpool).await?;
+
+        // let quote = tokio::task::spawn_blocking(move || {
+        //     swap_quote_by_input_token(
+        //         input_amount,
+        //         specified_token_a,
+        //         slippage_tolerance_bps,
+        //         whirlpool.into(),
+        //         oracle.map(|o| o.into()),
+        //         tick_arrays.map(|x| x.1).into(),
+        //         timestamp,
+        //         transfer_fee_a,
+        //         transfer_fee_b,
+        //     )
+        // })
+        // .await
+        // .map_err(|e| format!("spawn_blocking error: {}", e))?
+        // .map_err(|e| format!("swap quote error: {:?}", e))?;
+        
+        // Ok(quote.token_est_out)
     }
 
     pub fn calculate_token_prices(
@@ -223,168 +327,71 @@ struct SwapStepResult {
     fee_amount: u64,
 }
 
-/// Implements the core compute_swap logic matching official Whirlpool SDK
-///
-/// This function mirrors: pub fn swap(
-///     whirlpool: &Whirlpool,
-///     swap_tick_sequence: &mut SwapTickSequence,
-///     amount: u64,
-///     sqrt_price_limit: u128,
-///     amount_specified_is_input: bool,
-///     a_to_b: bool,
-///     timestamp: u64,
-///     adaptive_fee_info: &Option<AdaptiveFeeInfo>,
-/// ) -> Result<Box<PostSwapUpdate>>
-///
-/// Key Parameters (7 parameters to compute_swap call):
-/// 1. amount_remaining: u64 - Decreases with each iteration (input or output depending on mode)
-/// 2. total_fee_rate: u16 - Updated via FeeRateManager (dynamic fees)
-/// 3. curr_liquidity: u128 - Changes at tick crossings (liquidity_net adjustments)
-/// 4. curr_sqrt_price: u128 - Current Q64 price, updates after each step
-/// 5. bounded_sqrt_price_target: u128 - Calculated with fee bounds for this iteration
-/// 6. amount_specified_is_input: bool - Constant mode flag (exact-in vs exact-out)
-/// 7. a_to_b: bool - Constant direction flag (Token A→B vs B→A)
-///
-/// Documentation of the swap loop structure:
-///
-/// OUTER LOOP (lines 102-216 in official):
-///   while amount_remaining > 0 && adjusted_sqrt_price_limit != curr_sqrt_price
-///   - Finds next initialized tick
-///   - Gets next_tick_sqrt_price and sqrt_price_target
-///   
-///   INNER LOOP ("do while"):
-///     loop:
-///       - Updates volatility accumulator (line 111)
-///       - Gets bounded_sqrt_price_target (line 115-120)
-///       - Calls compute_swap() with 7 parameters (line 115-123)
-///       - Updates amounts based on mode (lines 125-134)
-///       - Accumulates fees (lines 136-140)
-///       - Handles tick crossings (lines 142-172)
-///       - Updates price indices (lines 174-207)
-///       - Advances fee manager (lines 208-215)
-///       - Breaks when: amount_remaining == 0 OR curr_sqrt_price == sqrt_price_target
-///
-pub fn compute_swap_simplified(
-    amount: u64,
-    sqrt_price_limit: u128,
-    amount_specified_is_input: bool,
-    a_to_b: bool,
-    fee_rate: u16,
-    curr_sqrt_price: u128,
-    curr_liquidity: u128,
-) -> std::result::Result<SwapComputeResult, String> {
-    // Input validation - mirror official swap function
-    const MIN_SQRT_PRICE_X64: u128 = 4295048016;
-    const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
-    const NO_EXPLICIT_SQRT_PRICE_LIMIT: u128 = 0;
+// async fn fetch_tick_arrays_or_default(
+//     rpc_client: &RpcClient,
+//     whirlpool_address: Pubkey,
+//     whirlpool: &Whirlpool,
+// ) -> Result<[(Pubkey, TickArrayFacade); 5], Box<dyn Error>> {
+//     let tick_array_start_index =
+//         get_tick_array_start_tick_index(whirlpool.tick_current_index, whirlpool.tick_spacing);
+//     let offset = whirlpool.tick_spacing as i32 * TICK_ARRAY_SIZE as i32;
 
-    let adjusted_sqrt_price_limit = if sqrt_price_limit == NO_EXPLICIT_SQRT_PRICE_LIMIT {
-        if a_to_b {
-            MIN_SQRT_PRICE_X64
-        } else {
-            MAX_SQRT_PRICE_X64
-        }
-    } else {
-        sqrt_price_limit
-    };
+//     let tick_array_indexes = [
+//         tick_array_start_index,
+//         tick_array_start_index + offset,
+//         tick_array_start_index + offset * 2,
+//         tick_array_start_index - offset,
+//         tick_array_start_index - offset * 2,
+//     ];
 
-    // Validate price bounds
-    if !(MIN_SQRT_PRICE_X64..=MAX_SQRT_PRICE_X64).contains(&adjusted_sqrt_price_limit) {
-        return Err("SqrtPriceOutOfBounds".to_string());
+//     let tick_array_addresses: Vec<Pubkey> = tick_array_indexes
+//         .iter()
+//         .map(|&x| get_tick_array_address(&whirlpool_address, x).map(|y| y.0))
+//         .collect::<Result<Vec<Pubkey>, _>>()?;
+
+//     let tick_array_infos = rpc.get_multiple_accounts(&tick_array_addresses).await?;
+
+//     let maybe_tick_arrays: Vec<Option<TickArrayFacade>> = tick_array_infos
+//         .iter()
+//         .map(|x| x.as_ref().and_then(|y| TickArray::from_bytes(&y.data).ok()))
+//         .map(|x| x.map(|y| y.into()))
+//         .collect();
+
+//     let tick_arrays: Vec<TickArrayFacade> = maybe_tick_arrays
+//         .iter()
+//         .enumerate()
+//         .map(|(i, x)| x.unwrap_or(uninitialized_tick_array(tick_array_indexes[i])))
+//         .collect::<Vec<TickArrayFacade>>();
+
+//     let result: [(Pubkey, TickArrayFacade); 5] = zip(tick_array_addresses, tick_arrays)
+//         .collect::<Vec<(Pubkey, TickArrayFacade)>>()
+//         .try_into()
+//         .map_err(|_| "Failed to convert tick arrays to array".to_string())?;
+
+//     Ok(result)
+// }
+
+pub fn get_current_transfer_fee(
+    mint_account_info: Option<&SolanaAccount>,
+    current_epoch: u64,
+) -> Option<TransferFee> {
+    let token_mint_data = &mint_account_info?.data;
+    let token_mint_unpacked = StateWithExtensions::<Mint>::unpack(token_mint_data).ok()?;
+
+    if let Ok(transfer_fee_config) = token_mint_unpacked.get_extension::<TransferFeeConfig>() {
+        let fee = transfer_fee_config.get_epoch_fee(current_epoch);
+        return Some(TransferFee {
+            fee_bps: fee.transfer_fee_basis_points.into(),
+            max_fee: fee.maximum_fee.into(),
+        });
     }
 
-    // Validate price limit direction
-    if (a_to_b && adjusted_sqrt_price_limit >= curr_sqrt_price)
-        || (!a_to_b && adjusted_sqrt_price_limit <= curr_sqrt_price)
-    {
-        return Err("InvalidSqrtPriceLimitDirection".to_string());
-    }
-
-    if amount == 0 {
-        return Err("ZeroTradableAmount".to_string());
-    }
-
-    // Initialize state variables - mirror official swap loop state initialization
-    let mut amount_remaining: u64 = amount;
-    let mut amount_calculated: u64 = 0;
-    let mut curr_sqrt_price_mut = curr_sqrt_price;
-    let curr_liquidity_mut = curr_liquidity;
-    let mut fee_sum: u64 = 0;
-
-    // SIMPLIFIED VERSION: Single step (not multi-step like official)
-    // Uses fee_rate directly instead of dynamic FeeRateManager
-    // For multi-step swaps, would need full tick tracking and liquidity updates
-
-    // Execute single swap step with base fee rate
-    let swap_computation = compute_swap(
-        amount_remaining,
-        fee_rate as u32, // Convert u16 to u32 for fee rate
-        curr_liquidity_mut,
-        curr_sqrt_price_mut,
-        adjusted_sqrt_price_limit,
-        amount_specified_is_input,
-        a_to_b,
-    )
-    .map_err(|e| format!("Swap step failed: {:?}", e))?;
-
-    // Update amounts based on swap mode - mirror official logic (lines 125-141)
-    if amount_specified_is_input {
-        // Exact input mode: input amount is fixed, output varies
-        amount_remaining = amount_remaining
-            .checked_sub(swap_computation.amount_in)
-            .ok_or("AmountRemainingOverflow")?;
-        amount_remaining = amount_remaining
-            .checked_sub(swap_computation.fee_amount)
-            .ok_or("AmountRemainingOverflow")?;
-
-        amount_calculated = amount_calculated
-            .checked_add(swap_computation.amount_out)
-            .ok_or("AmountCalcOverflow")?;
-    } else {
-        // Exact output mode: output amount is fixed, input varies
-        amount_remaining = amount_remaining
-            .checked_sub(swap_computation.amount_out)
-            .ok_or("AmountRemainingOverflow")?;
-
-        amount_calculated = amount_calculated
-            .checked_add(swap_computation.amount_in)
-            .ok_or("AmountCalcOverflow")?;
-        amount_calculated = amount_calculated
-            .checked_add(swap_computation.fee_amount)
-            .ok_or("AmountCalcOverflow")?;
-    }
-
-    fee_sum = fee_sum
-        .checked_add(swap_computation.fee_amount)
-        .ok_or("AmountCalcOverflow")?;
-
-    // Update current sqrt price
-    curr_sqrt_price_mut = swap_computation.next_price;
-
-    // Final amount calculation (mirror lines 226-231 in official)
-    let (amount_a, amount_b) = if a_to_b == amount_specified_is_input {
-        (amount - amount_remaining, amount_calculated)
-    } else {
-        (amount_calculated, amount - amount_remaining)
-    };
-
-    Ok(SwapComputeResult {
-        amount_a,
-        amount_b,
-        fee_amount: fee_sum,
-        end_sqrt_price: curr_sqrt_price_mut,
-        end_tick_index: 0, // Not tracked in simplified version
-        end_liquidity: curr_liquidity_mut,
-    })
+    None
 }
 
-/// Result of compute_swap computation matching PostSwapUpdate
-#[derive(Debug, Clone)]
-pub struct SwapComputeResult {
-    pub amount_a: u64,
-    pub amount_b: u64,
-    pub fee_amount: u64,
-    pub end_sqrt_price: u128,
-    pub end_tick_index: i32,
-    pub end_liquidity: u128,
+fn uninitialized_tick_array(start_tick_index: i32) -> TickArrayFacade {
+    TickArrayFacade {
+        start_tick_index,
+        ticks: [TickFacade::default(); TICK_ARRAY_SIZE],
+    }
 }

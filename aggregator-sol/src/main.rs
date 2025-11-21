@@ -9,7 +9,6 @@ mod dex;
 mod error;
 mod fetchers;
 mod grpc;
-mod on_chain_swap_executor;
 mod pool_data_types;
 mod pool_manager;
 mod types;
@@ -25,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
+use solana_sdk::signer::keypair::Keypair;
 
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
@@ -144,16 +144,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Load mainnet configuration
                 let rpc_url = env::var("SOLANA_RPC_URL")
-                    .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+                    .unwrap_or_else(|_| "https://sol-rpc.degalabs.fi/jsdh7483-0543-skdjs-84738-d383438e4sdfd".to_string());
                 log::info!("Using Solana RPC: {}", rpc_url);
 
                 // Load keypair for transaction signing
-                let keypair_path = env::var("SOLANA_KEYPAIR_PATH").unwrap_or_else(|_| {
-                    format!(
-                        "{}/.config/solana/id.json",
-                        std::env::var("HOME").unwrap_or_default()
-                    )
-                });
+                let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
+                    .unwrap_or_else(|_| format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap_or_default()));
                 let keypair = read_keypair_file(&keypair_path).ok()?;
                 log::info!("Loaded keypair: {}", keypair.pubkey());
 
@@ -291,9 +287,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
 
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
 
-    log::info!("Server running on http://0.0.0.0:{}", port);
+    log::info!("Server running on http://127.0.0.1:{}", port);
     log::info!("API endpoints:");
     log::info!("  POST /quote - Get swap quotes");
     log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");

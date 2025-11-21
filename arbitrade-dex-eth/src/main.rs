@@ -201,31 +201,27 @@ async fn main() -> Result<()> {
                             );
 
                             for opp in opportunities.iter().take(5) {
-                                let token_etherscan =
-                                    format!("https://etherscan.io/token/{:?}", opp.token_address);
-                                let buy_pool_etherscan = format!(
-                                    "https://etherscan.io/address/{:?}",
-                                    opp.buy_pool.pool_address
-                                );
-                                let sell_pool_etherscan = format!(
-                                    "https://etherscan.io/address/{:?}",
-                                    opp.sell_pool.pool_address
-                                );
+                                // let token_addr = opp.token_address;
+                                // let buy_pool_addr = &opp.buy_pool.pool_address;
+                                // let sell_pool_addr = &opp.sell_pool.pool_address;
+
+                                // let token_etherscan =
+                                //     format!("https://etherscan.io/token/{:?}", token_addr);
+                                // let buy_pool_etherscan =
+                                //     format!("https://etherscan.io/address/{}", buy_pool_addr);
+                                // let sell_pool_etherscan =
+                                //     format!("https://etherscan.io/address/{}", sell_pool_addr);
                                 let eth_price = opp.buy_pool.eth_price_usd;
 
-                                info!(
-                                    "   🎯 Token: {} | Buy@${:.6} ({}) / Sell@${:.6} ({}) = {:.2}% profit",
-                                    token_etherscan,
-                                    opp.buy_pool.price_in_usd.unwrap_or(0.0),
-                                    buy_pool_etherscan,
-                                    opp.sell_pool.price_in_usd.unwrap_or(0.0),
-                                    sell_pool_etherscan,
-                                    opp.price_diff_percent
-                                );
-
-                                if let Some(usd_profit) = opp.potential_profit_usd {
-                                    info!("      💵 USD Profit per Token: ${:.2}", usd_profit);
-                                }
+                                // info!(
+                                //     "   🎯 Token: {} | Buy@${:.6} ({}) / Sell@${:.6} ({}) = {:.2}% profit",
+                                //     token_etherscan,
+                                //     opp.buy_pool.price_in_usd.unwrap_or(0.0),
+                                //     buy_pool_etherscan,
+                                //     opp.sell_pool.price_in_usd.unwrap_or(0.0),
+                                //     sell_pool_etherscan,
+                                //     opp.price_diff_percent
+                                // );
 
                                 // Spawn task to compute exact arbitrage profit using on-chain quoters
                                 let opp_clone = opp.clone();
@@ -283,8 +279,10 @@ async fn main() -> Result<()> {
                                             * 10f64.powi(base_token_decimals as i32))
                                             as u64,
                                     );
-
-                                    let is_2_hop = other_token_in_sell_pool == token_x;
+                                    let is_2_hop = opp_clone.buy_pool.pool_token0
+                                        == opp_clone.sell_pool.pool_token0
+                                        && opp_clone.buy_pool.pool_token1
+                                            == opp_clone.sell_pool.pool_token1;
 
                                     if is_2_hop {
                                         info!(
@@ -293,6 +291,7 @@ async fn main() -> Result<()> {
                                         );
 
                                         // Compute arbitrage profit
+                                        let start_time = std::time::Instant::now();
                                         match arbitrade_dex_eth::utils::compute_arbitrage_path(
                                             provider_for_compute,
                                             flashloan_amount,
@@ -307,23 +306,42 @@ async fn main() -> Result<()> {
                                         .await
                                         {
                                             Ok((amount_a, amount_x_out, net_profit)) => {
+                                                let elapsed = start_time.elapsed();
                                                 if net_profit > 0 {
+                                                    let net_profit_after_decimals = net_profit
+                                                        as f64
+                                                        / (10u128.pow(base_token_decimals as u32)
+                                                            as f64);
+                                                    let net_profit_value = net_profit_after_decimals
+                                                        * (if found_base_token_is_stable {
+                                                            1.0
+                                                        } else {
+                                                            eth_price
+                                                        });
                                                     info!(
-                                                        "💰 PROFITABLE! Flashloan {} USDT -> {} token A -> {} USDT out | Net profit: {} USDT",
+                                                        "💰 PROFITABLE 2-HOP! {} -> {} -> {} | Net profit: {:.2} {} | Time: {:.2}ms",
                                                         flashloan_amount,
                                                         amount_a,
                                                         amount_x_out,
-                                                        net_profit
+                                                        net_profit_value,
+                                                        if found_base_token_is_stable { "USDT" } else { "ETH" },
+                                                        elapsed.as_secs_f64() * 1000.0
                                                     );
                                                     // TODO: Execute the arbitrage if profit > gas costs
                                                 } else {
-                                                    debug!("Unprofitable after on-chain quote: net_profit = {}", net_profit);
+                                                    let net_profit_abs = net_profit.abs();
+                                                    let net_profit_after_decimals = net_profit_abs as f64
+                                                        / (10u128.pow(base_token_decimals as u32) as f64);
+                                                    let net_profit_value = net_profit_after_decimals * (if found_base_token_is_stable { 1.0 } else { eth_price });
+                                                    info!("2-hop unprofitable: net_profit = -{} | Time: {:.2}ms", net_profit_value, elapsed.as_secs_f64() * 1000.0);
                                                 }
                                             }
                                             Err(e) => {
+                                                let elapsed = start_time.elapsed();
                                                 warn!(
-                                                    "Failed to compute arbitrage profit: {:?}",
-                                                    e
+                                                    "Failed to compute 2-hop arbitrage profit: {:?} | Time: {:.2}ms",
+                                                    e,
+                                                    elapsed.as_secs_f64() * 1000.0
                                                 );
                                             }
                                         }
@@ -337,6 +355,7 @@ async fn main() -> Result<()> {
 
                                         // First, get the amount of token B we'll have after X -> A -> B
                                         let token_b = other_token_in_sell_pool;
+                                        let start_time = std::time::Instant::now();
                                         match arbitrade_dex_eth::utils::compute_arbitrage_path(
                                             provider_for_compute.clone(),
                                             flashloan_amount,
@@ -351,7 +370,9 @@ async fn main() -> Result<()> {
                                         .await
                                         {
                                             Ok((amount_a, amount_b, _profit_2hop)) => {
+                                                let elapsed_2hop = start_time.elapsed();
                                                 // Now find the best B -> X pool and compute final profit
+                                                let start_3hop_time = std::time::Instant::now();
                                                 match arbitrade_dex_eth::utils::find_best_b_to_x_swap(
                                                     http_client_for_3hop.clone(),
                                                     &dex_pair_api_for_3hop,
@@ -366,27 +387,51 @@ async fn main() -> Result<()> {
                                                 .await
                                                 {
                                                     Ok((_best_pool, amount_x_final)) => {
-                                                        let net_profit = amount_x_final.as_u128() as i128
-                                                            - flashloan_amount.as_u128() as i128;
+                                                        let elapsed_3hop = start_3hop_time.elapsed();
+                                                        // Calculate profit using U256 to avoid overflow
+                                                        let net_profit = if amount_x_final >= flashloan_amount {
+                                                            (amount_x_final - flashloan_amount).as_u128() as i128
+                                                        } else {
+                                                            -((flashloan_amount - amount_x_final).as_u128() as i128)
+                                                        };
 
                                                         if net_profit > 0 {
+                                                            let net_profit_after_decimals = net_profit as f64
+                                                                / (10u128.pow(base_token_decimals as u32) as f64);
+                                                            let net_profit_value = net_profit_after_decimals * (if found_base_token_is_stable { 1.0 } else { eth_price });
                                                             info!(
-                                                                "💰 PROFITABLE 3-HOP! {} -> {} -> {} -> {} | Net profit: {} wei",
+                                                                "💰 PROFITABLE 3-HOP! {} -> {} -> {} -> {} | Net profit: {:.2} {} | X->A->B: {:.2}ms, B->X: {:.2}ms, Total: {:.2}ms",
                                                                 flashloan_amount,
                                                                 amount_a,
                                                                 amount_b,
                                                                 amount_x_final,
-                                                                net_profit
+                                                                net_profit_value,
+                                                                if found_base_token_is_stable { "USDT" } else { "ETH" },
+                                                                elapsed_2hop.as_secs_f64() * 1000.0,
+                                                                elapsed_3hop.as_secs_f64() * 1000.0,
+                                                                (elapsed_2hop + elapsed_3hop).as_secs_f64() * 1000.0
                                                             );
                                                             // TODO: Execute the arbitrage if profit > gas costs
                                                         } else {
-                                                            debug!("3-hop unprofitable: net_profit = {}", net_profit);
+                                                            let net_profit_abs = net_profit.abs();
+                                                            let net_profit_after_decimals = net_profit_abs as f64
+                                                                / (10u128.pow(base_token_decimals as u32) as f64);
+                                                            let net_profit_value = net_profit_after_decimals * (if found_base_token_is_stable { 1.0 } else { eth_price });
+                                                            info!("3-hop unprofitable: net_profit = -{} | X->A->B: {:.2}ms, B->X: {:.2}ms, Total: {:.2}ms",
+                                                                net_profit_value,
+                                                                elapsed_2hop.as_secs_f64() * 1000.0,
+                                                                elapsed_3hop.as_secs_f64() * 1000.0,
+                                                                (elapsed_2hop + elapsed_3hop).as_secs_f64() * 1000.0
+                                                            );
                                                         }
                                                     }
                                                     Err(e) => {
+                                                        let elapsed_3hop = start_3hop_time.elapsed();
                                                         warn!(
-                                                            "Failed to find best B -> X swap: {:?}",
-                                                            e
+                                                            "Failed to find best B -> X swap: {:?} | X->A->B: {:.2}ms, B->X: {:.2}ms",
+                                                            e,
+                                                            elapsed_2hop.as_secs_f64() * 1000.0,
+                                                            elapsed_3hop.as_secs_f64() * 1000.0
                                                         );
                                                     }
                                                 }

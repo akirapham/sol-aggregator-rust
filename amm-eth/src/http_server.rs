@@ -27,6 +27,7 @@ pub struct PairInfoResponse {
     pub factory: String,
     pub fee_tier: Option<u32>,
     pub tick_spacing: Option<i32>,
+    pub hooks: Option<String>,
 }
 
 impl From<PairInfo> for PairInfoResponse {
@@ -41,6 +42,11 @@ impl From<PairInfo> for PairInfoResponse {
             factory: format!("{:?}", pair.factory).to_lowercase(),
             fee_tier: pair.fee_tier,
             tick_spacing: pair.tick_spacing,
+            hooks: if let Some(hooks_addr) = pair.hooks {
+                Some(format!("{:?}", hooks_addr).to_lowercase())
+            } else {
+                None
+            },
         }
     }
 }

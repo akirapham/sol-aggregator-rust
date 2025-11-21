@@ -211,6 +211,7 @@ mod tests {
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier: None,
             tick_spacing: None,
+            hooks: None,
             eth_price_usd: 2000.0,
         };
 

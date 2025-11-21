@@ -1,9 +1,11 @@
+use crate::failed_pool_cache;
 use anyhow::{anyhow, Result};
 use eth_dex_quote::v2::V2Quoter;
 use eth_dex_quote::v3::V3Quoter;
 use eth_dex_quote::v4::V4Quoter;
 use eth_dex_quote::{DexType, TokenPriceUpdate, UniswapV2Quoter, UniswapV3Quoter, UniswapV4Quoter};
 use ethers::types::{Address, U256};
+use log::info;
 use std::sync::Arc;
 
 /// Compute output amount using V2 quoter for a token swap
@@ -92,12 +94,18 @@ pub async fn compute_output_amount_v4<P: ethers::providers::Middleware + 'static
     fee_tier: u32,
     tick_spacing: i32,
     quoter_v4_address: Address,
+    pool_id: Option<String>,
+    hooks: Address,
 ) -> Result<U256> {
     // Create V4 quoter
     let quoter = UniswapV4Quoter::new(provider, quoter_v4_address);
 
-    // V4 pools can have hooks - for now, use zero address (no hooks)
-    let hooks = Address::zero();
+    // Check if pool is known to fail
+    if let Some(pid) = &pool_id {
+        if failed_pool_cache::is_pool_failed(pid) {
+            return Err(anyhow!("Skipping known failing pool: {}", pid));
+        }
+    }
 
     // Get quote from V4 quoter contract
     let swap_quote = quoter
@@ -107,10 +115,21 @@ pub async fn compute_output_amount_v4<P: ethers::providers::Middleware + 'static
             amount_in,
             fee_tier,
             tick_spacing,
+            pool_id.clone(),
             hooks,
         )
         .await
-        .map_err(|e| anyhow!("V4 quote failed: {:?}", e))?;
+        .map_err(|e| {
+            // Cache failing pool if it reverts
+            if let Some(pid) = &pool_id {
+                let err_str = format!("{:?}", e);
+                if err_str.contains("Revert") || err_str.contains("V4 Quoter call failed") {
+                    failed_pool_cache::mark_pool_failed(pid);
+                    info!("Marked pool {} as failed due to revert", pid);
+                }
+            }
+            anyhow!(format!("V4 quote failed (token_in={:?}, token_out={:?}, amount_in={}, fee_tier={}, tick_spacing={}, quoter_v4_address={:?}) : {:?}", token_in, token_out, amount_in, fee_tier, tick_spacing, quoter_v4_address, e))
+        })?;
 
     Ok(swap_quote.amount_out)
 }
@@ -165,9 +184,12 @@ pub async fn compute_multi_hop_arbitrage<P: ethers::providers::Middleware + 'sta
     let final_amount = current_amount;
 
     // Calculate profit: final_amount - flashloan_amount
-    let flashloan_u128 = flashloan_amount.as_u128() as i128;
-    let final_u128 = final_amount.as_u128() as i128;
-    let net_profit = final_u128 - flashloan_u128;
+    // Use U256 subtraction to avoid overflow, then convert to i128 for the result
+    let net_profit = if final_amount >= flashloan_amount {
+        (final_amount - flashloan_amount).as_u128() as i128
+    } else {
+        -((flashloan_amount - final_amount).as_u128() as i128)
+    };
 
     Ok((intermediate_amounts, final_amount, net_profit))
 }
@@ -198,9 +220,14 @@ pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     quoter_v3_address: Address,
     quoter_v4_address: Address,
 ) -> Result<(U256, U256, i128)> {
+    let other_token_in_sell = if token_a == sell_pool.pool_token0 {
+        sell_pool.pool_token1
+    } else {
+        sell_pool.pool_token0
+    };
     let swap_path = vec![
-        (token_x, token_a, buy_pool),  // X -> A
-        (token_a, token_x, sell_pool), // A -> X
+        (token_x, token_a, buy_pool),              // X -> A
+        (token_a, other_token_in_sell, sell_pool), // A -> X
     ];
 
     let (amounts, final_amount, net_profit) = compute_multi_hop_arbitrage(
@@ -311,6 +338,7 @@ async fn compute_swap_output<P: ethers::providers::Middleware + 'static>(
             let tick_spacing = pool
                 .tick_spacing
                 .ok_or_else(|| anyhow!("No tick spacing for V4 pool"))?;
+            info!("Computing V4 quote: pool_address={:?}, fee_tier={}, tick_spacing={}, token0={:?}, token1={:?}", pool.pool_address, fee_tier, tick_spacing, pool.pool_token0, pool.pool_token1);
             compute_output_amount_v4(
                 provider,
                 amount_in,
@@ -319,6 +347,8 @@ async fn compute_swap_output<P: ethers::providers::Middleware + 'static>(
                 fee_tier,
                 tick_spacing,
                 quoter_v4_address,
+                Some(pool.pool_address.clone()),
+                pool.hooks.unwrap_or_default(),
             )
             .await
         }
@@ -412,7 +442,7 @@ pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
         let dex_version = pair_json
             .get("dex_version")
             .and_then(|p| p.as_str())
-            .unwrap_or("UniswapV3");
+            .expect("Dex version missing");
         let fee_tier = pair_json
             .get("fee_tier")
             .and_then(|p| p.as_u64())
@@ -421,31 +451,33 @@ pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
             .get("tick_spacing")
             .and_then(|p| p.as_i64())
             .map(|t| t as i32);
+
+        let hooks = pair_json
+            .get("hooks")
+            .and_then(|p| p.as_str())
+            .and_then(|s| s.parse::<Address>().ok());
+
         let decimals0 = pair_json
             .get("decimals0")
             .and_then(|p| p.as_u64())
-            .unwrap_or(18) as u8;
+            .expect("Decimals0 missing") as u8;
         let decimals1 = pair_json
             .get("decimals1")
             .and_then(|p| p.as_u64())
-            .unwrap_or(18) as u8;
+            .expect("Decimals1 missing") as u8;
 
         // Check if this pair can swap B -> X (B in token0 or token1, X in the other)
-        let (token_in_str, token_out_str, decimals_out) = if token0 == token_b_str {
-            if token1 == token_x_str {
+        let (_token_in_str, token_out_str, decimals_out) =
+            if token0 == token_b_str && token1 == token_x_str {
                 (token0.to_string(), token1.to_string(), decimals1)
-            } else {
-                continue; // This pair doesn't contain X
-            }
-        } else if token1 == token_b_str {
-            if token0 == token_x_str {
+            } else if token1 == token_b_str && token0 == token_x_str {
                 (token1.to_string(), token0.to_string(), decimals0)
             } else {
-                continue; // This pair doesn't contain X
-            }
-        } else {
-            continue; // This pair doesn't contain B
-        };
+                // This pair does not support B -> X swap
+                continue;
+            };
+
+        // info!("Pool = {}, token0 = {}, token1 = {}, dex_version = {}, token_in = {}, token_out = {}", pool_address, token0, token1, dex_version, token_in_str, token_out_str);
 
         // Create a TokenPriceUpdate for this pool
         let pool_update = TokenPriceUpdate {
@@ -456,12 +488,13 @@ pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
             dex_version: dex_version.to_string(),
             decimals: decimals_out,
             last_updated: 0,
-            pool_token0: token_in_str.parse::<Address>().unwrap_or(Address::zero()),
-            pool_token1: token_out_str.parse::<Address>().unwrap_or(Address::zero()),
+            pool_token0: token0.parse::<Address>().unwrap(),
+            pool_token1: token1.parse::<Address>().unwrap(),
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier,
             tick_spacing,
-            eth_price_usd: 2500.0,
+            hooks,
+            eth_price_usd: 2500.0, // just any price
         };
 
         // Get the actual quote for this swap
@@ -612,6 +645,7 @@ mod tests {
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier: Some(100), // 0.01%
             tick_spacing: Some(1),
+            hooks: None,
             eth_price_usd: 2500.0,
         };
 
@@ -689,6 +723,7 @@ mod tests {
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier: Some(100),
             tick_spacing: Some(1),
+            hooks: None,
             eth_price_usd: 2500.0,
         };
 
@@ -706,6 +741,7 @@ mod tests {
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier: Some(500),
             tick_spacing: Some(10),
+            hooks: None,
             eth_price_usd: 2500.0,
         };
 
@@ -803,6 +839,7 @@ mod tests {
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier: Some(100),
             tick_spacing: Some(1),
+            hooks: None,
             eth_price_usd: 2500.0,
         };
 
@@ -820,6 +857,7 @@ mod tests {
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier: Some(100),
             tick_spacing: Some(1),
+            hooks: None,
             eth_price_usd: 2500.0,
         };
 
@@ -837,6 +875,7 @@ mod tests {
             eth_chain: eth_dex_quote::EthChain::Mainnet,
             fee_tier: Some(500),
             tick_spacing: Some(10),
+            hooks: None,
             eth_price_usd: 2500.0,
         };
 

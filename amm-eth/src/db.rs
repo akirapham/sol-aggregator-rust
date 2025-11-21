@@ -22,6 +22,7 @@ pub struct TokenPairData {
     pub factory: String,
     pub fee_tier: Option<u32>,
     pub tick_spacing: Option<i32>,
+    pub hooks: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +61,7 @@ impl TokenPairDb {
         factory: Address,
         fee_tier: Option<u32>,
         tick_spacing: Option<i32>,
+        hooks: Option<Address>,
     ) -> Result<()> {
         let key = format!("pair:{}", pool_address);
         let data = TokenPairData {
@@ -72,6 +74,11 @@ impl TokenPairDb {
             factory: format!("{:?}", factory),
             fee_tier,
             tick_spacing,
+            hooks: if let Some(hooks_addr) = hooks {
+                Some(format!("{:?}", hooks_addr).to_lowercase())
+            } else {
+                None
+            },
         };
 
         let value = serde_json::to_vec(&data)?;
@@ -92,6 +99,11 @@ impl TokenPairDb {
                 let factory = data.factory.parse::<Address>()?;
                 let dex_version = DexVersion::from_str(&data.dex_version)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let hooks = if let Some(hooks_str) = data.hooks {
+                    hooks_str.parse::<Address>().ok()
+                } else {
+                    None
+                };
 
                 Ok(Some(PairInfo {
                     pool_address: data.pool_address,
@@ -103,6 +115,7 @@ impl TokenPairDb {
                     factory,
                     fee_tier: data.fee_tier,
                     tick_spacing: data.tick_spacing,
+                    hooks,
                 }))
             }
             None => Ok(None),
@@ -158,6 +171,7 @@ impl TokenPairDb {
                 pair_info.factory,
                 pair_info.fee_tier,
                 pair_info.tick_spacing,
+                pair_info.hooks,
             ) {
                 error!(
                     "Failed to save token pair for {:?}: {}",
@@ -216,6 +230,11 @@ impl TokenPairDb {
                                 data.fee_tier,
                                 data.tick_spacing,
                             ) {
+                                let hooks = if let Some(hooks_str) = data.hooks {
+                                    hooks_str.parse::<Address>().ok()
+                                } else {
+                                    None
+                                };
                                 match DexVersion::from_str(&data.dex_version) {
                                     Ok(dex_version) => {
                                         pair_cache.insert(
@@ -230,6 +249,7 @@ impl TokenPairDb {
                                                 factory,
                                                 fee_tier,
                                                 tick_spacing: tick_spacing,
+                                                hooks,
                                             },
                                         );
                                         count += 1;

@@ -499,7 +499,7 @@ impl EthSwapListener {
             Self::u256_to_f64_ratio(reserve0_u256, denominator)
         };
 
-        let pool_address_str = pool_address.to_string().to_lowercase();
+        let pool_address_str = format!("{:?}", pool_address).to_lowercase();
         // Update prices for both tokens
         Self::update_token_price(
             pair_info.pool_token0,
@@ -513,6 +513,7 @@ impl EthSwapListener {
             config,
             pair_info.fee_tier,
             pair_info.tick_spacing,
+            None,
         );
 
         Self::update_token_price(
@@ -527,6 +528,7 @@ impl EthSwapListener {
             config,
             pair_info.fee_tier,
             pair_info.tick_spacing,
+            None,
         );
 
         Ok(())
@@ -790,7 +792,7 @@ impl EthSwapListener {
         } else {
             0.0
         };
-        let pool_address_str = pool_address.to_string().to_lowercase();
+        let pool_address_str = format!("{:?}", pool_address).to_lowercase();
         Self::update_token_price(
             pair_info.pool_token0,
             pair_info.pool_token1,
@@ -803,6 +805,7 @@ impl EthSwapListener {
             config,
             pair_info.fee_tier,
             pair_info.tick_spacing,
+            None,
         );
 
         Self::update_token_price(
@@ -817,6 +820,7 @@ impl EthSwapListener {
             config,
             pair_info.fee_tier,
             pair_info.tick_spacing,
+            None,
         );
 
         Ok(())
@@ -879,7 +883,7 @@ impl EthSwapListener {
             .await
             {
                 Ok((token0, token1, decimals0, decimals1, factory, fee_tier, tick_spacing)) => {
-                    let pool_address_str = format!("{:?}", pool_address).to_lowercase();
+                    let pool_address_str = format!("{}", pool_address).to_lowercase();
                     let pair_info = PairInfo {
                         pool_address: pool_address_str.clone(),
                         pool_token0: token0,
@@ -890,6 +894,7 @@ impl EthSwapListener {
                         factory,
                         fee_tier,
                         tick_spacing,
+                        hooks: None,
                     };
                     // Store in cache
                     token_cache.insert(pool_address_str.clone(), pair_info.clone());
@@ -1046,6 +1051,7 @@ impl EthSwapListener {
         config: &EthConfig,
         fee_tier: Option<u32>,
         tick_spacing: Option<i32>,
+        hooks: Option<Address>,
     ) {
         // we do nothing if token is WETH, USDC or USDT
         if token_address == config.weth_address
@@ -1103,6 +1109,7 @@ impl EthSwapListener {
             fee_tier,
             tick_spacing,
             eth_price_usd: eth_usd,
+            hooks,
         };
 
         price_store.update_price(token_address, token_price);
@@ -1462,6 +1469,7 @@ impl EthSwapListener {
             config,
             pair_info.fee_tier,
             pair_info.tick_spacing,
+            pair_info.hooks,
         );
 
         Self::update_token_price(
@@ -1476,6 +1484,7 @@ impl EthSwapListener {
             config,
             pair_info.fee_tier,
             pair_info.tick_spacing,
+            pair_info.hooks,
         );
 
         Ok(())
@@ -1646,6 +1655,10 @@ impl EthSwapListener {
         let token1 = token1_str
             .parse::<Address>()
             .context("Invalid token1 address")?;
+        let hooks = pool
+            .get("hooks")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<Address>().ok());
 
         let pool_info = PairInfo {
             pool_token0: token0,
@@ -1657,6 +1670,7 @@ impl EthSwapListener {
             factory: v4_pool_manager,
             fee_tier: Some(fee_tier as u32),
             tick_spacing: Some(tick_spacing as i32),
+            hooks,
         };
         v4_cache.insert(pool_id_hex.clone(), pool_info.clone());
 

@@ -1,6 +1,7 @@
 pub mod arbitrage_detector;
 pub mod dex_ws_client;
 pub mod executor;
+pub mod failed_pool_cache;
 pub mod price_cache;
 pub mod types;
 pub mod utils;

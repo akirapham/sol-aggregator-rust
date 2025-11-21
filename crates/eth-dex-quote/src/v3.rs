@@ -53,8 +53,7 @@ impl<P: ethers::providers::Middleware + 'static> UniswapV3Quoter<P> {
             .call()
             .await
             .map_err(|e| {
-                eprintln!("V3 Quoter error: {:?}", e);
-                QuoteError::RpcError(format!("Quoter call failed: {}", e))
+                QuoteError::RpcError(format!("Quoter call failed with token_in = {:?}, token_out = {:?}, fee = {}, amount_in = {:?}, quoter = {:?}: error = {:?}", token_in, token_out, fee, amount_in, self.quoter_v3, e))
             })?;
 
         Ok(amount_out)

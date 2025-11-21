@@ -28,3 +28,4 @@ tower-http = { version = "0.5", features = ["cors"] }
 axum = "0.7"
 eth-dex-quote = { path = "../crates/eth-dex-quote" }
 reqwest = { version = "0.11", features = ["json"] }
+lazy_static = "1.5.0"

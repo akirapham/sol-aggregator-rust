@@ -1,5 +1,6 @@
 use crate::price_cache::PriceCache;
 use crate::types::DexArbitrageOpportunity;
+use dashmap::DashMap;
 use eth_dex_quote::TokenPriceUpdate;
 use ethers::types::Address;
 use log::{debug, info};
@@ -11,6 +12,10 @@ pub struct ArbitrageDetector {
     price_cache: Arc<PriceCache>,
     /// Minimum profit percentage to consider an opportunity
     min_profit_percent: f64,
+    /// Track last check time (in milliseconds) for each token to avoid duplicate checks
+    token_check_cache: Arc<DashMap<String, u64>>,
+    /// Minimum milliseconds between checks for the same token
+    min_check_interval_ms: u64,
 }
 
 impl ArbitrageDetector {
@@ -22,6 +27,8 @@ impl ArbitrageDetector {
         ArbitrageDetector {
             price_cache,
             min_profit_percent,
+            token_check_cache: Arc::new(DashMap::new()),
+            min_check_interval_ms: 500, // Skip if checked within last 500ms
         }
     }
 
@@ -31,25 +38,45 @@ impl ArbitrageDetector {
         &self,
         token_address: &Address,
     ) -> Vec<DexArbitrageOpportunity> {
+        let token_address_str = format!("{:?}", token_address).to_lowercase();
+
+        // Check if we've recently checked this token (within min_check_interval_ms)
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        if let Some(entry) = self.token_check_cache.get(&token_address_str) {
+            let last_check_ms = *entry.value();
+            if now_ms - last_check_ms < self.min_check_interval_ms {
+                debug!(
+                    "Token {} checked {} ms ago, skipping (min interval: {} ms)",
+                    token_address_str,
+                    now_ms - last_check_ms,
+                    self.min_check_interval_ms
+                );
+                return vec![];
+            }
+        }
+
+        // Update the last check time
+        self.token_check_cache
+            .insert(token_address_str.clone(), now_ms);
+
         let all_prices = self.price_cache.get_all_prices(token_address);
         if all_prices.is_empty() {
-            debug!(
-                "Token {} has no prices in cache",
-                format!("{:?}", token_address).to_lowercase()
-            );
+            debug!("Token {} has no prices in cache", token_address_str);
             return vec![];
         }
 
         if all_prices.len() < 2 {
             debug!(
                 "Token {} has {} pool(s), need at least 2 for arbitrage",
-                format!("{:?}", token_address).to_lowercase(),
+                token_address_str,
                 all_prices.len()
             );
             return vec![];
         }
-
-        let token_address_str = format!("{:?}", token_address).to_lowercase();
 
         info!(
             "Checking arbitrage for token {} with {} pools",
@@ -85,29 +112,6 @@ impl ArbitrageDetector {
                 .partial_cmp(&a.price_diff_percent)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-
-        // Log top opportunities
-        if !opportunities.is_empty() {
-            info!(
-                "💰 Found {} arbitrage opportunity(ies) for token {}",
-                opportunities.len(),
-                token_address_str
-            );
-            for (idx, opp) in opportunities.iter().take(5).enumerate() {
-                if let Some(usd_profit) = opp.potential_profit_usd {
-                    info!(
-                        "  #{}: Buy@${:.6} ({}) / Sell@${:.6} ({}) = {:.2}% profit (${:.2})",
-                        idx + 1,
-                        opp.buy_pool.price_in_usd.unwrap_or(0.0),
-                        opp.buy_pool.dex_version,
-                        opp.sell_pool.price_in_usd.unwrap_or(0.0),
-                        opp.sell_pool.dex_version,
-                        opp.price_diff_percent,
-                        usd_profit
-                    );
-                }
-            }
-        }
 
         opportunities
     }

@@ -77,4 +77,5 @@ pub struct PairInfo {
     pub factory: Address,
     pub fee_tier: Option<u32>,
     pub tick_spacing: Option<i32>,
+    pub hooks: Option<Address>,
 }

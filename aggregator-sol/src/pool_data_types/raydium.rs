@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID;
-
+use solana_client::nonblocking::rpc_client::RpcClient;
 use crate::{
     constants::is_base_token,
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
@@ -76,6 +76,7 @@ impl RaydiumAmmV4PoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
+        _rpc_client: &RpcClient,
     ) -> u64 {
         let (base_token, _) = (self.base_mint, self.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);

@@ -188,6 +188,7 @@ impl DexAggregator {
 
         // with 100% input amount
         let mut all_routes_with_out_amounts: Vec<(Vec<SwapStepInternal>, u64)> = vec![];
+        let rpc_client = self.pool_manager.get_rpc_client();
 
         for (pool_address, _liquidity) in top_direct_paths.iter() {
             if let Some(pool_state) = all_pool_state.get(pool_address) {
@@ -196,6 +197,7 @@ impl DexAggregator {
                         &swap_param.input_token.address,
                         swap_param.input_amount,
                         self_arc.clone(),
+                        &rpc_client,
                     )
                     .await;
                 if output_amount > 0 {
@@ -282,6 +284,7 @@ impl DexAggregator {
                                 &swap_param.input_token.address,
                                 swap_param.input_amount,
                                 self_arc.clone(),
+                                &rpc_client,
                             )
                             .await;
 
@@ -295,6 +298,7 @@ impl DexAggregator {
                                 &base_token_key,
                                 intermediate_amount,
                                 self_arc.clone(),
+                                &rpc_client,
                             )
                             .await;
 
@@ -377,6 +381,7 @@ impl DexAggregator {
                             &swap_param.input_token.address,
                             input_amount,
                             self_arc.clone(),
+                            &rpc_client,
                         )
                         .await;
                     splits_with_distributions[0][i] = Some(SwapPath {
@@ -406,6 +411,7 @@ impl DexAggregator {
                             &swap_param.input_token.address,
                             input_amount,
                             self_arc.clone(),
+                            &rpc_client,
                         )
                         .await;
                     let output_amount = swap_step_2
@@ -414,6 +420,7 @@ impl DexAggregator {
                             &swap_step_1.output_token,
                             intermediate_amount,
                             self_arc.clone(),
+                            &rpc_client,
                         )
                         .await;
                     splits_with_distributions[split_index][i] = Some(SwapPath {
@@ -529,7 +536,7 @@ impl DexAggregator {
         token_a: &SwapParams,
         token_b_address: &Pubkey,
         slippage_bps: u16,
-    ) -> Option<(u64, SwapRoute, SwapRoute, bool)> {
+    ) -> Option<(u64, SwapRoute, SwapRoute)> {
         let exclude_pools: HashSet<Pubkey> = HashSet::new();
 
         // Step 1: Get best forward route from tokenA -> tokenB
@@ -572,15 +579,20 @@ impl DexAggregator {
             .await?;
 
         let final_token_a_amount = reverse_route.output_amount;
-
+        log::info!(
+            "AAAAAAA Arbitrage check: tokenA input {} -> tokenB {} -> tokenA final {}",
+            token_a.input_amount,
+            token_b_amount,
+            final_token_a_amount
+        );
         // Step 5: Calculate profit
         if final_token_a_amount > token_a.input_amount {
             let profit = final_token_a_amount - token_a.input_amount;
-            Some((profit, forward_route, reverse_route, false))
+            Some((profit, forward_route, reverse_route))
         } else {
-            // None
-            let profit = token_a.input_amount - final_token_a_amount;
-            Some((profit, forward_route, reverse_route, true))
+            None
+            // let profit = token_a.input_amount - final_token_a_amount;
+            // Some((profit, forward_route, reverse_route))
         }
     }
 

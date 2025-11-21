@@ -20,7 +20,7 @@ use futures::stream::{self, StreamExt};
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
@@ -1186,6 +1186,11 @@ impl PoolStateManager {
     /// Get access to the underlying RocksDB instance
     pub fn get_db(&self) -> Arc<DB> {
         Arc::clone(&self.db)
+    }
+
+    /// Get access to the RPC client
+    pub fn get_rpc_client(&self) -> Arc<RpcClient> {
+        Arc::clone(&self.rpc_client)
     }
 
     pub async fn get_pool_addresses_for_pair(

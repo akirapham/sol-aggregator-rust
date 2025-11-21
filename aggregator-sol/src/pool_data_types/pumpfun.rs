@@ -6,7 +6,7 @@ use sol_trade_sdk::utils::calc::pumpfun::{
 };
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::parser::PUMPFUN_PROGRAM_ID;
-
+use solana_client::nonblocking::rpc_client::RpcClient;
 use crate::{
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
     utils::{get_sol_mint, tokens_equal},
@@ -54,6 +54,7 @@ impl PumpfunPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
+        _rpc_client: &RpcClient,
     ) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
         if is_buy {

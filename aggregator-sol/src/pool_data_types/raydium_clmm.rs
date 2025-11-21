@@ -12,7 +12,7 @@ use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
-
+use solana_client::nonblocking::rpc_client::RpcClient;
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
 #[derive(Clone, Debug, Copy, Default)]
@@ -145,13 +145,18 @@ impl RaydiumClmmPoolState {
         Pubkey::new_from_array(*RAYDIUM_CLMM_PROGRAM_ID.as_array())
     }
 
-    /// Calculate output amount for PumpFun bonding curve
+    /// Calculate output amount using Raydium CLMM pool state
     pub async fn calculate_output_amount(
         &self,
         input_token: &Pubkey,
         input_amount: u64,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        _rpc_client: &RpcClient,
     ) -> u64 {
+        if input_amount == 0 {
+            return 0;
+        }
+
         let (token0, _) = (self.token_mint0, self.token_mint1);
         let input_is_token0 = tokens_equal(input_token, &token0);
         let sqrt_price_limit_x64 = if input_is_token0 {
@@ -160,7 +165,6 @@ impl RaydiumClmmPoolState {
             MAX_SQRT_PRICE_X64 - 1
         };
 
-        // dont take transfer tax into account for now, users should account for it un their slippage
         let real_input_amount = input_amount;
         self.get_output_amount(
             real_input_amount,
@@ -178,25 +182,35 @@ impl RaydiumClmmPoolState {
         _sqrt_price_limit_x64: u128,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> u64 {
-        // create pool info
+        let amm_config = match amm_config_fetcher
+            .get_raydium_clmm_amm_config(&self.amm_config)
+            .await
+        {
+            Ok(Some(config)) => config,
+            _ => return 0,
+        };
+
         let pool_info = ComputeClmmPoolInfo::new(
             self.address,
             Self::get_program_id(),
             self,
             self.tick_array_bitmap_extension.as_ref(),
-            amm_config_fetcher
-                .get_raydium_clmm_amm_config(&self.amm_config)
-                .await
-                .unwrap_or(None),
+            Some(amm_config),
         );
-        let result = PoolUtils::get_output_amount_and_remain_accounts(
+
+        match PoolUtils::get_output_amount_and_remain_accounts(
             &pool_info,
             &self.tick_array_state,
             input_token,
             rug::Integer::from(input_amount),
-        );
-        match result {
-            Ok(output) => output.expected_amount_out.abs().to_u64().unwrap_or(0),
+        ) {
+            Ok(result) => {
+                result
+                    .expected_amount_out
+                    .abs()
+                    .to_u64()
+                    .unwrap_or(0)
+            }
             Err(_) => 0,
         }
     }

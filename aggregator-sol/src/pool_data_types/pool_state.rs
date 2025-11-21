@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
-
+use solana_client::nonblocking::rpc_client::RpcClient;
 use crate::{
     constants::wsol,
     pool_data_types::{
@@ -188,36 +188,34 @@ impl PoolState {
         input_token: &Pubkey,
         input_amount: u64,
         amm_confi_fetcher: Arc<dyn GetAmmConfig>,
+        rpc_client: &RpcClient,
     ) -> u64 {
         match self {
             PoolState::Pumpfun(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
             }
             PoolState::PumpSwap(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
             }
             PoolState::RaydiumAmmV4(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
             }
             PoolState::RaydiumCpmm(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
             }
             PoolState::Bonk(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
             }
             PoolState::RadyiumClmm(state) => {
-                let output_amount = state
-                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
-                    .await;
-                // log::info!("1111 RadyiumClmm input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client).await;
                 output_amount
             }
             PoolState::MeteoraDbc(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
             }
             PoolState::OrcaWhirlpool(state) => {
-                // log::info!("1111 OrcaWhirlpool input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
-                state.calculate_output_amount(input_token, input_amount)
+                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client).await;
+                output_amount
             }
         }
     }

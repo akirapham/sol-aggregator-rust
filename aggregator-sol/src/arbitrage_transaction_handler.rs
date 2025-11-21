@@ -1,21 +1,84 @@
-use serde::{Deserialize, Serialize};
-use solana_client::rpc_client::RpcClient;
 /// Real Arbitrage Execution Handler
 ///
 /// Orchestrates actual on-chain arbitrage execution using the real swap executor
 /// Replaces the simulation-based handler with production-ready blockchain interaction
-use solana_sdk::{hash::Hash, pubkey::Pubkey, signer::keypair::Keypair, signer::Signer};
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::arbitrage_monitor::ArbitrageOpportunity;
-use crate::on_chain_swap_executor::{
-    OnChainArbitrageExecutor, OnChainSwapParams, OnChainSwapResult,
-};
 use crate::pool_data_types::DexType;
+use solana_address::Address;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use std::str::FromStr;
+// use spl_memo::build_memo;
+
+/// On-Chain Swap Execution Module
+///
+/// Executes actual on-chain swaps by calling the swap functions from:
+/// - Whirlpools swap_manager.rs
+/// - Raydium CLMM swap instruction
+/// - Raydium CPMM swap instruction
+/// - Raydium AMM V4 swap instruction
+///
+/// This module builds and submits actual transactions to the blockchain
+use solana_sdk::{
+    hash::Hash,
+    instruction::Instruction,
+    message::{v0::Message, VersionedMessage},
+    pubkey::Pubkey,
+    signature::Signature,
+    signer::{keypair::Keypair, Signer},
+    transaction::Transaction,
+    transaction::VersionedTransaction,
+};
+
+use spl_associated_token_account;
+
+use orca_whirlpools::{swap_instructions, SwapInstructions, SwapQuote, SwapType};
+
+// use raydium_clmm_client::{
+//     config::{load_cfg, ClientConfig},
+//     instructions::amm_instructions::swap_instr,
+//     instructions::utils,
+//     raydium_amm_v3::states,
+// };
+
+use anchor_lang::prelude::AccountMeta;
+use arrayref::array_ref;
+
+use crate::aggregator::SwapRoute;
+use crate::pool_data_types::raydium_clmm::RaydiumClmmPoolState;
+use spl_token_2022::{extension::StateWithExtensions, state::Account};
+use std::collections::VecDeque;
+
+/// Parameters for on-chain swap execution
+#[derive(Debug, Clone)]
+pub struct OnChainSwapParams {
+    pub dex_type: DexType,
+    pub input_token_mint: Pubkey,
+    pub output_token_mint: Pubkey,
+    pub input_amount: u64,
+    pub pool_address: Pubkey,
+    pub slippage_tolerance_bps: u16,
+}
+
+/// Result of on-chain swap execution
+#[derive(Debug, Clone)]
+pub struct OnChainSwapResult {
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub transaction_signature: Option<Signature>,
+    pub dex_type: DexType,
+    pub pool_address: Pubkey,
+    pub input_token_mint: Pubkey,
+    pub output_token_mint: Pubkey,
+    pub input_amount: u64,
+    pub output_amount: u64,
+}
 
 /// Status of on-chain arbitrage execution
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionStatus {
     /// Pending on-chain execution
     Pending,
@@ -33,11 +96,23 @@ pub enum ExecutionStatus {
     Failed(String),
 }
 
-/// Record of a real arbitrage execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArbitrageExecutionRecord {
-    pub opportunity_id: String,
+#[derive(Debug, Clone)]
+pub struct ArbitrageExecution {
+    pub forward_route: SwapRoute,
+    pub reverse_route: SwapRoute,
     pub pair_name: String,
+    pub slippage_tolerance_bps: u16,
+    pub token_a: Pubkey,
+    pub token_b: Pubkey,
+    pub input_amount: u64,
+    pub detected_at: u64,
+}
+
+/// Record of a real arbitrage execution
+#[derive(Debug, Clone)]
+pub struct ArbitrageExecutionRecord {
+    pub pair_name: String,
+    pub detected_at: u64,
     pub status: ExecutionStatus,
 
     // Initial state
@@ -54,8 +129,6 @@ pub struct ArbitrageExecutionRecord {
     // Transaction tracking
     pub forward_tx_signature: Option<String>,
     pub reverse_tx_signature: Option<String>,
-    pub forward_slot: Option<u64>,
-    pub reverse_slot: Option<u64>,
 
     // Timing
     pub started_at: u64,
@@ -77,22 +150,14 @@ impl ArbitrageTransactionHandler {
     }
 
     /// Execute a real arbitrage opportunity on blockchain
-    pub async fn execute_transaction(
-        &self,
-        opportunity: &ArbitrageOpportunity,
-        user_wallet: Pubkey,
-        user_input_ata: Pubkey,
-        user_output_ata: Pubkey,
-        user_intermediate_ata: Pubkey,
-        recent_blockhash: Hash,
+    pub async fn execute_arbitrade_transaction(
+        arbitrage_execution: &ArbitrageExecution,
         payer: &Keypair,
-        forward_pool_address: Pubkey,
-        reverse_pool_address: Pubkey,
         rpc_client: &RpcClient,
     ) -> Result<ArbitrageExecutionRecord, String> {
-        log::info!("🎯 Executing REAL arbitrage opportunity");
-        log::info!("  Pair: {}", opportunity.pair_name);
-        log::info!("  Amount: {}", opportunity.input_amount);
+        log::info!("🎯 Executing the arbitrage opportunity");
+        log::info!("  Pair: {}", arbitrage_execution.pair_name);
+        log::info!("  Amount: {}", arbitrage_execution.input_amount);
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -100,73 +165,41 @@ impl ArbitrageTransactionHandler {
             .as_secs();
 
         let mut record = ArbitrageExecutionRecord {
-            opportunity_id: opportunity.pair_name.clone(), // Use pair_name as ID
-            pair_name: opportunity.pair_name.clone(),
+            pair_name: arbitrage_execution.pair_name.clone(),
+            detected_at: arbitrage_execution.detected_at,
             status: ExecutionStatus::Pending,
-            initial_amount: opportunity.input_amount,
-            initial_token: Pubkey::default(), // Would need token_a from opportunity
-            user_wallet,
+            initial_amount: arbitrage_execution.input_amount,
+            initial_token: arbitrage_execution.token_a,
+            user_wallet: payer.pubkey(),
             forward_result: None,
             reverse_result: None,
             final_profit: 0,
             profit_percent: 0.0,
             forward_tx_signature: None,
             reverse_tx_signature: None,
-            forward_slot: None,
-            reverse_slot: None,
             started_at: now,
             completed_at: None,
             error_details: None,
         };
 
-        // Parse token addresses from pair_name or use provided ATAs
-        let token_a_mint = user_input_ata; // Placeholder
-        let token_b_mint = user_output_ata; // Placeholder
-
-        // Build forward swap params
-        let forward_params = OnChainSwapParams {
-            dex_type: DexType::Orca, // Default - would be determined by opportunity
-            input_token_mint: token_a_mint,
-            output_token_mint: token_b_mint,
-            input_amount: opportunity.input_amount,
-            min_output_amount: self.calculate_min_output(
-                opportunity.input_amount,
-                &DexType::Orca,
-                500, // 5% slippage tolerance
-            ),
-            pool_address: forward_pool_address,
-            user_wallet,
-            user_input_ata,
-            user_output_ata,
-            fee_payer: payer.pubkey(),
-            slippage_tolerance_bps: 500,
-            priority: crate::types::ExecutionPriority::Medium,
-        };
-
         // Execute forward swap
         log::info!("🔄 Executing forward swap...");
-        let forward_result = OnChainArbitrageExecutor::execute_forward_swap(
-            &forward_params,
-            recent_blockhash,
-            payer,
-            rpc_client,
-            None, // tick arrays would be fetched from on-chain
-        )
-        .await;
+        let forward_result =
+            Self::execute_swap_route(&arbitrage_execution.forward_route, payer, rpc_client).await;
 
         match forward_result {
             Ok(result) => {
                 log::info!("✅ Forward swap successful");
                 log::info!("  Signature: {:?}", result.transaction_signature);
                 record.forward_result = Some(result.clone());
-                record.forward_tx_signature = result.transaction_signature.clone();
+                record.forward_tx_signature =
+                    result.transaction_signature.map(|sig| sig.to_string());
                 record.status = ExecutionStatus::ForwardSubmitted;
             }
             Err(e) => {
                 log::error!("❌ Forward swap failed: {}", e);
                 record.status = ExecutionStatus::Failed(e.clone());
                 record.error_details = Some(e.clone());
-                self.save_execution_record(&record).await;
                 return Err(format!("Forward swap failed: {}", e));
             }
         }
@@ -179,55 +212,28 @@ impl ArbitrageTransactionHandler {
             .forward_result
             .as_ref()
             .ok_or("Forward result missing")?
-            .amount_out
-            .ok_or("Forward output amount missing")?;
+            .output_amount;
 
         log::info!("💱 Forward output: {}", forward_output);
 
-        // Build reverse swap params using forward output
-        let reverse_params = OnChainSwapParams {
-            dex_type: DexType::Orca, // Would use reverse_dex_type from opportunity
-            input_token_mint: token_b_mint,
-            output_token_mint: token_a_mint,
-            input_amount: forward_output,
-            min_output_amount: self.calculate_min_output(
-                forward_output,
-                &DexType::Orca,
-                500, // 5% slippage tolerance
-            ),
-            pool_address: reverse_pool_address,
-            user_wallet,
-            user_input_ata: user_intermediate_ata,
-            user_output_ata,
-            fee_payer: payer.pubkey(),
-            slippage_tolerance_bps: 500,
-            priority: crate::types::ExecutionPriority::Medium,
-        };
-
         // Execute reverse swap
         log::info!("🔄 Executing reverse swap...");
-        let reverse_result = OnChainArbitrageExecutor::execute_reverse_swap(
-            &reverse_params,
-            recent_blockhash,
-            payer,
-            rpc_client,
-            None, // tick arrays would be fetched from on-chain
-        )
-        .await;
+        let reverse_result =
+            Self::execute_swap_route(&arbitrage_execution.reverse_route, payer, rpc_client).await;
 
         match reverse_result {
             Ok(result) => {
                 log::info!("✅ Reverse swap successful");
                 log::info!("  Signature: {:?}", result.transaction_signature);
                 record.reverse_result = Some(result.clone());
-                record.reverse_tx_signature = result.transaction_signature.clone();
+                record.reverse_tx_signature =
+                    result.transaction_signature.map(|sig| sig.to_string());
                 record.status = ExecutionStatus::ReverseSubmitted;
             }
             Err(e) => {
                 log::error!("❌ Reverse swap failed: {}", e);
                 record.status = ExecutionStatus::Failed(e.clone());
                 record.error_details = Some(e.clone());
-                self.save_execution_record(&record).await;
                 return Err(format!("Reverse swap failed: {}", e));
             }
         }
@@ -240,8 +246,7 @@ impl ArbitrageTransactionHandler {
             .reverse_result
             .as_ref()
             .ok_or("Reverse result missing")?
-            .amount_out
-            .ok_or("Reverse output amount missing")?;
+            .output_amount;
 
         log::info!("💰 Final amount: {}", final_amount);
 
@@ -262,138 +267,514 @@ impl ArbitrageTransactionHandler {
         log::info!("🎉 Arbitrage cycle completed!");
         log::info!("  Profit: {} ({:.4}%)", profit, profit_percent);
 
-        self.save_execution_record(&record).await;
         Ok(record)
     }
 
-    /// Calculate minimum output with slippage
-    fn calculate_min_output(
-        &self,
-        input_amount: u64,
-        dex_type: &DexType,
-        slippage_bps: u16,
-    ) -> u64 {
-        // Get estimated output based on DEX
-        let (fee_bps, efficiency) = match dex_type {
-            DexType::Orca => (200, 0.985),       // 0.2% fee, 98.5% efficiency
-            DexType::RaydiumClmm => (500, 0.97), // 0.5% fee, 97% efficiency
-            DexType::RaydiumCpmm => (250, 0.98), // 0.25% fee, 98% efficiency
-            DexType::Raydium => (500, 0.96),     // 0.5% fee, 96% efficiency
-            _ => (300, 0.97),
-        };
+    /// Helper method to execute a swap route (static helper for use in static methods)
+    async fn execute_swap_route(
+        swap_route: &SwapRoute,
+        payer: &Keypair,
+        rpc_client: &RpcClient,
+    ) -> Result<OnChainSwapResult, String> {
+        log::info!(
+            "🔄 Executing swap route with {} pools",
+            swap_route.paths.len()
+        );
+        if swap_route.paths.len() == 1 {
+            if swap_route.paths[0].steps.len() == 1 {
+                let step = &swap_route.paths[0].steps[0];
+                let swap_params = OnChainSwapParams {
+                    dex_type: step.dex.clone(),
+                    input_token_mint: step.input_token,
+                    output_token_mint: step.output_token,
+                    input_amount: step.input_amount,
+                    pool_address: step.pool_address,
+                    slippage_tolerance_bps: swap_route.slippage_bps,
+                };
 
-        let after_fee = (input_amount as f64) * (1.0 - (fee_bps as f64 / 10000.0));
-        let with_efficiency = after_fee * efficiency;
-        let after_slippage = with_efficiency * (1.0 - (slippage_bps as f64 / 10000.0));
-
-        after_slippage as u64
-    }
-
-    /// Save execution record to persistent storage
-    async fn save_execution_record(&self, record: &ArbitrageExecutionRecord) {
-        let mut records = self.execution_records.write().await;
-        records.push(record.clone());
-        log::info!("✅ Execution record saved (total: {})", records.len());
-    }
-
-    /// Get execution statistics
-    pub async fn get_execution_stats(&self) -> TransactionStatistics {
-        let records = self.execution_records.read().await;
-
-        let total = records.len();
-        let successful = records
-            .iter()
-            .filter(|r| r.status == ExecutionStatus::Completed)
-            .count();
-        let failed = records
-            .iter()
-            .filter(|r| matches!(r.status, ExecutionStatus::Failed(_)))
-            .count();
-
-        let total_profit: i64 = records
-            .iter()
-            .filter(|r| r.status == ExecutionStatus::Completed)
-            .map(|r| r.final_profit)
-            .sum();
-
-        let success_rate = if total > 0 {
-            (successful as f64 / total as f64) * 100.0
+                // Execute this swap
+                Self::execute_swap(&swap_params, payer, rpc_client).await
+            } else {
+                Err("Single path must have exactly one step".to_string())
+            }
         } else {
-            0.0
-        };
-
-        let average_profit = if successful > 0 {
-            total_profit as f64 / successful as f64
-        } else {
-            0.0
-        };
-
-        TransactionStatistics {
-            total_executions: total,
-            successful_executions: successful,
-            failed_executions: failed,
-            total_profit,
-            success_rate,
-            average_profit,
+            Err("Complex swap routes not yet implemented".to_string())
         }
     }
 
-    /// Get all execution records
-    pub async fn get_execution_records(&self) -> Vec<ArbitrageExecutionRecord> {
-        self.execution_records.read().await.clone()
-    }
-
-    /// Get execution record by opportunity ID
-    pub async fn get_record_by_id(&self, opportunity_id: &str) -> Option<ArbitrageExecutionRecord> {
-        self.execution_records
-            .read()
-            .await
-            .iter()
-            .find(|r| r.opportunity_id == opportunity_id)
-            .cloned()
-    }
-}
-
-/// Execution statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionStatistics {
-    pub total_executions: usize,
-    pub successful_executions: usize,
-    pub failed_executions: usize,
-    pub total_profit: i64,
-    pub success_rate: f64,
-    pub average_profit: f64,
-}
-
-impl Default for ArbitrageTransactionHandler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_handler_creation() {
-        let handler = ArbitrageTransactionHandler::new();
-        assert_eq!(
-            handler.execution_records.try_read().ok().map(|r| r.len()),
-            Some(0)
+    /// Execute forward swap (token_a → token_b)
+    pub async fn execute_swap(
+        params: &OnChainSwapParams,
+        payer: &Keypair,
+        rpc_client: &RpcClient,
+    ) -> Result<OnChainSwapResult, String> {
+        log::info!(
+            "🔄 FORWARD SWAP: {} → {}",
+            params.input_token_mint,
+            params.output_token_mint
         );
-    }
 
-    #[test]
-    fn test_min_output_calculation() {
-        let handler = ArbitrageTransactionHandler::new();
-
-        // Test Orca: 1M input → ~985,000 (0.2% fee) → 970,225 (1.5% slippage)
-        let min_orca = handler.calculate_min_output(1_000_000, &DexType::Orca, 500);
-        assert!(min_orca < 1_000_000 && min_orca > 900_000);
-
-        // Test Raydium CLMM: 1M input → ~995,000 (0.5% fee) → 975,010 (2% slippage)
-        let min_clmm = handler.calculate_min_output(1_000_000, &DexType::RaydiumClmm, 500);
-        assert!(min_clmm < 1_000_000 && min_clmm > 900_000);
+        match params.dex_type {
+            // DexType::Orca => {
+            //     OrcaWhirlpoolSwapExecutor::execute_swap(params, payer, rpc_client).await
+            // }
+            // DexType::RaydiumClmm => {
+            //     RaydiumClmmSwapExecutor::execute_swap(params, payer, rpc_client).await
+            // }
+            // DexType::PumpFun => {
+            //     PumpfunSwapExecutor::execute_swap(params, payer, rpc_client).await
+            // }
+            _ => Err("Unsupported DEX type".to_string()),
+        }
     }
 }
+
+// /// Orca Whirlpool On-Chain Swap Executor
+// pub struct OrcaWhirlpoolSwapExecutor;
+
+// impl OrcaWhirlpoolSwapExecutor {
+//     /// Build Whirlpool swap v2 instruction using official SDK structure
+//     async fn build_swap_instruction(
+//         params: &OnChainSwapParams,
+//         payer: &Keypair,
+//         rpc_client: &RpcClient,
+//     ) -> Result<SwapInstructions, String> {
+//         let swap_result = swap_instructions(
+//             rpc_client,
+//             params.pool_address,
+//             params.input_amount,
+//             params.input_token_mint, // The token you're swapping from
+//             SwapType::ExactIn,       // You're specifying the INPUT amount
+//             Option::<u16>::Some(params.slippage_tolerance_bps),
+//             Option::<Pubkey>::Some(payer.pubkey()), // The user wallet executing the swap
+//         )
+//         .await
+//         .map_err(|e| format!("Failed to get swap instructions: {}", e))?;
+
+//         Ok(swap_result)
+//     }
+
+//     /// Execute Whirlpool swap using official SDK instruction format
+//     pub async fn execute_swap(
+//         params: &OnChainSwapParams,
+//         payer: &Keypair,
+//         rpc_client: &RpcClient,
+//     ) -> Result<OnChainSwapResult, String> {
+//         log::info!("🔄 Executing Whirlpool swap using official SDK");
+//         log::info!("  Pool: {}", params.pool_address);
+//         log::info!("  Input Amount: {}", params.input_amount);
+//         log::info!("  Input Mint: {}", params.input_token_mint);
+
+//         // Build swap instruction using official Whirlpool SDK format
+//         let swap_instr = Self::build_swap_instruction(params, payer, rpc_client).await?;
+
+//         log::info!("✅ Swap instruction generated from official SDK format");
+
+//         // let swap_instr = send_transaction_with_signers(swap_instr, Vec::from([payer]))?;
+//         let blockhash = rpc_client
+//             .get_latest_blockhash()
+//             .await
+//             .map_err(|e| format!("Failed to get latest blockhash: {}", e))?;
+//         // Sine blockhash is not guaranteed to be unique, we need to add a random memo to the tx
+//         // so that we can fire two seemingly identical transactions in a row.
+//         // let instructions = [swap_instr.instructions, vec![]].concat();
+//         let memo = Keypair::new().to_base58_string();
+//         let instructions = [swap_instr.instructions, vec![build_memo(memo.as_bytes(), &[])]].concat();
+//         let message = VersionedMessage::V0(
+//             Message::try_compile(&payer.pubkey(), &instructions, &[], blockhash)
+//                 .map_err(|e| format!("Failed to compile message: {}", e))?,
+//         );
+//         let transaction = VersionedTransaction::try_new(message, &[payer])
+//             .map_err(|e| format!("Failed to create transaction: {}", e))?;
+//         let signature = rpc_client
+//             .send_and_confirm_transaction(&transaction)
+//             .await
+//             .map_err(|e| format!("Failed to send transaction: {}", e))?;
+
+//         // Get the output amount from transaction logs or token account
+//         let output_amount =
+//             extract_output_amount(rpc_client, &params.output_token_mint, &payer.pubkey()).await?;
+
+//         let mut est_output_amount = 0;
+//         match &swap_instr.quote {
+//             SwapQuote::ExactIn(q) => {
+//                 est_output_amount = q.token_est_out;
+//             }
+//             SwapQuote::ExactOut(_) => {
+//                 est_output_amount = 0;
+//             }
+//         }
+//         log::info!("💰 Output Amount: {}", est_output_amount);
+
+//         Ok(OnChainSwapResult {
+//             success: true,
+//             error_message: None,
+//             transaction_signature: Some(signature),
+//             dex_type: params.dex_type,
+//             pool_address: params.pool_address,
+//             input_token_mint: params.input_token_mint,
+//             output_token_mint: params.output_token_mint,
+//             input_amount: params.input_amount,
+//             output_amount: output_amount,
+//         })
+//     }
+// }
+
+// pub struct RaydiumClmmSwapExecutor;
+
+// impl RaydiumClmmSwapExecutor {
+//     async fn load_cur_and_next_five_tick_array(
+//         rpc_client: &RpcClient,
+//         pool_config: &ClientConfig,
+//         pool_state: &states::PoolState,
+//         tickarray_bitmap_extension: &states::TickArrayBitmapExtension,
+//         zero_for_one: bool,
+//     ) -> VecDeque<states::TickArrayState> {
+//         let (_, mut current_valid_tick_array_start_index) = pool_state
+//             .get_first_initialized_tick_array(&Some(*tickarray_bitmap_extension), zero_for_one)
+//             .unwrap();
+//         let mut tick_array_keys = Vec::new();
+//         tick_array_keys.push(
+//             Pubkey::find_program_address(
+//                 &[
+//                     states::TICK_ARRAY_SEED.as_bytes(),
+//                     pool_config.pool_id_account.unwrap().to_bytes().as_ref(),
+//                     &current_valid_tick_array_start_index.to_be_bytes(),
+//                 ],
+//                 &pool_config.raydium_v3_program,
+//             )
+//             .0,
+//         );
+//         let mut max_array_size = 5;
+//         while max_array_size != 0 {
+//             let next_tick_array_index = pool_state
+//                 .next_initialized_tick_array_start_index(
+//                     &Some(*tickarray_bitmap_extension),
+//                     current_valid_tick_array_start_index,
+//                     zero_for_one,
+//                 )
+//                 .unwrap();
+//             if next_tick_array_index.is_none() {
+//                 break;
+//             }
+//             current_valid_tick_array_start_index = next_tick_array_index.unwrap();
+//             tick_array_keys.push(
+//                 Pubkey::find_program_address(
+//                     &[
+//                         states::TICK_ARRAY_SEED.as_bytes(),
+//                         pool_config.pool_id_account.unwrap().to_bytes().as_ref(),
+//                         &current_valid_tick_array_start_index.to_be_bytes(),
+//                     ],
+//                     &pool_config.raydium_v3_program,
+//                 )
+//                 .0,
+//             );
+//             max_array_size -= 1;
+//         }
+//         let tick_array_rsps = rpc_client
+//             .get_multiple_accounts(&tick_array_keys)
+//             .await
+//             .unwrap();
+//         let mut tick_arrays = VecDeque::new();
+//         for tick_array in tick_array_rsps {
+//             let tick_array_state =
+//                 utils::deserialize_anchor_account::<states::TickArrayState>(&tick_array.unwrap())
+//                     .unwrap();
+//             tick_arrays.push_back(tick_array_state);
+//         }
+//         tick_arrays
+//     }
+
+//     /// Build Raydium CLMM swap instruction
+//     async fn build_swap_instruction(
+//         params: &OnChainSwapParams,
+//         payer: &Keypair,
+//         rpc_client: &RpcClient,
+//     ) -> Result<(Vec<Instruction>, u64), String> {
+//         log::info!("🔄 Building Raydium CLMM swap instruction");
+//         log::info!("  Pool: {}", params.pool_address);
+
+//         let client_config = "raydium_clmm_client_config.ini";
+//         let pool_config = load_cfg(&client_config.to_string()).unwrap();
+
+//         // Load multiple accounts
+//         let load_accounts = vec![
+//             params.input_token_mint,
+//             params.output_token_mint,
+//             pool_config.amm_config_key,
+//             pool_config
+//                 .pool_id_account
+//                 .ok_or("Pool ID account not found")?,
+//             pool_config
+//                 .tickarray_bitmap_extension
+//                 .ok_or("Tick array bitmap extension not found")?,
+//         ];
+
+//         // Get multiple accounts and unwrap the Result
+//         let rsps = rpc_client
+//             .get_multiple_accounts(&load_accounts)
+//             .await
+//             .map_err(|e| format!("Failed to get multiple accounts: {}", e))?;
+
+//         if rsps.len() < 5 {
+//             return Err("Not enough accounts returned from RPC".to_string());
+//         }
+
+//         // Now array_ref works on the unwrapped Vec
+//         let [user_input_account, user_output_account, amm_config_account, pool_account, tickarray_bitmap_extension_account] =
+//             array_ref![rsps, 0, 5];
+
+//         let user_input_state =
+//             StateWithExtensions::<Account>::unpack(&user_input_account.as_ref().unwrap().data)
+//                 .unwrap();
+//         let user_output_state =
+//             StateWithExtensions::<Account>::unpack(&user_output_account.as_ref().unwrap().data)
+//                 .unwrap();
+//         let amm_config_state = utils::deserialize_anchor_account::<states::AmmConfig>(
+//             amm_config_account.as_ref().unwrap(),
+//         )
+//         .map_err(|e| format!("Failed to deserialize AMM config: {}", e))?;
+//         let pool_state =
+//             utils::deserialize_anchor_account::<states::PoolState>(pool_account.as_ref().unwrap())
+//                 .map_err(|e| format!("Failed to deserialize pool state: {}", e))?;
+//         let tickarray_bitmap_extension =
+//             utils::deserialize_anchor_account::<states::TickArrayBitmapExtension>(
+//                 tickarray_bitmap_extension_account.as_ref().unwrap(),
+//             )
+//             .map_err(|e| format!("Failed to deserialize tick array bitmap: {}", e))?;
+
+//         let zero_for_one = user_input_state.base.mint == pool_state.token_mint_0
+//             && user_output_state.base.mint == pool_state.token_mint_1;
+
+//         const MIN_SQRT_PRICE_X64: u128 = 4295048016;
+//         const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
+//         let sqrt_price_limit_x64 = if zero_for_one {
+//             MIN_SQRT_PRICE_X64 + 1
+//         } else {
+//             MAX_SQRT_PRICE_X64 - 1
+//         };
+
+//         let mut tick_arrays = Self::load_cur_and_next_five_tick_array(
+//             &rpc_client,
+//             &pool_config,
+//             &pool_state,
+//             &tickarray_bitmap_extension,
+//             zero_for_one,
+//         )
+//         .await;
+
+//         let (mut other_amount_threshold, mut tick_array_indexs) =
+//             utils::get_out_put_amount_and_remaining_accounts(
+//                 params.input_amount,
+//                 Some(sqrt_price_limit_x64),
+//                 zero_for_one,
+//                 true,
+//                 &amm_config_state,
+//                 &pool_state,
+//                 &tickarray_bitmap_extension,
+//                 &mut tick_arrays,
+//             )
+//             .unwrap();
+//         other_amount_threshold = utils::amount_with_slippage(
+//             other_amount_threshold,
+//             params.slippage_tolerance_bps as f64 / 100.0,
+//             false,
+//         );
+
+//         let current_or_next_tick_array_key = Pubkey::find_program_address(
+//             &[
+//                 states::TICK_ARRAY_SEED.as_bytes(),
+//                 pool_config.pool_id_account.unwrap().to_bytes().as_ref(),
+//                 &tick_array_indexs.pop_front().unwrap().to_be_bytes(),
+//             ],
+//             &pool_config.raydium_v3_program,
+//         )
+//         .0;
+
+//         let mut remaining_accounts = Vec::new();
+//         remaining_accounts.push(AccountMeta::new_readonly(
+//             pool_config.tickarray_bitmap_extension.unwrap(),
+//             false,
+//         ));
+//         let mut accounts = tick_array_indexs
+//             .into_iter()
+//             .map(|index| {
+//                 AccountMeta::new(
+//                     Pubkey::find_program_address(
+//                         &[
+//                             states::TICK_ARRAY_SEED.as_bytes(),
+//                             pool_config.pool_id_account.unwrap().to_bytes().as_ref(),
+//                             &index.to_be_bytes(),
+//                         ],
+//                         &RaydiumClmmPoolState::get_program_id(),
+//                     )
+//                     .0,
+//                     false,
+//                 )
+//             })
+//             .collect();
+//         remaining_accounts.append(&mut accounts);
+
+//         let mut instructions = Vec::new();
+//         let request_inits_instr = ComputeBudgetInstruction::set_compute_unit_limit(1400_000u32);
+//         instructions.push(request_inits_instr);
+//         let swap_instr = swap_instr(
+//             &pool_config,
+//             pool_state.amm_config,
+//             pool_config.pool_id_account.unwrap(),
+//             if zero_for_one {
+//                 pool_state.token_vault_0
+//             } else {
+//                 pool_state.token_vault_1
+//             },
+//             if zero_for_one {
+//                 pool_state.token_vault_1
+//             } else {
+//                 pool_state.token_vault_0
+//             },
+//             pool_state.observation_key,
+//             params.input_token_mint,
+//             params.output_token_mint,
+//             current_or_next_tick_array_key,
+//             remaining_accounts,
+//             params.input_amount,
+//             other_amount_threshold,
+//             Option::<u128>::Some(sqrt_price_limit_x64),
+//             true,
+//         )
+//         .unwrap();
+//         instructions.extend(swap_instr);
+//         Ok((instructions, other_amount_threshold))
+//     }
+
+//     /// Execute Raydium CLMM swap
+//     pub async fn execute_swap(
+//         params: &OnChainSwapParams,
+//         payer: &Keypair,
+//         rpc_client: &RpcClient,
+//     ) -> Result<OnChainSwapResult, String> {
+//         log::info!("🔄 Executing Raydium swap");
+//         log::info!("  Pool: {}", params.pool_address);
+//         log::info!("  Input Amount: {}", params.input_amount);
+//         log::info!("  Input Mint: {}", params.input_token_mint);
+
+//         // Build swap instruction using official Whirlpool SDK format
+//         let (swap_instr, _mint_output_amount) =
+//             Self::build_swap_instruction(params, payer, rpc_client).await?;
+
+//         let signers = vec![&payer];
+//         let blockhash = rpc_client
+//             .get_latest_blockhash()
+//             .await
+//             .map_err(|e| format!("Failed to get latest blockhash: {}", e))?;
+//         let transaction = Transaction::new_signed_with_payer(
+//             &swap_instr,
+//             Some(&payer.pubkey()),
+//             &signers,
+//             blockhash,
+//         );
+//         let signature = rpc_client
+//             .send_and_confirm_transaction(&transaction)
+//             .await
+//             .map_err(|e| format!("Failed to send transaction: {}", e))?;
+
+//         // Get the output amount from transaction logs or token account
+//         let output_amount =
+//             extract_output_amount(rpc_client, &params.output_token_mint, &payer.pubkey()).await?;
+
+//         Ok(OnChainSwapResult {
+//             success: true,
+//             error_message: None,
+//             transaction_signature: Some(signature),
+//             dex_type: params.dex_type,
+//             pool_address: params.pool_address,
+//             input_token_mint: params.input_token_mint,
+//             output_token_mint: params.output_token_mint,
+//             input_amount: params.input_amount,
+//             output_amount: output_amount,
+//         })
+//     }
+// }
+
+// impl PumpfunSwapExecutor {
+//     /// Build Raydium CLMM swap instruction
+//     async fn build_swap_instruction(
+//         params: &OnChainSwapParams,
+//         payer: &Keypair,
+//         rpc_client: &RpcClient,
+//     ) -> Result<(Vec<Instruction>, u64), String> {
+
+//         Ok((instructions, other_amount_threshold))
+//     }
+
+//     /// Execute Raydium CLMM swap
+//     pub async fn execute_swap(
+//         params: &OnChainSwapParams,
+//         payer: &Keypair,
+//         rpc_client: &RpcClient,
+//     ) -> Result<OnChainSwapResult, String> {
+//         // Build swap instruction using official Whirlpool SDK format
+//         let (swap_instr, _mint_output_amount) =
+//             Self::build_swap_instruction(params, payer, rpc_client).await?;
+
+//         let signers = vec![&payer];
+//         let blockhash = rpc_client
+//             .get_latest_blockhash()
+//             .await
+//             .map_err(|e| format!("Failed to get latest blockhash: {}", e))?;
+//         let transaction = Transaction::new_signed_with_payer(
+//             &swap_instr,
+//             Some(&payer.pubkey()),
+//             &signers,
+//             blockhash,
+//         );
+//         let signature = rpc_client
+//             .send_and_confirm_transaction(&transaction)
+//             .await
+//             .map_err(|e| format!("Failed to send transaction: {}", e))?;
+
+//         // Get the output amount from transaction logs or token account
+//         let output_amount =
+//             extract_output_amount(rpc_client, &params.output_token_mint, &payer.pubkey()).await?;
+//         Ok(OnChainSwapResult {
+//             success: true,
+//             error_message: None,
+//             transaction_signature: Some(signature),
+//             dex_type: params.dex_type,
+//             pool_address: params.pool_address,
+//             input_token_mint: params.input_token_mint,
+//             output_token_mint: params.output_token_mint,
+//             input_amount: params.input_amount,
+//             output_amount: output_amount,
+//         })
+//     }
+// }
+
+// /// Extract output amount from transaction logs or token account
+// async fn extract_output_amount(
+//     rpc_client: &RpcClient,
+//     output_token_mint: &Pubkey,
+//     payer: &Pubkey,
+// ) -> Result<u64, String> {
+//     // // Convert Pubkey to Address for spl_associated_token_account
+//     // let payer_address = Address::from_str(&payer.to_string())
+//     //     .map_err(|_| "Failed to convert payer to Address".to_string())?;
+//     // let mint_address = Address::from_str(&output_token_mint.to_string())
+//     //     .map_err(|_| "Failed to convert mint to Address".to_string())?;
+
+//     let output_address =
+//         spl_associated_token_account::get_associated_token_address(&payer, &output_token_mint);
+//     // Convert Address back to Pubkey by parsing its string representation
+//     let output_ata = Pubkey::from_str(&output_address.to_string())
+//         .map_err(|_| "Failed to convert output address to Pubkey".to_string())?;
+//     match rpc_client.get_token_account_balance(&output_ata).await {
+//         Ok(balance) => {
+//             log::info!("📊 Token account balance: {}", balance.amount);
+//             Ok(balance
+//                 .amount
+//                 .parse::<u64>()
+//                 .map_err(|e| format!("Failed to parse balance: {}", e))?)
+//         }
+//         Err(e) => Err(format!("Failed to get transaction: {}", e)),
+//     }
+// }

@@ -4,7 +4,7 @@ use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID;
-
+use solana_client::nonblocking::rpc_client::RpcClient;
 use crate::{
     constants::is_base_token,
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
@@ -75,6 +75,7 @@ impl RaydiumCpmmPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
+        _rpc_client: &RpcClient,
     ) -> u64 {
         let (base_token, _) = (self.token0, self.token1);
         let input_is_base = tokens_equal(input_token, &base_token);

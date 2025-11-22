@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
-use solana_client::nonblocking::rpc_client::RpcClient;
 use crate::{
+    arbitrage_transaction_handler::InputSwapParams,
     constants::wsol,
     pool_data_types::{
-        BonkPoolState, DbcPoolState, DexType, GetAmmConfig, PumpSwapPoolState, PumpfunPoolState,
-        RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState, WhirlpoolPoolState,
+        BonkPoolState, BuildSwapInstruction, DbcPoolState, DexType, GetAmmConfig,
+        PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState, RaydiumClmmPoolState,
+        RaydiumCpmmPoolState, WhirlpoolPoolState,
     },
 };
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use solana_sdk::instruction::Instruction;
+use solana_sdk::pubkey::Pubkey;
 
 /// Macro to delegate simple field access across all PoolState variants
 /// Usage: pool_state_delegate!(self, field_name)
@@ -68,6 +71,7 @@ pub enum PoolUpdateEventType {
     RaydiumAmmV4Withdraw,
     RaydiumAmmV4WithdrawPnl,
     BonkPoolStateAccount,
+    PumpFunBondingCurveAccount,
     PumpSwapPoolAccount,
     RaydiumClmmPoolStateAccount,
     RaydiumClmmTickArrayStateAccount,
@@ -188,33 +192,39 @@ impl PoolState {
         input_token: &Pubkey,
         input_amount: u64,
         amm_confi_fetcher: Arc<dyn GetAmmConfig>,
-        rpc_client: &RpcClient,
     ) -> u64 {
         match self {
             PoolState::Pumpfun(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
+                log::info!("11111111111111111111 Pumpfun");
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::PumpSwap(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RaydiumAmmV4(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RaydiumCpmm(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::Bonk(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RadyiumClmm(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client).await;
+                log::info!("2222222222222222222 RadyiumClmm");
+                let output_amount = state
+                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .await;
                 output_amount
             }
             PoolState::MeteoraDbc(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client)
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::OrcaWhirlpool(state) => {
-                let output_amount = state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher, rpc_client).await;
+                log::info!("33333333333333333333 OrcaWhirlpool");
+                let output_amount = state
+                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .await;
                 output_amount
             }
         }
@@ -250,6 +260,39 @@ impl PoolState {
             }
             PoolState::OrcaWhirlpool(state) => {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl BuildSwapInstruction for PoolState {
+    async fn build_swap_instruction(
+        &self,
+        params: &InputSwapParams,
+    ) -> std::result::Result<(Vec<Instruction>, u64), String> {
+        match self {
+            PoolState::Pumpfun(state) => state.build_swap_instruction(params).await,
+            PoolState::PumpSwap(_state) => {
+                Err("PumpSwap BuildSwapInstruction not yet implemented".to_string())
+            }
+            PoolState::RaydiumAmmV4(_state) => {
+                Err("Raydium AMM V4 BuildSwapInstruction not yet implemented".to_string())
+            }
+            PoolState::RaydiumCpmm(_state) => {
+                Err("Raydium CPMM BuildSwapInstruction not yet implemented".to_string())
+            }
+            PoolState::Bonk(_state) => {
+                Err("Bonk BuildSwapInstruction not yet implemented".to_string())
+            }
+            PoolState::RadyiumClmm(_state) => {
+                Err("Raydium CLMM BuildSwapInstruction not yet implemented".to_string())
+            }
+            PoolState::MeteoraDbc(_state) => {
+                Err("Meteora DBC BuildSwapInstruction not yet implemented".to_string())
+            }
+            PoolState::OrcaWhirlpool(_state) => {
+                Err("Orca Whirlpool BuildSwapInstruction not yet implemented".to_string())
             }
         }
     }

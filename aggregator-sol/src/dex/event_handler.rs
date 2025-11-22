@@ -912,7 +912,7 @@ pub fn handle_dex_event(
                                 }),
                                 tick_array_state: None,
                                 oracle_state: None,
-                                is_account_state_update: false, 
+                                is_account_state_update: false,
                                 pool_update_event_type: PoolUpdateEventType::WhirlpoolIncreaseLiquidityV2,
                                 additional_event_type: 0,
                             })));
@@ -1072,17 +1072,17 @@ pub fn handle_dex_event(
             PumpFunBondingCurveAccountEvent => |e: PumpFunBondingCurveAccountEvent| {
                 // pool_update_events.push(PoolUpdateEvent::Pumpfun(
                 //     PumpfunPoolUpdate {
-                //         address: e.bonding_curve,
+                //         address: e.pubkey,
                 //         last_updated: e.metadata.recv_us as u64,
-                //         mint: e.mint,
-                //         token_reserve: e.virtual_token_reserves,
-                //         sol_reserve: e.virtual_sol_reserves,
-                //         real_token_reserve: e.real_token_reserves,
+                //         mint: Pubkey::default(),
+                //         token_reserve: e.bonding_curve.virtual_token_reserves,
+                //         sol_reserve: e.bonding_curve.virtual_sol_reserves,
+                //         real_token_reserve: e.bonding_curve.real_token_reserves,
                 //         slot: e.metadata.slot,
                 //         transaction_index: e.metadata.transaction_index,
-                //         complete: false,
+                //         complete: e.bonding_curve.complete,
                 //         is_account_state_update: true,
-                //         pool_update_event_type: PoolUpdateEventType::PumpFunTrade,
+                //         pool_update_event_type: PoolUpdateEventType::PumpFunBondingCurveAccount,
                 //         additional_event_type: 0,
                 //     }));
             },

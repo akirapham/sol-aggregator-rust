@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::parser::PUMPSWAP_PROGRAM_ID;
-use solana_client::nonblocking::rpc_client::RpcClient;
 use crate::{
     constants::is_base_token,
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
     utils::tokens_equal,
 };
+use serde::{Deserialize, Serialize};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::pubkey::Pubkey;
+use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::parser::PUMPSWAP_PROGRAM_ID;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpSwapPoolState {
     pub slot: u64,
@@ -58,7 +58,6 @@ impl PumpSwapPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-        _rpc_client: &RpcClient,
     ) -> u64 {
         let (base_token, _quote_token) = (self.base_mint, self.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);

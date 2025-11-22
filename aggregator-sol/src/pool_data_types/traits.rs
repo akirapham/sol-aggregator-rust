@@ -18,3 +18,14 @@ pub trait GetAmmConfig: Send + Sync {
 
     async fn get_dbc_pool_config(&self, dbc_config: &Pubkey) -> Result<Option<PoolConfig>>;
 }
+
+use crate::arbitrage_transaction_handler::InputSwapParams;
+use solana_sdk::instruction::Instruction;
+
+#[async_trait]
+pub trait BuildSwapInstruction: Send + Sync {
+    async fn build_swap_instruction(
+        &self,
+        params: &InputSwapParams,
+    ) -> std::result::Result<(Vec<Instruction>, u64), String>;
+}

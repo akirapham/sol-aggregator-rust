@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use sol_trade_sdk::utils::calc::pumpfun::{
-    get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount,
-};
-use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::parser::PUMPFUN_PROGRAM_ID;
-use solana_client::nonblocking::rpc_client::RpcClient;
+use crate::arbitrage_transaction_handler::InputSwapParams;
+use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::{
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
     utils::{get_sol_mint, tokens_equal},
 };
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use sol_trade_sdk::utils::calc::pumpfun::{
+    get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount,
+};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::instruction::Instruction;
+use solana_sdk::pubkey::Pubkey;
+use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::parser::PUMPFUN_PROGRAM_ID;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpfunPoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
@@ -54,7 +59,6 @@ impl PumpfunPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-        _rpc_client: &RpcClient,
     ) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
         if is_buy {
@@ -94,5 +98,26 @@ impl PumpfunPoolState {
             (self.sol_reserve as f64 / self.token_reserve as f64) * decimal_scale * sol_price;
 
         (token_price, sol_price)
+    }
+}
+
+#[async_trait]
+impl BuildSwapInstruction for PumpfunPoolState {
+    /// Build PumpFun swap instruction
+    async fn build_swap_instruction(
+        &self,
+        params: &InputSwapParams,
+    ) -> Result<(Vec<Instruction>, u64), String> {
+        // Determine if buy or sell
+        let _is_buy = tokens_equal(&params.input_token_mint, &get_sol_mint());
+
+        // TODO: Implement actual instruction building using sol-trade-sdk or manual instruction construction
+        // For now, we return an empty vector as a placeholder, as requested by the refactoring task
+        // In a real implementation, this would use the PumpFun program ID and account keys to build the instruction
+
+        let instructions = Vec::new();
+        let other_amount_threshold = 0; // This should be calculated based on slippage
+
+        Ok((instructions, other_amount_threshold))
     }
 }

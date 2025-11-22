@@ -22,7 +22,7 @@ pub struct SwapStepInternal {
     pub input_token: Pubkey,
     pub output_token: Pubkey,
     pub pool_address: Pubkey,
-    pool_state: Arc<PoolState>,
+    pub pool_state: Arc<PoolState>, // Made public for trait access
     pub input_amount: u64,
     pub output_amount: u64,
     pub percent: u64,
@@ -188,7 +188,6 @@ impl DexAggregator {
 
         // with 100% input amount
         let mut all_routes_with_out_amounts: Vec<(Vec<SwapStepInternal>, u64)> = vec![];
-        let rpc_client = self.pool_manager.get_rpc_client();
 
         for (pool_address, _liquidity) in top_direct_paths.iter() {
             if let Some(pool_state) = all_pool_state.get(pool_address) {
@@ -197,7 +196,6 @@ impl DexAggregator {
                         &swap_param.input_token.address,
                         swap_param.input_amount,
                         self_arc.clone(),
-                        &rpc_client,
                     )
                     .await;
                 if output_amount > 0 {
@@ -284,7 +282,6 @@ impl DexAggregator {
                                 &swap_param.input_token.address,
                                 swap_param.input_amount,
                                 self_arc.clone(),
-                                &rpc_client,
                             )
                             .await;
 
@@ -298,7 +295,6 @@ impl DexAggregator {
                                 &base_token_key,
                                 intermediate_amount,
                                 self_arc.clone(),
-                                &rpc_client,
                             )
                             .await;
 
@@ -381,7 +377,6 @@ impl DexAggregator {
                             &swap_param.input_token.address,
                             input_amount,
                             self_arc.clone(),
-                            &rpc_client,
                         )
                         .await;
                     splits_with_distributions[0][i] = Some(SwapPath {
@@ -411,7 +406,6 @@ impl DexAggregator {
                             &swap_param.input_token.address,
                             input_amount,
                             self_arc.clone(),
-                            &rpc_client,
                         )
                         .await;
                     let output_amount = swap_step_2
@@ -420,7 +414,6 @@ impl DexAggregator {
                             &swap_step_1.output_token,
                             intermediate_amount,
                             self_arc.clone(),
-                            &rpc_client,
                         )
                         .await;
                     splits_with_distributions[split_index][i] = Some(SwapPath {

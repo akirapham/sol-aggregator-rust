@@ -241,7 +241,7 @@ impl TickArrayBitmapExtensionUtils {
         let tick_index_abs = tick_index.unsigned_abs();
         // floor
         let mut offset = (tick_index_abs / ticks_in_one_bitmap) - 1;
-        if tick_index < 0 && tick_index_abs.is_multiple_of(ticks_in_one_bitmap) {
+        if tick_index < 0 && tick_index_abs % ticks_in_one_bitmap == 0 {
             offset -= 1;
         }
         Ok(offset)

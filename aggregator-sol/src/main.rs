@@ -148,8 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log::info!("Using Solana RPC: {}", rpc_url);
 
                 // Load keypair for transaction signing
-                let keypair_path = env::var("SOLANA_KEYPAIR_PATH")
-                    .unwrap_or_else(|_| format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap_or_default()));
+                let keypair_path = env::var("SOLANA_KEYPAIR_PATH").unwrap();
                 let keypair = read_keypair_file(&keypair_path).ok()?;
                 log::info!("Loaded keypair: {}", keypair.pubkey());
 
@@ -222,9 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tried.push(requested.clone());
 
         // Fallback inside aggregator-sol directory
-        let fallback1 = (env::current_dir()?)
-            .join("aggregator-sol")
-            .join(&arb_config_path);
+        let fallback1 = PathBuf::from(env::current_dir()?).join("aggregator-sol").join(&arb_config_path);
         tried.push(fallback1.clone());
 
         // Fallback to repo root's config directory

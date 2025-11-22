@@ -1,11 +1,9 @@
-use std::str::FromStr;
-use std::sync::Arc;
-
+use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::parser::DBC_PROGRAM_ID;
-use solana_client::nonblocking::rpc_client::RpcClient;
-use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
+use std::str::FromStr;
+use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbcPoolState {
     pub slot: u64,
@@ -135,7 +133,6 @@ impl DbcPoolState {
         _input_token: &Pubkey,
         _input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
-        _rpc_client: &RpcClient,
     ) -> u64 {
         // let is_buy = tokens_equal(input_token, &get_sol_mint());
 

@@ -1,35 +1,33 @@
+use crate::{
+    constants::is_base_token,
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType},
+    utils::tokens_equal,
+};
 use borsh::{BorshDeserialize, BorshSerialize};
+use orca_whirlpools_client::{
+    get_oracle_address, get_tick_array_address, Oracle, TickArray, Whirlpool,
+};
+use orca_whirlpools_core::{
+    get_tick_array_start_tick_index, swap_quote_by_input_token, TickArrayFacade, TickFacade,
+    TransferFee, TICK_ARRAY_SIZE,
+};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
-    parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::TickArrayState, types::OracleState
+    parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::OracleState, types::TickArrayState,
 };
-use solana_client::nonblocking::rpc_client::RpcClient;
-use std::sync::Arc;
 use std::collections::HashMap;
-use crate::{
-    constants::is_base_token,
-    pool_data_types::{
-        PoolUpdateEventType, GetAmmConfig
-    },
-    utils::tokens_equal,
-};
-use orca_whirlpools_client::{
-    get_oracle_address, get_tick_array_address, Oracle, TickArray, Whirlpool
-};
-use orca_whirlpools_core::{
-    get_tick_array_start_tick_index, swap_quote_by_input_token, TickArrayFacade, TickFacade, TICK_ARRAY_SIZE, TransferFee,
-};
+use std::sync::Arc;
 
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
-use std::error::Error;
-use std::iter::zip;
-use std::str::FromStr;
 use solana_sdk::account::Account as SolanaAccount;
 use spl_token_2022::extension::transfer_fee::TransferFeeConfig;
 use spl_token_2022::extension::{BaseStateWithExtensions, StateWithExtensions};
-use spl_token_2022::state::{Mint};
+use spl_token_2022::state::Mint;
+use std::error::Error;
+use std::iter::zip;
+use std::str::FromStr;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use crate::pool_data_types::orca::math::*;
 use solana_address::Address;
@@ -114,16 +112,12 @@ impl WhirlpoolPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-        rpc_client: &RpcClient,
     ) -> u64 {
         // Return 0 on any errors to avoid stack overflow
-        let result = self.calculate_output_amount_internal(
-            input_token,
-            input_amount,
-            rpc_client,
-        )
-        .await;
-        
+        let result = self
+            .calculate_output_amount_internal(input_token, input_amount)
+            .await;
+
         match result {
             Ok(amount) => amount,
             Err(_e) => 0, // Return 0 on any error instead of unwrapping
@@ -132,15 +126,14 @@ impl WhirlpoolPoolState {
 
     async fn calculate_output_amount_internal(
         &self,
-        input_token: &Pubkey,
+        _input_token: &Pubkey,
         _input_amount: u64,
-        rpc_client: &RpcClient,
     ) -> Result<u64, Box<dyn Error>> {
         // let whirlpool_address = self.address;
         // let slippage_tolerance_bps = 50;
 
         // let whirlpool_info = rpc.get_account(&whirlpool_address).await?;
-        
+
         // let whirlpool = Whirlpool::from_bytes(&whirlpool_info.data)?;
         // let specified_input = swap_type == SwapType::ExactIn;
         // let specified_token_a = specified_mint == whirlpool.token_mint_a;
@@ -203,11 +196,9 @@ impl WhirlpoolPoolState {
         // Ok(quote.token_est_out)
         Ok(0)
 
-
-
         // let whirlpool_address = self.address;
         // let slippage_tolerance_bps = 50;
-        
+
         // let whirlpool_addr = Address::from_str(&whirlpool_address.to_string()).unwrap();
         // let whirlpool_info = rpc_client.get_account(&whirlpool_address).await?;
         // let whirlpool = Whirlpool::from_bytes(&whirlpool_info.data)?;
@@ -259,7 +250,7 @@ impl WhirlpoolPoolState {
         // .await
         // .map_err(|e| format!("spawn_blocking error: {}", e))?
         // .map_err(|e| format!("swap quote error: {:?}", e))?;
-        
+
         // Ok(quote.token_est_out)
     }
 

@@ -1,6 +1,6 @@
 use crate::aggregator::{DexAggregator, SwapRoute};
 use crate::arbitrage_config::ArbitrageConfig;
-use crate::arbitrage_transaction_handler::{ArbitrageTransactionHandler, ArbitrageExecution};
+use crate::arbitrage_transaction_handler::{ArbitrageExecution, ArbitrageTransactionHandler};
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
 use rocksdb::{Options, DB};
@@ -256,7 +256,12 @@ impl ArbitrageMonitor {
     }
 
     /// Execute an arbitrage opportunity
-    async fn execute_opportunity(&self, mut opportunity: ArbitrageOpportunity, forward_route: SwapRoute, reverse_route: SwapRoute) {
+    async fn execute_opportunity(
+        &self,
+        mut opportunity: ArbitrageOpportunity,
+        forward_route: SwapRoute,
+        reverse_route: SwapRoute,
+    ) {
         let opp_key = format!("{}:{}", opportunity.detected_at, opportunity.pair_name);
 
         // Check if this opportunity is already being executed
@@ -294,14 +299,15 @@ impl ArbitrageMonitor {
         );
 
         // Execute real arbitrage on mainnet
-        let execution_result = self.execute_arbitrage(&opportunity, forward_route, reverse_route).await;
+        let execution_result = self
+            .execute_arbitrage(&opportunity, forward_route, reverse_route)
+            .await;
 
         // Update status based on execution result
         match execution_result {
-            Ok(execution_result ) => {
+            Ok(execution_result) => {
                 opportunity.status = OpportunityStatus::Completed;
-                log::info!("✅ Arbitrage executed successfully: {}", 
-                    opp_key);
+                log::info!("✅ Arbitrage executed successfully: {}", opp_key);
             }
             Err(e) => {
                 opportunity.status = OpportunityStatus::Failed;
@@ -320,6 +326,49 @@ impl ArbitrageMonitor {
             let mut executing = self.executing_opportunities.write().await;
             executing.remove(&opp_key);
         }
+    }
+
+    /// Execute arbitrage transaction on mainnet
+    async fn execute_arbitrage(
+        &self,
+        opportunity: &ArbitrageOpportunity,
+        forward_route: SwapRoute,
+        reverse_route: SwapRoute,
+    ) -> Result<(String, String), String> {
+        // Get latest blockhash for transaction
+        let recent_blockhash = self
+            .rpc_client
+            .get_latest_blockhash()
+            .await
+            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
+
+        log::debug!("Latest blockhash: {}", recent_blockhash);
+
+        let arbitrage_execution = ArbitrageExecution {
+            forward_route: forward_route,
+            reverse_route: reverse_route,
+            pair_name: opportunity.pair_name.clone(),
+            slippage_tolerance_bps: self.config.settings.slippage_bps,
+            token_a: Pubkey::from_str(&opportunity.token_a)
+                .map_err(|e| format!("Invalid token A pubkey: {}", e))?,
+            token_b: Pubkey::from_str(&opportunity.token_b)
+                .map_err(|e| format!("Invalid token B pubkey: {}", e))?,
+            input_amount: opportunity.input_amount,
+            detected_at: opportunity.detected_at,
+        };
+
+        let execution_result = ArbitrageTransactionHandler::execute_arbitrade_transaction(
+            &arbitrage_execution,
+            &self.keypair,
+            &self.rpc_client,
+        )
+        .await
+        .map_err(|e| format!("Arbitrage execution failed: {}", e))?;
+
+        Ok((
+            execution_result.forward_tx_signature.unwrap_or_default(),
+            execution_result.reverse_tx_signature.unwrap_or_default(),
+        ))
     }
 
     /// Save an opportunity to RocksDB
@@ -398,44 +447,5 @@ impl ArbitrageMonitor {
         }
 
         Ok(deleted_count)
-    }
-
-    /// Execute arbitrage transaction on mainnet
-    async fn execute_arbitrage(
-        &self,
-        opportunity: &ArbitrageOpportunity,
-        forward_route: SwapRoute,
-        reverse_route: SwapRoute,
-    ) -> Result<(String, String), String> {
-
-        // Get latest blockhash for transaction
-        let recent_blockhash = self
-            .rpc_client
-            .get_latest_blockhash()
-            .await
-            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
-
-        log::debug!("Latest blockhash: {}", recent_blockhash);
-
-        let arbitrage_execution = ArbitrageExecution {
-            forward_route: forward_route,
-            reverse_route: reverse_route,
-            pair_name: opportunity.pair_name.clone(),
-            slippage_tolerance_bps: self.config.settings.slippage_bps,
-            token_a: Pubkey::from_str(&opportunity.token_a).map_err(|e| format!("Invalid token A pubkey: {}", e))?,
-            token_b: Pubkey::from_str(&opportunity.token_b).map_err(|e| format!("Invalid token B pubkey: {}", e))?,
-            input_amount: opportunity.input_amount,
-            detected_at: opportunity.detected_at,
-        };
-
-        let execution_result = ArbitrageTransactionHandler::execute_arbitrade_transaction(
-            &arbitrage_execution,
-            &self.keypair,
-            &self.rpc_client,
-        )
-        .await
-        .map_err(|e| format!("Arbitrage execution failed: {}", e))?;
-            
-        Ok((execution_result.forward_tx_signature.unwrap_or_default(), execution_result.reverse_tx_signature.unwrap_or_default()))
     }
 }

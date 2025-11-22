@@ -10,9 +10,9 @@ use crate::{
 };
 use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
+use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
-use solana_client::nonblocking::rpc_client::RpcClient;
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
 #[derive(Clone, Debug, Copy, Default)]
@@ -151,7 +151,6 @@ impl RaydiumClmmPoolState {
         input_token: &Pubkey,
         input_amount: u64,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-        _rpc_client: &RpcClient,
     ) -> u64 {
         if input_amount == 0 {
             return 0;
@@ -204,13 +203,7 @@ impl RaydiumClmmPoolState {
             input_token,
             rug::Integer::from(input_amount),
         ) {
-            Ok(result) => {
-                result
-                    .expected_amount_out
-                    .abs()
-                    .to_u64()
-                    .unwrap_or(0)
-            }
+            Ok(result) => result.expected_amount_out.abs().to_u64().unwrap_or(0),
             Err(_) => 0,
         }
     }

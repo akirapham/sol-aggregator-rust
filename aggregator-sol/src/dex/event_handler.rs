@@ -1082,21 +1082,26 @@ pub fn handle_dex_event(
                     }));
             },
             PumpFunBondingCurveAccountEvent => |e: PumpFunBondingCurveAccountEvent| {
-                // pool_update_events.push(PoolUpdateEvent::Pumpfun(
-                //     PumpfunPoolUpdate {
-                //         address: e.pubkey,
-                //         last_updated: e.metadata.recv_us as u64,
-                //         mint: Pubkey::default(),
-                //         token_reserve: e.bonding_curve.virtual_token_reserves,
-                //         sol_reserve: e.bonding_curve.virtual_sol_reserves,
-                //         real_token_reserve: e.bonding_curve.real_token_reserves,
-                //         slot: e.metadata.slot,
-                //         transaction_index: e.metadata.transaction_index,
-                //         complete: e.bonding_curve.complete,
-                //         is_account_state_update: true,
-                //         pool_update_event_type: PoolUpdateEventType::PumpFunBondingCurveAccount,
-                //         additional_event_type: 0,
-                //     }));
+                log::info!("AAAAAAAAAAAAAAA PumpFunBondingCurveAccountEvent: {e:?}");
+                pool_update_events.push(PoolUpdateEvent::Pumpfun(
+                    PumpfunPoolUpdate {
+                        address: e.pubkey,
+                        last_updated: e.metadata.recv_us as u64,
+                        mint: Pubkey::default(),
+                        virtual_token_reserves: e.bonding_curve.virtual_token_reserves,
+                        virtual_sol_reserves: e.bonding_curve.virtual_sol_reserves,
+                        real_token_reserves: e.bonding_curve.real_token_reserves,
+                        real_sol_reserves: e.bonding_curve.real_sol_reserves,
+                        token_total_supply: e.bonding_curve.token_total_supply,
+                        creator: e.bonding_curve.creator,
+                        is_mayhem_mode: e.bonding_curve.is_mayhem_mode,
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        complete: e.bonding_curve.complete,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::PumpFunTrade,
+                        additional_event_type: 0,
+                    }));
             },
             PumpFunGlobalAccountEvent => |e: PumpFunGlobalAccountEvent| {
                 // println!("PumpFunGlobalAccountEvent: {e:?}");

@@ -59,6 +59,7 @@ pub struct DbcPoolState {
     pub creator_quote_fee: u64,
     pub liquidity_usd: f64,
     pub last_updated: u64,
+    pub is_base_token_2022: bool, // Whether base_mint uses Token-2022 program (pool_type indicates this)
 }
 
 #[allow(dead_code)]

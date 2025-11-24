@@ -5,12 +5,13 @@ use crate::{
     pool_data_types::{
         clmm::{pool::PoolUtils, tpe::ComputeClmmPoolInfo},
         GetAmmConfig, PoolUpdateEventType,
+        common,
     },
     utils::tokens_equal,
 };
-use borsh::BorshDeserialize;
+
+use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
-use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
@@ -123,6 +124,8 @@ pub struct RaydiumClmmPoolState {
     pub token0_reserve: u64,
     pub token1_reserve: u64,
     pub is_state_keys_initialized: bool,
+    pub is_token_mint0_2022: bool, // Whether token_mint0 uses Token-2022 program
+    pub is_token_mint1_2022: bool, // Whether token_mint1 uses Token-2022 program
 }
 
 #[derive(Debug, Clone)]
@@ -260,5 +263,180 @@ impl RaydiumClmmPoolState {
             // Neither token is a base token, assume relative pricing
             (price_ratio, 1.0)
         }
+    }
+}
+
+use crate::arbitrage_transaction_handler::InputSwapParams;
+use crate::pool_data_types::traits::BuildSwapInstruction;
+use async_trait::async_trait;
+use solana_program::instruction::{AccountMeta, Instruction};
+use spl_associated_token_account;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
+
+#[async_trait]
+impl BuildSwapInstruction for RaydiumClmmPoolState {
+    async fn build_swap_instruction(
+        &self,
+        params: &InputSwapParams,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> std::result::Result<(Vec<Instruction>, u64), String> {
+        // 1. Determine direction (zero_for_one)
+        let zero_for_one = params.input_token_mint == self.token_mint0;
+        if !zero_for_one && params.input_token_mint != self.token_mint1 {
+            return Err("Input token does not match pool mints".to_string());
+        }
+        
+        // Get AMM config
+        let amm_config = match amm_config_fetcher
+            .get_raydium_clmm_amm_config(&self.amm_config)
+            .await
+        {
+            Ok(Some(config)) => config,
+            _ => return Err("Failed to get AMM config".to_string()),
+        };
+
+        // Build pool info for calculations
+        let pool_info = ComputeClmmPoolInfo::new(
+            self.address,
+            Self::get_program_id(),
+            self,
+            self.tick_array_bitmap_extension.as_ref(),
+            Some(amm_config),
+        );
+
+        // Calculate output amount and get remaining tick array accounts
+        let calculation_result = PoolUtils::get_output_amount_and_remain_accounts(
+            &pool_info,
+            &self.tick_array_state,
+            &params.input_token_mint,
+            rug::Integer::from(params.input_amount),
+        ).map_err(|e| e.to_string())?;
+
+        let expected_amount_out = calculation_result.expected_amount_out.to_u64().unwrap_or(0);
+        let all_tick_arrays = calculation_result.remaining_accounts;
+
+        // Calculate slippage
+        let slippage_factor = 10000 - params.slippage_tolerance_bps as u64;
+        let other_amount_threshold = (expected_amount_out as u128 * slippage_factor as u128 / 10000) as u64;
+
+        // Sqrt price limit
+        let sqrt_price_limit_x64 = if zero_for_one {
+            MIN_SQRT_PRICE_X64 + 1
+        } else {
+            MAX_SQRT_PRICE_X64 - 1
+        };
+
+        let (input_vault, output_vault) = if zero_for_one {
+            (self.token_vault0, self.token_vault1)
+        } else {
+            (self.token_vault1, self.token_vault0)
+        };
+
+        let (input_mint, output_mint) = if zero_for_one {
+            (self.token_mint0, self.token_mint1)
+        } else {
+            (self.token_mint1, self.token_mint0)
+        };
+
+        // Get tick array accounts for remaining_accounts
+        if all_tick_arrays.is_empty() {
+            return Err("No tick arrays returned from calculation".to_string());
+        }
+
+        // Build remaining accounts: tickarray_bitmap_extension + tick_arrays
+        let mut remaining_accounts = Vec::new();
+        
+        // Add all tick arrays as remaining accounts
+        for &tick_array_key in &all_tick_arrays {
+            remaining_accounts.push(AccountMeta::new(tick_array_key, false));
+        }
+
+        let token_program_0 = if self.is_token_mint0_2022 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id() 
+        };
+        let token_program_1 = if self.is_token_mint1_2022 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id()
+        };
+
+        // Determine which token program to use for input and output
+        let (input_token_program, output_token_program) = if zero_for_one {
+            (token_program_0, token_program_1)
+        } else {
+            (token_program_1, token_program_0)
+        };
+
+        // Convert Address types to anchor_lang Pubkey for compatibility
+        let user_wallet_old = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
+        let input_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.input_token_mint.to_bytes());
+        let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token_mint.to_bytes());
+
+        // Get user's associated token accounts
+        let user_input_token_old = spl_associated_token_account::get_associated_token_address_with_program_id(
+            &user_wallet_old,
+            &input_mint_old,
+            &input_token_program,
+        );
+        let user_output_token_old = spl_associated_token_account::get_associated_token_address_with_program_id(
+            &user_wallet_old,
+            &output_mint_old,
+            &output_token_program,
+        );
+        
+        // Convert back to Address for AccountMeta
+        let user_input_token = solana_sdk::pubkey::Pubkey::new_from_array(user_input_token_old.to_bytes());
+        let user_output_token = solana_sdk::pubkey::Pubkey::new_from_array(user_output_token_old.to_bytes());
+
+        // SwapV2 instruction (supports both SPL Token and Token-2022)
+        // Discriminator for SwapV2
+        let discriminator: [u8; 8] = [43, 4, 237, 11, 26, 201, 30, 98]; // SwapV2 discriminator
+        
+        #[derive(BorshSerialize)]
+        struct SwapV2Args {
+            amount: u64,
+            other_amount_threshold: u64,
+            sqrt_price_limit_x64: u128,
+            is_base_input: bool,
+        }
+        let args = SwapV2Args {
+            amount: params.input_amount,
+            other_amount_threshold,
+            sqrt_price_limit_x64,
+            is_base_input: true,
+        };
+        let mut data = Vec::with_capacity(8 + 32);
+        data.extend_from_slice(&discriminator);
+        args.serialize(&mut data).map_err(|e| e.to_string())?;
+        // SwapV2 accounts
+        let mut accounts = vec![
+            AccountMeta::new(params.user_wallet, true), // payer
+            AccountMeta::new_readonly(self.amm_config, false), // amm_config
+            AccountMeta::new(self.address, false), // pool_state
+            AccountMeta::new(user_input_token, false), // input_token_account
+            AccountMeta::new(user_output_token, false), // output_token_account
+            AccountMeta::new(input_vault, false), // input_vault
+            AccountMeta::new(output_vault, false), // output_vault
+            AccountMeta::new(self.observation_key, false), // observation_state
+            common::constants::TOKEN_PROGRAM_META, // token_program
+            common::constants::TOKEN_PROGRAM_2022_META, // token_program_2022
+            common::constants::SPL_MEMO_PROGRAM_META, // memo_program
+            AccountMeta::new_readonly(input_mint, false), // input_vault_mint
+            AccountMeta::new_readonly(output_mint, false), // output_vault_mint
+        ];
+        // Add remaining tick arrays
+        accounts.extend(remaining_accounts);
+        let swap_instruction = Instruction {
+            program_id: Self::get_program_id(),
+            accounts,
+            data,
+        };
+
+        // Compute Budget Instruction
+        let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+
+        Ok((vec![compute_budget_instruction, swap_instruction], expected_amount_out))
     }
 }

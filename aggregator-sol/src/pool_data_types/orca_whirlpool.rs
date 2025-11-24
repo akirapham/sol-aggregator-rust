@@ -1,14 +1,12 @@
 use crate::{
     constants::is_base_token,
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
-    utils::tokens_equal,
+
 };
 use borsh::{BorshDeserialize, BorshSerialize};
-use orca_whirlpools_client::{
-    get_oracle_address, get_tick_array_address, Oracle, TickArray, Whirlpool,
-};
+
 use orca_whirlpools_core::{
-    get_tick_array_start_tick_index, swap_quote_by_input_token, TickArrayFacade, TickFacade,
+    TickArrayFacade, TickFacade,
     TransferFee, TICK_ARRAY_SIZE,
 };
 use serde::{Deserialize, Serialize};
@@ -24,13 +22,10 @@ use spl_token_2022::extension::transfer_fee::TransferFeeConfig;
 use spl_token_2022::extension::{BaseStateWithExtensions, StateWithExtensions};
 use spl_token_2022::state::Mint;
 use std::error::Error;
-use std::iter::zip;
-use std::str::FromStr;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
-use crate::pool_data_types::orca::math::*;
-use solana_address::Address;
+
+
+
 
 // Whirlpool sqrt price limits (same as Raydium CLMM)
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
@@ -63,6 +58,8 @@ pub struct WhirlpoolPoolState {
     pub is_state_keys_initialized: bool,
     #[serde(skip)]
     pub oracle_state: OracleState,
+    pub is_token_mint_a_2022: bool, // Whether token_mint_a uses Token-2022 program
+    pub is_token_mint_b_2022: bool, // Whether token_mint_b uses Token-2022 program
 }
 
 #[derive(Clone, Debug)]

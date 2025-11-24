@@ -24,7 +24,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
-use solana_sdk::signer::keypair::Keypair;
 
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;

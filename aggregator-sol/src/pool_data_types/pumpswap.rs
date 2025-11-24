@@ -6,7 +6,7 @@ use crate::{
     utils::tokens_equal,
 };
 use serde::{Deserialize, Serialize};
-use solana_client::nonblocking::rpc_client::RpcClient;
+
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::parser::PUMPSWAP_PROGRAM_ID;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -25,6 +25,8 @@ pub struct PumpSwapPoolState {
     pub quote_reserve: u64,
     pub liquidity_usd: f64,
     pub is_state_keys_initialized: bool,
+    pub is_base_token_2022: bool, // Whether base_mint uses Token-2022 program
+    pub is_quote_token_2022: bool, // Whether quote_mint uses Token-2022 program
 }
 
 #[derive(Debug, Clone)]

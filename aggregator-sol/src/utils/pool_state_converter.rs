@@ -42,16 +42,22 @@ pub fn pool_update_event_to_pool_state(
             Some(PoolState::Pumpfun(PumpfunPoolState {
                 address: pumpfun_pool_update.address,
                 last_updated: pumpfun_pool_update.last_updated,
-                liquidity_usd: pumpfun_pool_update.sol_reserve as f64 / 1_000_000_000_f64
+                liquidity_usd: pumpfun_pool_update.virtual_sol_reserves as f64 / 1_000_000_000_f64
                     * sol_price,
                 complete: pumpfun_pool_update.complete,
                 mint: pumpfun_pool_update.mint,
-                sol_reserve: pumpfun_pool_update.sol_reserve,
-                token_reserve: pumpfun_pool_update.token_reserve,
-                real_token_reserve: pumpfun_pool_update.real_token_reserve,
+                virtual_sol_reserves: pumpfun_pool_update.virtual_sol_reserves,
+                virtual_token_reserves: pumpfun_pool_update.virtual_token_reserves,
+                real_sol_reserves: pumpfun_pool_update.real_sol_reserves,
+                real_token_reserves: pumpfun_pool_update.real_token_reserves,
+                token_total_supply: pumpfun_pool_update.token_total_supply,
+                creator: pumpfun_pool_update.creator,
+                is_mayhem_mode: pumpfun_pool_update.is_mayhem_mode,
                 slot: pumpfun_pool_update.slot,
                 transaction_index: pumpfun_pool_update.transaction_index,
                 is_state_keys_initialized: pumpfun_pool_update.is_account_state_update,
+                is_base_token_2022: false, // Will be updated from token cache
+                is_quote_token_2022: false, // Will be updated from token cache
             })),
             false,
         ),
@@ -96,6 +102,8 @@ pub fn pool_update_event_to_pool_state(
                     quote_reserve: raydium_pool_update.quote_reserve,
                     is_state_keys_initialized: raydium_pool_update.is_account_state_update,
                     liquidity_usd,
+                    is_base_token_2022: false, // Will be updated from token cache
+                    is_quote_token_2022: false, // Will be updated from token cache
                 })),
                 false,
             )
@@ -128,6 +136,8 @@ pub fn pool_update_event_to_pool_state(
                     pool_quote_token_account: pump_swap_pool_update.pool_quote_token_account,
                     is_state_keys_initialized: pump_swap_pool_update.is_account_state_update,
                     liquidity_usd,
+                    is_base_token_2022: false, // Will be updated from token cache
+                    is_quote_token_2022: false, // Will be updated from token cache
                 })),
                 false,
             )
@@ -161,6 +171,8 @@ pub fn pool_update_event_to_pool_state(
                     last_updated: raydium_cpmm_pool_update.last_updated,
                     liquidity_usd,
                     is_state_keys_initialized: raydium_cpmm_pool_update.is_account_state_update,
+                    is_token0_2022: false, // Will be updated from token cache
+                    is_token1_2022: false, // Will be updated from token cache
                 })),
                 false,
             )
@@ -196,6 +208,8 @@ pub fn pool_update_event_to_pool_state(
                     last_updated: bonk_pool_update.last_updated,
                     is_state_keys_initialized: bonk_pool_update.is_account_state_update,
                     liquidity_usd,
+                    is_base_token_2022: false, // Will be updated from token cache
+                    is_quote_token_2022: false, // Will be updated from token cache
                 })),
                 false,
             )
@@ -225,6 +239,8 @@ pub fn pool_update_event_to_pool_state(
                 token1_reserve: 0,
                 is_state_keys_initialized: raydium_clmm_pool_update.is_account_state_update,
                 liquidity_usd: 0.0,
+                is_token_mint0_2022: false, // Will be updated from token cache
+                is_token_mint1_2022: false, // Will be updated from token cache
             };
             pool_state.slot = raydium_clmm_pool_update.slot;
             pool_state.transaction_index = raydium_clmm_pool_update.transaction_index;
@@ -344,12 +360,13 @@ pub fn update_pool_state_by_event(
                 if !pumpfun_pool_update.is_account_state_update {
                     state.last_updated = pumpfun_pool_update.last_updated;
                 }
-                state.liquidity_usd =
-                    pumpfun_pool_update.sol_reserve as f64 / 1_000_000_000_f64 * sol_price;
+                state.liquidity_usd = pumpfun_pool_update.virtual_sol_reserves as f64 / 1_000_000_000_f64
+                    * sol_price;
                 state.complete = pumpfun_pool_update.complete;
-                state.sol_reserve = pumpfun_pool_update.sol_reserve;
-                state.token_reserve = pumpfun_pool_update.token_reserve;
-                state.real_token_reserve = pumpfun_pool_update.real_token_reserve;
+                state.virtual_sol_reserves = pumpfun_pool_update.virtual_sol_reserves;
+                state.virtual_token_reserves = pumpfun_pool_update.virtual_token_reserves;
+                state.real_sol_reserves = pumpfun_pool_update.real_sol_reserves;
+                state.real_token_reserves = pumpfun_pool_update.real_token_reserves;
                 state.slot = pumpfun_pool_update.slot;
                 state.transaction_index = pumpfun_pool_update.transaction_index;
             }

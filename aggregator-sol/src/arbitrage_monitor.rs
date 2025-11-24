@@ -305,7 +305,7 @@ impl ArbitrageMonitor {
 
         // Update status based on execution result
         match execution_result {
-            Ok(execution_result) => {
+            Ok(_execution_result) => {
                 opportunity.status = OpportunityStatus::Completed;
                 log::info!("✅ Arbitrage executed successfully: {}", opp_key);
             }
@@ -361,6 +361,7 @@ impl ArbitrageMonitor {
             &arbitrage_execution,
             &self.keypair,
             &self.rpc_client,
+            self.aggregator.get_pool_manager().clone(),
         )
         .await
         .map_err(|e| format!("Arbitrage execution failed: {}", e))?;

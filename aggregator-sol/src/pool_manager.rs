@@ -1089,6 +1089,62 @@ impl PoolStateManager {
                 token_cache_write.insert(token_b, token_b_info);
             }
         }
+
+        // After fetching tokens, update the pool state with is_token_2022 information
+        {
+            let token_cache_read = token_cache.read().await;
+            let token_a_is_2022 = token_cache_read
+                .get(&token_a)
+                .map(|t| t.is_token_2022)
+                .unwrap_or(false);
+            let token_b_is_2022 = token_cache_read
+                .get(&token_b)
+                .map(|t| t.is_token_2022)
+                .unwrap_or(false);
+            drop(token_cache_read);
+
+            // Update the pool state with token 2022 information
+            let pools_read = pools.read().await;
+            if let Some(pool_mutex) = pools_read.get(&pool_address) {
+                let mut pool_guard = pool_mutex.lock().await;
+                
+                // Update is_token_2022 fields based on pool type
+                match &mut *pool_guard {
+                    PoolState::Pumpfun(state) => {
+                        state.is_base_token_2022 = token_a_is_2022;
+                        state.is_quote_token_2022 = token_b_is_2022;
+                    }
+                    PoolState::PumpSwap(state) => {
+                        state.is_base_token_2022 = token_a_is_2022;
+                        state.is_quote_token_2022 = token_b_is_2022;
+                    }
+                    PoolState::RaydiumAmmV4(state) => {
+                        state.is_base_token_2022 = token_a_is_2022;
+                        state.is_quote_token_2022 = token_b_is_2022;
+                    }
+                    PoolState::RaydiumCpmm(state) => {
+                        state.is_token0_2022 = token_a_is_2022;
+                        state.is_token1_2022 = token_b_is_2022;
+                    }
+                    PoolState::Bonk(state) => {
+                        state.is_base_token_2022 = token_a_is_2022;
+                        state.is_quote_token_2022 = token_b_is_2022;
+                    }
+                    PoolState::RadyiumClmm(state) => {
+                        state.is_token_mint0_2022 = token_a_is_2022;
+                        state.is_token_mint1_2022 = token_b_is_2022;
+                    }
+                    PoolState::MeteoraDbc(state) => {
+                        // For DBC, only base token needs checking (token_b is always SOL)
+                        state.is_base_token_2022 = token_a_is_2022;
+                    }
+                    PoolState::OrcaWhirlpool(state) => {
+                        state.is_token_mint_a_2022 = token_a_is_2022;
+                        state.is_token_mint_b_2022 = token_b_is_2022;
+                    }
+                }
+            }
+        }
     }
 
     /// Check if a pool is stale (hasn't been updated since app startup)

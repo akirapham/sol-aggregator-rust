@@ -172,7 +172,7 @@ impl PoolState {
 
     pub fn get_reserves(&self) -> (u64, u64) {
         match self {
-            PoolState::Pumpfun(state) => (state.token_reserve, state.sol_reserve),
+            PoolState::Pumpfun(state) => (state.virtual_token_reserves, state.virtual_sol_reserves),
             PoolState::PumpSwap(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RaydiumAmmV4(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RaydiumCpmm(state) => (state.token0_reserve, state.token1_reserve),
@@ -270,9 +270,10 @@ impl BuildSwapInstruction for PoolState {
     async fn build_swap_instruction(
         &self,
         params: &InputSwapParams,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> std::result::Result<(Vec<Instruction>, u64), String> {
         match self {
-            PoolState::Pumpfun(state) => state.build_swap_instruction(params).await,
+            PoolState::Pumpfun(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::PumpSwap(_state) => {
                 Err("PumpSwap BuildSwapInstruction not yet implemented".to_string())
             }
@@ -285,9 +286,7 @@ impl BuildSwapInstruction for PoolState {
             PoolState::Bonk(_state) => {
                 Err("Bonk BuildSwapInstruction not yet implemented".to_string())
             }
-            PoolState::RadyiumClmm(_state) => {
-                Err("Raydium CLMM BuildSwapInstruction not yet implemented".to_string())
-            }
+            PoolState::RadyiumClmm(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::MeteoraDbc(_state) => {
                 Err("Meteora DBC BuildSwapInstruction not yet implemented".to_string())
             }

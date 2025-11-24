@@ -1,57 +1,17 @@
-/// Real Arbitrage Execution Handler
-///
-/// Orchestrates actual on-chain arbitrage execution using the real swap executor
-/// Replaces the simulation-based handler with production-ready blockchain interaction
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-use crate::aggregator::{DexAggregator, SwapRoute, SwapStepInternal};
-use crate::arbitrage_monitor::ArbitrageOpportunity;
-use crate::pool_data_types::pumpfun::PumpfunPoolState;
+use crate::aggregator::{SwapRoute, SwapStepInternal};
 use crate::pool_data_types::traits::BuildSwapInstruction;
-use crate::pool_data_types::DexType;
-use solana_address::Address;
+use crate::pool_data_types::{DexType, GetAmmConfig};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use std::str::FromStr;
-// use spl_memo::build_memo;
-
-/// On-Chain Swap Execution Module
-///
-/// Executes actual on-chain swaps by calling the swap functions from:
-/// - Whirlpools swap_manager.rs
-/// - Raydium CLMM swap instruction
-/// - Raydium CPMM swap instruction
-/// - Raydium AMM V4 swap instruction
-///
-/// This module builds and submits actual transactions to the blockchain
 use solana_sdk::{
-    hash::Hash,
     instruction::Instruction,
-    message::{v0::Message, VersionedMessage},
     pubkey::Pubkey,
     signature::Signature,
     signer::{keypair::Keypair, Signer},
     transaction::Transaction,
-    transaction::VersionedTransaction,
+
 };
-
-use spl_associated_token_account;
-
-use orca_whirlpools::{swap_instructions, SwapInstructions, SwapQuote, SwapType};
-
-// use raydium_clmm_client::{
-//     config::{load_cfg, ClientConfig},
-//     instructions::amm_instructions::swap_instr,
-//     instructions::utils,
-//     raydium_amm_v3::states,
-// };
-
-use anchor_lang::prelude::AccountMeta;
-use arrayref::array_ref;
-
-use crate::pool_data_types::raydium_clmm::RaydiumClmmPoolState;
-use spl_token_2022::{extension::StateWithExtensions, state::Account};
-use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
 pub struct InputSwapParams {
@@ -61,6 +21,7 @@ pub struct InputSwapParams {
     pub input_amount: u64,
     pub pool_address: Pubkey,
     pub slippage_tolerance_bps: u16,
+    pub user_wallet: Pubkey,
 }
 
 /// Result of on-chain swap execution
@@ -152,6 +113,7 @@ impl ArbitrageTransactionHandler {
         arbitrage_execution: &ArbitrageExecution,
         payer: &Keypair,
         rpc_client: &RpcClient,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> Result<ArbitrageExecutionRecord, String> {
         log::info!("🎯 Executing the arbitrage opportunity");
         log::info!("  Pair: {}", arbitrage_execution.pair_name);
@@ -183,7 +145,7 @@ impl ArbitrageTransactionHandler {
         // Execute forward swap using unified atomic execution
         log::info!("🔄 Executing forward swap...");
         let forward_result =
-            Self::execute_swap_route(&arbitrage_execution.forward_route, payer, rpc_client).await;
+            Self::execute_swap_route(&arbitrage_execution.forward_route, payer, rpc_client, amm_config_fetcher.clone()).await;
 
         match forward_result {
             Ok(result) => {
@@ -217,7 +179,7 @@ impl ArbitrageTransactionHandler {
         // Execute reverse swap using unified atomic execution
         log::info!("🔄 Executing reverse swap...");
         let reverse_result =
-            Self::execute_swap_route(&arbitrage_execution.reverse_route, payer, rpc_client).await;
+            Self::execute_swap_route(&arbitrage_execution.reverse_route, payer, rpc_client, amm_config_fetcher.clone()).await;
 
         match reverse_result {
             Ok(result) => {
@@ -272,6 +234,8 @@ impl ArbitrageTransactionHandler {
     async fn build_step_instructions(
         step: &SwapStepInternal,
         slippage_tolerance_bps: u16,
+        payer: &Keypair,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> Result<(Vec<Instruction>, u64), String> {
         let params = InputSwapParams {
             dex_type: step.dex,
@@ -280,10 +244,11 @@ impl ArbitrageTransactionHandler {
             input_amount: step.input_amount,
             pool_address: step.pool_address,
             slippage_tolerance_bps,
+            user_wallet: payer.pubkey(),
         };
 
         // Polymorphic call - works for ANY DEX through PoolState trait!
-        step.pool_state.build_swap_instruction(&params).await
+        step.pool_state.build_swap_instruction(&params, amm_config_fetcher).await
     }
 
     /// Execute a complete swap route atomically (works for all DEX types)
@@ -291,6 +256,7 @@ impl ArbitrageTransactionHandler {
         swap_route: &SwapRoute,
         payer: &Keypair,
         rpc_client: &RpcClient,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> Result<OnChainSwapResult, String> {
         log::info!(
             "🔄 Executing swap route with {} paths",
@@ -304,7 +270,7 @@ impl ArbitrageTransactionHandler {
         for path in &swap_route.paths {
             for step in &path.steps {
                 let (instructions, expected_output) =
-                    Self::build_step_instructions(step, swap_route.slippage_bps).await?;
+                    Self::build_step_instructions(step, swap_route.slippage_bps, payer, amm_config_fetcher.clone()).await?;
 
                 all_instructions.extend(instructions);
                 total_expected_output += expected_output;

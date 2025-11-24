@@ -67,6 +67,7 @@ spl-token-2022 = { workspace = true}
 
 solana-commitment-config = { workspace = true}
 solana-compute-budget = { workspace = true}
+solana-compute-budget-interface = { workspace = true }
 yellowstone-grpc-proto = { workspace = true}
 
 axum = { workspace = true}
@@ -98,6 +99,9 @@ orca_whirlpools_client = { workspace = true}
 orca_whirlpools = { workspace = true}
 # raydium_clmm_client = { workspace = true}
 arrayref = { version = "0.3.6" }
+spl-memo = "6.0.0"
+dashmap.workspace = true
+once_cell = "1.21.3"
 
 [features]
 default = ["bincode", "serde"]

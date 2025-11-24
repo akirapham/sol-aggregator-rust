@@ -7,7 +7,7 @@ use crate::{
 };
 use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
-use solana_client::nonblocking::rpc_client::RpcClient;
+
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +27,8 @@ pub struct RaydiumCpmmPoolState {
     pub last_updated: u64,
     pub liquidity_usd: f64,
     pub is_state_keys_initialized: bool,
+    pub is_token0_2022: bool, // Whether token0 uses Token-2022 program
+    pub is_token1_2022: bool, // Whether token1 uses Token-2022 program
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]

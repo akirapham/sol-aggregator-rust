@@ -244,8 +244,8 @@ impl ArbitrageMonitor {
                         profit
                     );
 
-                    // // Execute the transaction (await directly, no spawn needed)
-                    // self.execute_opportunity(opportunity, forward_route, reverse_route).await;
+                    // Execute the transaction (await directly, no spawn needed)
+                    self.execute_opportunity(opportunity, forward_route, reverse_route).await;
                 }
             }
             None => {

@@ -369,6 +369,9 @@ pub fn update_pool_state_by_event(
                 state.real_token_reserves = pumpfun_pool_update.real_token_reserves;
                 state.slot = pumpfun_pool_update.slot;
                 state.transaction_index = pumpfun_pool_update.transaction_index;
+                state.creator = pumpfun_pool_update.creator;
+                state.is_mayhem_mode = pumpfun_pool_update.is_mayhem_mode;
+
             }
         }
         PoolUpdateEvent::Raydium(raydium_pool_update) => {

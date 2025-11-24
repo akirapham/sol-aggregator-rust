@@ -297,13 +297,32 @@ impl ArbitrageTransactionHandler {
             &[payer],
             blockhash,
         );
-
-        let signature = rpc_client
-            .send_and_confirm_transaction(&transaction)
-            .await
-            .map_err(|e| format!("Transaction failed: {}", e))?;
-
-        log::info!("✅ Transaction confirmed: {}", signature);
+        
+        let sim_result = rpc_client.simulate_transaction(&transaction).await
+            .map_err(|e| format!("Simulation failed: {}", e))?;
+        
+        log::info!("✅ Simulate Transaction: pre_balances {:?} post_balances {:?}", 
+            sim_result.value.pre_balances,
+            sim_result.value.post_balances
+        );
+        
+        // Check for simulation errors
+        if let Some(err) = sim_result.value.err {
+            log::error!("Simulation error: {:?}", err);
+            if let Some(logs) = sim_result.value.logs {
+                for log in logs {
+                    log::error!("  {}", log);
+                }
+            }
+            return Err(format!("Transaction simulation failed: {:?}", err));
+        }
+        
+        let signature = transaction.signatures[0];
+        // let signature = rpc_client
+        //     .send_and_confirm_transaction(&transaction)
+        //     .await
+        //     .map_err(|e| format!("Transaction failed: {}", e))?;
+        // log::info!("✅ Transaction confirmed: {}", signature);
 
         // Return result with all required fields
         Ok(OnChainSwapResult {

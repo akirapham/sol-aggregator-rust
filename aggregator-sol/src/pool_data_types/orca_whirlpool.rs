@@ -23,10 +23,6 @@ use spl_token_2022::extension::{BaseStateWithExtensions, StateWithExtensions};
 use spl_token_2022::state::Mint;
 use std::error::Error;
 
-
-
-
-
 // Whirlpool sqrt price limits (same as Raydium CLMM)
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;

@@ -211,7 +211,6 @@ impl PoolState {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::RadyiumClmm(state) => {
-                log::info!("2222222222222222222 RadyiumClmm");
                 let output_amount = state
                     .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
                     .await;
@@ -221,7 +220,6 @@ impl PoolState {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::OrcaWhirlpool(state) => {
-                log::info!("33333333333333333333 OrcaWhirlpool");
                 let output_amount = state
                     .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
                     .await;

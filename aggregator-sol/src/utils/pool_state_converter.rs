@@ -50,7 +50,6 @@ pub fn pool_update_event_to_pool_state(
                 virtual_token_reserves: pumpfun_pool_update.virtual_token_reserves,
                 real_sol_reserves: pumpfun_pool_update.real_sol_reserves,
                 real_token_reserves: pumpfun_pool_update.real_token_reserves,
-                token_total_supply: pumpfun_pool_update.token_total_supply,
                 creator: pumpfun_pool_update.creator,
                 is_mayhem_mode: pumpfun_pool_update.is_mayhem_mode,
                 slot: pumpfun_pool_update.slot,
@@ -371,7 +370,6 @@ pub fn update_pool_state_by_event(
                 state.transaction_index = pumpfun_pool_update.transaction_index;
                 state.creator = pumpfun_pool_update.creator;
                 state.is_mayhem_mode = pumpfun_pool_update.is_mayhem_mode;
-
             }
         }
         PoolUpdateEvent::Raydium(raydium_pool_update) => {

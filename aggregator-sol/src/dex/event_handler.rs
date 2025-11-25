@@ -126,7 +126,6 @@ pub fn handle_dex_event(
                         virtual_sol_reserves: e.virtual_sol_reserves,
                         real_token_reserves: e.real_token_reserves,
                         real_sol_reserves: e.real_sol_reserves,
-                        token_total_supply: 0,
                         creator: e.creator,
                         is_mayhem_mode: false,
                         slot: e.metadata.slot,
@@ -147,7 +146,6 @@ pub fn handle_dex_event(
                         virtual_sol_reserves: 0,
                         real_token_reserves: 0,
                         real_sol_reserves: 0,
-                        token_total_supply: 0,
                         creator: Pubkey::default(),
                         is_mayhem_mode: false,
                         slot: e.metadata.slot,
@@ -168,7 +166,6 @@ pub fn handle_dex_event(
                         virtual_sol_reserves: e.virtual_sol_reserves,
                         real_token_reserves: e.real_token_reserves,
                         real_sol_reserves: 0,
-                        token_total_supply: e.token_total_supply,
                         creator: e.creator,
                         is_mayhem_mode: false,
                         slot: e.metadata.slot,
@@ -1082,7 +1079,6 @@ pub fn handle_dex_event(
                     }));
             },
             PumpFunBondingCurveAccountEvent => |e: PumpFunBondingCurveAccountEvent| {
-                log::info!("AAAAAAAAAAAAAAA PumpFunBondingCurveAccountEvent: {e:?}");
                 pool_update_events.push(PoolUpdateEvent::Pumpfun(
                     PumpfunPoolUpdate {
                         address: e.pubkey,
@@ -1092,14 +1088,13 @@ pub fn handle_dex_event(
                         virtual_sol_reserves: e.bonding_curve.virtual_sol_reserves,
                         real_token_reserves: e.bonding_curve.real_token_reserves,
                         real_sol_reserves: e.bonding_curve.real_sol_reserves,
-                        token_total_supply: e.bonding_curve.token_total_supply,
                         creator: e.bonding_curve.creator,
                         is_mayhem_mode: e.bonding_curve.is_mayhem_mode,
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         complete: e.bonding_curve.complete,
                         is_account_state_update: true,
-                        pool_update_event_type: PoolUpdateEventType::PumpFunTrade,
+                        pool_update_event_type: PoolUpdateEventType::PumpFunBondingCurveAccount,
                         additional_event_type: 0,
                     }));
             },

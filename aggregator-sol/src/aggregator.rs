@@ -1,4 +1,3 @@
-use solana_sdk::pubkey::Pubkey;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -6,8 +5,16 @@ use std::sync::Arc;
 use crate::constants::BASE_TOKENS;
 use crate::pool_data_types::{DexType, GetAmmConfig, PoolState};
 use crate::pool_manager::PoolStateManager;
-use crate::types::{AggregatorConfig, SwapParams};
+use crate::types::{AggregatorConfig, SwapParams, ExecutionPriority};
 use crate::utils::{calculate_min_output_amount, tokens_equal};
+
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::{
+    instruction::Instruction,
+    pubkey::Pubkey,
+    transaction::Transaction,
+};
+use crate::pool_data_types::traits::BuildSwapInstruction;
 
 #[allow(unused)]
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
@@ -593,6 +600,106 @@ impl DexAggregator {
         }
     }
 
+    pub async fn build_route_transaction(
+        &self,
+        route: &SwapRoute,
+        priority: ExecutionPriority,
+        payer: Pubkey,
+        rpc_client: &RpcClient,
+    ) -> Result<Transaction, String> {
+        let mut all_instructions = Vec::new();
+
+        for path in &route.paths {
+            for step in &path.steps {
+                let instructions =
+                    self.build_step_instructions(step, route.slippage_bps, priority, payer).await?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        // Build unsigned transaction for client-side signing
+        let blockhash = rpc_client
+            .get_latest_blockhash()
+            .await
+            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
+
+        use solana_sdk::message::Message;
+        let message = Message::new_with_blockhash(
+            &all_instructions,
+            Some(&payer),
+            &blockhash,
+        );
+        let transaction = Transaction::new_unsigned(message);
+        Ok(transaction)
+    }
+
+    async fn build_arbitrade_transaction(
+        &self,
+        forward_route: &SwapRoute,
+        reverse_route: &SwapRoute,
+        priority: ExecutionPriority,
+        payer: Pubkey,
+        rpc_client: &RpcClient,
+    ) -> Result<Transaction, String> {
+        let mut all_instructions = Vec::new();
+
+        for path in &forward_route.paths {
+            for step in &path.steps {
+                let instructions =
+                    self.build_step_instructions(step, forward_route.slippage_bps, priority, payer).await?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        for path in &reverse_route.paths {
+            for step in &path.steps {
+                let instructions =
+                    self.build_step_instructions(step, reverse_route.slippage_bps, priority, payer).await?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        // Build unsigned transaction for client-side signing
+        let blockhash = rpc_client
+            .get_latest_blockhash()
+            .await
+            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
+
+        use solana_sdk::message::Message;
+        let message = Message::new_with_blockhash(
+            &all_instructions,
+            Some(&payer),
+            &blockhash,
+        );
+        let transaction = Transaction::new_unsigned(message);
+        
+        Ok(transaction)
+    }
+    
+    /// Build swap instructions for a single step using the pool state (works for all DEX types)
+    async fn build_step_instructions(
+        &self,
+        step: &SwapStepInternal,
+        slippage_bps: u16,
+        priority: ExecutionPriority,
+        payer: Pubkey,
+    ) -> Result<Vec<Instruction>, String> {
+        let self_arc: Arc<dyn GetAmmConfig> = self.pool_manager.clone();
+        let token_a = self.pool_manager.get_token(&step.input_token).await;
+        let token_b = self.pool_manager.get_token(&step.output_token).await;
+
+        let params = SwapParams {
+            input_token: token_a.unwrap(),
+            output_token: token_b.unwrap(),
+            input_amount: step.input_amount,
+            slippage_bps,
+            user_wallet: payer,
+            priority,
+        };
+
+        step.pool_state.build_swap_instruction(&params, self_arc).await
+    }
+    
     #[allow(unused)]
     /// Get configuration
     pub fn get_config(&self) -> &AggregatorConfig {

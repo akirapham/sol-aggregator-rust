@@ -14,8 +14,25 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
+
+use crate::types::SwapParams;
+use crate::pool_data_types::traits::BuildSwapInstruction;
+use async_trait::async_trait;
+use solana_program::instruction::{AccountMeta, Instruction};
+use spl_associated_token_account;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
+
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
+
+#[derive(BorshSerialize)]
+struct SwapV2Args {
+    amount: u64,
+    other_amount_threshold: u64,
+    sqrt_price_limit_x64: u128,
+    is_base_input: bool,
+}
+
 #[derive(Clone, Debug, Copy, Default)]
 #[allow(dead_code)]
 pub struct TickState {
@@ -266,23 +283,16 @@ impl RaydiumClmmPoolState {
     }
 }
 
-use crate::arbitrage_transaction_handler::InputSwapParams;
-use crate::pool_data_types::traits::BuildSwapInstruction;
-use async_trait::async_trait;
-use solana_program::instruction::{AccountMeta, Instruction};
-use spl_associated_token_account;
-use solana_compute_budget_interface::ComputeBudgetInstruction;
-
 #[async_trait]
 impl BuildSwapInstruction for RaydiumClmmPoolState {
     async fn build_swap_instruction(
         &self,
-        params: &InputSwapParams,
+        params: &SwapParams,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> std::result::Result<(Vec<Instruction>, u64), String> {
+    ) -> std::result::Result<Vec<Instruction>, String> {
         // 1. Determine direction (zero_for_one)
-        let zero_for_one = params.input_token_mint == self.token_mint0;
-        if !zero_for_one && params.input_token_mint != self.token_mint1 {
+        let zero_for_one = params.input_token.address == self.token_mint0;
+        if !zero_for_one && params.input_token.address != self.token_mint1 {
             return Err("Input token does not match pool mints".to_string());
         }
         
@@ -308,7 +318,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         let calculation_result = PoolUtils::get_output_amount_and_remain_accounts(
             &pool_info,
             &self.tick_array_state,
-            &params.input_token_mint,
+            &params.input_token.address,
             rug::Integer::from(params.input_amount),
         ).map_err(|e| e.to_string())?;
 
@@ -316,7 +326,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         let all_tick_arrays = calculation_result.remaining_accounts;
 
         // Calculate slippage
-        let slippage_factor = 10000 - params.slippage_tolerance_bps as u64;
+        let slippage_factor = 10000 - params.slippage_bps as u64;
         let other_amount_threshold = (expected_amount_out as u128 * slippage_factor as u128 / 10000) as u64;
 
         // Sqrt price limit
@@ -371,8 +381,8 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
 
         // Convert Address types to anchor_lang Pubkey for compatibility
         let user_wallet_old = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-        let input_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.input_token_mint.to_bytes());
-        let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token_mint.to_bytes());
+        let input_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
+        let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
 
         // Get user's associated token accounts
         let user_input_token_old = spl_associated_token_account::get_associated_token_address_with_program_id(
@@ -394,13 +404,6 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         // Discriminator for SwapV2
         let discriminator: [u8; 8] = [43, 4, 237, 11, 26, 201, 30, 98]; // SwapV2 discriminator
         
-        #[derive(BorshSerialize)]
-        struct SwapV2Args {
-            amount: u64,
-            other_amount_threshold: u64,
-            sqrt_price_limit_x64: u128,
-            is_base_input: bool,
-        }
         let args = SwapV2Args {
             amount: params.input_amount,
             other_amount_threshold,
@@ -437,6 +440,6 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         // Compute Budget Instruction
         let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
 
-        Ok((vec![compute_budget_instruction, swap_instruction], expected_amount_out))
+        Ok(vec![compute_budget_instruction, swap_instruction])
     }
 }

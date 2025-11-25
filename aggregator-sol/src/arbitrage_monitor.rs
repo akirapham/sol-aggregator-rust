@@ -1,6 +1,6 @@
 use crate::aggregator::{DexAggregator, SwapRoute};
 use crate::arbitrage_config::ArbitrageConfig;
-use crate::arbitrage_transaction_handler::{ArbitrageExecution, ArbitrageTransactionHandler};
+// use crate::arbitrage_transaction_handler::{ArbitrageExecution, ArbitrageTransactionHandler};
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
 use rocksdb::{Options, DB};
@@ -96,6 +96,9 @@ impl ArbitrageMonitor {
         })
     }
 
+    pub fn get_rpc_client(&self) -> Arc<RpcClient> {
+        self.rpc_client.clone()
+    }
     /// Subscribe to pool update events from the pool manager
     /// This spawns a task that listens for events and triggers arbitrage checks
     pub fn subscribe_to_pool_updates(
@@ -244,8 +247,8 @@ impl ArbitrageMonitor {
                         profit
                     );
 
-                    // Execute the transaction (await directly, no spawn needed)
-                    self.execute_opportunity(opportunity, forward_route, reverse_route).await;
+                    // // Execute the transaction (await directly, no spawn needed)
+                    // self.execute_opportunity(opportunity, forward_route, reverse_route).await;
                 }
             }
             None => {
@@ -255,122 +258,122 @@ impl ArbitrageMonitor {
         }
     }
 
-    /// Execute an arbitrage opportunity
-    async fn execute_opportunity(
-        &self,
-        mut opportunity: ArbitrageOpportunity,
-        forward_route: SwapRoute,
-        reverse_route: SwapRoute,
-    ) {
-        let opp_key = format!("{}:{}", opportunity.detected_at, opportunity.pair_name);
+    // /// Execute an arbitrage opportunity
+    // async fn execute_opportunity(
+    //     &self,
+    //     mut opportunity: ArbitrageOpportunity,
+    //     forward_route: SwapRoute,
+    //     reverse_route: SwapRoute,
+    // ) {
+    //     let opp_key = format!("{}:{}", opportunity.detected_at, opportunity.pair_name);
 
-        // Check if this opportunity is already being executed
-        {
-            let executing = self.executing_opportunities.read().await;
-            if executing.contains(&opp_key) {
-                log::warn!(
-                    "Opportunity {} is already executing, skipping duplicate execution",
-                    opp_key
-                );
-                return;
-            }
-        }
+    //     // Check if this opportunity is already being executed
+    //     {
+    //         let executing = self.executing_opportunities.read().await;
+    //         if executing.contains(&opp_key) {
+    //             log::warn!(
+    //                 "Opportunity {} is already executing, skipping duplicate execution",
+    //                 opp_key
+    //             );
+    //             return;
+    //         }
+    //     }
 
-        // Mark as executing
-        {
-            let mut executing = self.executing_opportunities.write().await;
-            executing.insert(opp_key.clone());
-        }
+    //     // Mark as executing
+    //     {
+    //         let mut executing = self.executing_opportunities.write().await;
+    //         executing.insert(opp_key.clone());
+    //     }
 
-        // Update status to Executing and save
-        opportunity.status = OpportunityStatus::Executing;
-        if let Err(e) = self.save_opportunity(&opportunity) {
-            log::error!("Failed to save opportunity with Executing status: {}", e);
-            // Remove from executing set
-            let mut executing = self.executing_opportunities.write().await;
-            executing.remove(&opp_key);
-            return;
-        }
+    //     // Update status to Executing and save
+    //     opportunity.status = OpportunityStatus::Executing;
+    //     if let Err(e) = self.save_opportunity(&opportunity) {
+    //         log::error!("Failed to save opportunity with Executing status: {}", e);
+    //         // Remove from executing set
+    //         let mut executing = self.executing_opportunities.write().await;
+    //         executing.remove(&opp_key);
+    //         return;
+    //     }
 
-        log::info!(
-            "🚀 Executing arbitrage opportunity: {} -> {}",
-            opportunity.token_a,
-            opportunity.token_b
-        );
+    //     log::info!(
+    //         "🚀 Executing arbitrage opportunity: {} -> {}",
+    //         opportunity.token_a,
+    //         opportunity.token_b
+    //     );
 
-        // Execute real arbitrage on mainnet
-        let execution_result = self
-            .execute_arbitrage(&opportunity, forward_route, reverse_route)
-            .await;
+    //     // Execute real arbitrage on mainnet
+    //     let execution_result = self
+    //         .execute_arbitrage(&opportunity, forward_route, reverse_route)
+    //         .await;
 
-        // Update status based on execution result
-        match execution_result {
-            Ok(_execution_result) => {
-                opportunity.status = OpportunityStatus::Completed;
-                log::info!("✅ Arbitrage executed successfully: {}", opp_key);
-            }
-            Err(e) => {
-                opportunity.status = OpportunityStatus::Failed;
-                opportunity.error_message = Some(e.clone());
-                log::error!("❌ Arbitrage execution failed: {} - {}", opp_key, e);
-            }
-        }
+    //     // Update status based on execution result
+    //     match execution_result {
+    //         Ok(_execution_result) => {
+    //             opportunity.status = OpportunityStatus::Completed;
+    //             log::info!("✅ Arbitrage executed successfully: {}", opp_key);
+    //         }
+    //         Err(e) => {
+    //             opportunity.status = OpportunityStatus::Failed;
+    //             opportunity.error_message = Some(e.clone());
+    //             log::error!("❌ Arbitrage execution failed: {} - {}", opp_key, e);
+    //         }
+    //     }
 
-        // Save opportunity with updated status
-        if let Err(e) = self.save_opportunity(&opportunity) {
-            log::error!("Failed to save opportunity with final status: {}", e);
-        }
+    //     // Save opportunity with updated status
+    //     if let Err(e) = self.save_opportunity(&opportunity) {
+    //         log::error!("Failed to save opportunity with final status: {}", e);
+    //     }
 
-        // Remove from executing set
-        {
-            let mut executing = self.executing_opportunities.write().await;
-            executing.remove(&opp_key);
-        }
-    }
+    //     // Remove from executing set
+    //     {
+    //         let mut executing = self.executing_opportunities.write().await;
+    //         executing.remove(&opp_key);
+    //     }
+    // }
 
-    /// Execute arbitrage transaction on mainnet
-    async fn execute_arbitrage(
-        &self,
-        opportunity: &ArbitrageOpportunity,
-        forward_route: SwapRoute,
-        reverse_route: SwapRoute,
-    ) -> Result<(String, String), String> {
-        // Get latest blockhash for transaction
-        let recent_blockhash = self
-            .rpc_client
-            .get_latest_blockhash()
-            .await
-            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
+    // /// Execute arbitrage transaction on mainnet
+    // async fn execute_arbitrage(
+    //     &self,
+    //     opportunity: &ArbitrageOpportunity,
+    //     forward_route: SwapRoute,
+    //     reverse_route: SwapRoute,
+    // ) -> Result<(String, String), String> {
+    //     // Get latest blockhash for transaction
+    //     let recent_blockhash = self
+    //         .rpc_client
+    //         .get_latest_blockhash()
+    //         .await
+    //         .map_err(|e| format!("Failed to get blockhash: {}", e))?;
 
-        log::debug!("Latest blockhash: {}", recent_blockhash);
+    //     log::debug!("Latest blockhash: {}", recent_blockhash);
 
-        let arbitrage_execution = ArbitrageExecution {
-            forward_route: forward_route,
-            reverse_route: reverse_route,
-            pair_name: opportunity.pair_name.clone(),
-            slippage_tolerance_bps: self.config.settings.slippage_bps,
-            token_a: Pubkey::from_str(&opportunity.token_a)
-                .map_err(|e| format!("Invalid token A pubkey: {}", e))?,
-            token_b: Pubkey::from_str(&opportunity.token_b)
-                .map_err(|e| format!("Invalid token B pubkey: {}", e))?,
-            input_amount: opportunity.input_amount,
-            detected_at: opportunity.detected_at,
-        };
+    //     let arbitrage_execution = ArbitrageExecution {
+    //         forward_route: forward_route,
+    //         reverse_route: reverse_route,
+    //         pair_name: opportunity.pair_name.clone(),
+    //         slippage_tolerance_bps: self.config.settings.slippage_bps,
+    //         token_a: Pubkey::from_str(&opportunity.token_a)
+    //             .map_err(|e| format!("Invalid token A pubkey: {}", e))?,
+    //         token_b: Pubkey::from_str(&opportunity.token_b)
+    //             .map_err(|e| format!("Invalid token B pubkey: {}", e))?,
+    //         input_amount: opportunity.input_amount,
+    //         detected_at: opportunity.detected_at,
+    //     };
 
-        let execution_result = ArbitrageTransactionHandler::execute_arbitrade_transaction(
-            &arbitrage_execution,
-            &self.keypair,
-            &self.rpc_client,
-            self.aggregator.get_pool_manager().clone(),
-        )
-        .await
-        .map_err(|e| format!("Arbitrage execution failed: {}", e))?;
+    //     let execution_result = ArbitrageTransactionHandler::execute_arbitrade_transaction(
+    //         &arbitrage_execution,
+    //         &self.keypair,
+    //         &self.rpc_client,
+    //         self.aggregator.get_pool_manager().clone(),
+    //     )
+    //     .await
+    //     .map_err(|e| format!("Arbitrage execution failed: {}", e))?;
 
-        Ok((
-            execution_result.forward_tx_signature.unwrap_or_default(),
-            execution_result.reverse_tx_signature.unwrap_or_default(),
-        ))
-    }
+    //     Ok((
+    //         execution_result.forward_tx_signature.unwrap_or_default(),
+    //         execution_result.reverse_tx_signature.unwrap_or_default(),
+    //     ))
+    // }
 
     /// Save an opportunity to RocksDB
     fn save_opportunity(&self, opportunity: &ArbitrageOpportunity) -> Result<(), String> {

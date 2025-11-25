@@ -137,6 +137,21 @@ pub async fn get_quote(
             });
 
             let time_taken_ms = start_time.elapsed().as_millis() as u64;
+            let transaction = state.aggregator.build_route_transaction(
+                &best_route, 
+                ExecutionPriority::Medium, 
+                user_wallet, 
+                state.arbitrage_monitor.as_ref().unwrap().get_rpc_client().as_ref()
+            ).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to build transaction".to_string(),
+                        details: vec![e],
+                    }),
+                )
+            })?;
+            
             let response = QuoteResponse {
                 routes: swap_routes,
                 input_amount: best_route.input_amount,
@@ -144,6 +159,7 @@ pub async fn get_quote(
                 other_output_amount: best_route.other_output_amount,
                 time_taken_ms,
                 context_slot: best_route.context_slot,
+                transaction,
             };
             Ok(Json(response))
         }

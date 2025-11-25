@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    arbitrage_transaction_handler::InputSwapParams,
     constants::wsol,
     pool_data_types::{
         BonkPoolState, BuildSwapInstruction, DbcPoolState, DexType, GetAmmConfig,
@@ -13,6 +12,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
+use crate::types::SwapParams;
 
 /// Macro to delegate simple field access across all PoolState variants
 /// Usage: pool_state_delegate!(self, field_name)
@@ -266,9 +266,9 @@ impl PoolState {
 impl BuildSwapInstruction for PoolState {
     async fn build_swap_instruction(
         &self,
-        params: &InputSwapParams,
+        params: &SwapParams,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> std::result::Result<(Vec<Instruction>, u64), String> {
+    ) -> std::result::Result<Vec<Instruction>, String> {
         match self {
             PoolState::Pumpfun(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::PumpSwap(_state) => {

@@ -10,6 +10,8 @@ use crate::{
     aggregator::DexAggregator,
     types::{SwapStep, Token},
 };
+use solana_sdk::transaction::Transaction;
+
 #[derive(Serialize)] // Required for Json response
 pub struct PoolInfoResponse {
     pub address: String,
@@ -72,6 +74,7 @@ pub struct QuoteResponse {
     pub other_output_amount: u64,
     pub time_taken_ms: u64,
     pub context_slot: u64,
+    pub transaction: Transaction,
 }
 
 #[derive(Deserialize, Serialize, Validate)]

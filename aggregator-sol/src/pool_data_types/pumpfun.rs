@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::arbitrage_transaction_handler::InputSwapParams;
+use crate::types::SwapParams;
 use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::{
     pool_data_types::{GetAmmConfig, PoolUpdateEventType, pumpf::{constants, functions::*}, common},
@@ -109,16 +109,13 @@ impl PumpfunPoolState {
 #[async_trait]
 impl BuildSwapInstruction for PumpfunPoolState {
     /// Build PumpFun swap instruction
-    /// Returns (instructions, other_amount_threshold) where:
-    /// - For BUY: other_amount_threshold is the minimum tokens expected (output)
-    /// - For SELL: other_amount_threshold is the minimum SOL expected (output)
     async fn build_swap_instruction(
         &self,
-        params: &InputSwapParams,
+        params: &SwapParams,
         _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<(Vec<Instruction>, u64), String> {
+    ) -> Result<Vec<Instruction>, String> {
         // Determine if this is a buy (SOL -> Token) or sell (Token -> SOL)
-        let is_buy = tokens_equal(&params.input_token_mint, &get_sol_mint());
+        let is_buy = tokens_equal(&params.input_token.address, &get_sol_mint());
         
         // Convert creator Address to old Pubkey type
         let creator_old = anchor_lang::prelude::Pubkey::new_from_array(self.creator.to_bytes());
@@ -157,14 +154,10 @@ impl BuildSwapInstruction for PumpfunPoolState {
             );
             // Calculate max SOL cost with slippage
             let max_sol_cost = params.input_amount
-                + (params.input_amount * params.slippage_tolerance_bps as u64) / 10000;
-
-            // Calculate minimum token output with slippage
-            let min_token_output = buy_token_amount
-                - (buy_token_amount * params.slippage_tolerance_bps as u64) / 10000;
+                + (params.input_amount * params.slippage_bps as u64) / 10000;
 
             let bonding_curve_addr = if self.address == Pubkey::default() {
-                get_bonding_curve_pda(&params.output_token_mint)
+                get_bonding_curve_pda(&params.output_token.address)
                     .ok_or(format!("Failed to get bonding curve PDA"))?
             } else {
                 self.address
@@ -172,7 +165,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             
             // Convert Address types to anchor_lang Pubkey for compatibility
             let user_wallet_old = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-            let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token_mint.to_bytes());
+            let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
             let bonding_curve_old = anchor_lang::prelude::Pubkey::new_from_array(bonding_curve_addr.to_bytes());
             let token_program_old = anchor_lang::prelude::Pubkey::new_from_array(token_program.to_bytes());
             
@@ -199,7 +192,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 AccountMeta::new(params.user_wallet, true), // funding
                 AccountMeta::new(user_token_account, false), // associated_token
                 AccountMeta::new_readonly(params.user_wallet, false), // wallet
-                AccountMeta::new_readonly(params.output_token_mint, false), // mint
+                AccountMeta::new_readonly(params.output_token.address, false), // mint
                 constants::SYSTEM_PROGRAM_META, // system_program
                 token_program_meta.clone(), // token_program
             ];
@@ -224,7 +217,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             let buy_accounts: Vec<AccountMeta> = vec![
                 constants::GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,
-                AccountMeta::new_readonly(params.output_token_mint, false),
+                AccountMeta::new_readonly(params.output_token.address, false),
                 AccountMeta::new(bonding_curve_addr, false),
                 AccountMeta::new(associated_bonding_curve, false),
                 AccountMeta::new(user_token_account, false),
@@ -241,7 +234,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             ];
 
             instructions.push(Instruction::new_with_bytes(Self::get_program_id(), &buy_data, buy_accounts));
-            Ok((instructions, min_token_output))
+            Ok(instructions)
         } else {    
             // ========================================
             // SELL: Token -> SOL
@@ -254,14 +247,14 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 params.input_amount,
             );
             // Calculate minimum SOL output with slippage
-            let min_sol_output = if sol_amount <= params.slippage_tolerance_bps as u64 {    
+            let min_sol_output = if sol_amount <= params.slippage_bps as u64 {    
                 1
             } else {
-                sol_amount - (sol_amount * params.slippage_tolerance_bps as u64) / 10000
+                sol_amount - (sol_amount * params.slippage_bps as u64) / 10000
             };
             // Get bonding curve PDA
             let bonding_curve_addr = if self.address == Pubkey::default() {
-                get_bonding_curve_pda(&params.input_token_mint)
+                get_bonding_curve_pda(&params.input_token.address)
                     .ok_or(format!("Failed to get bonding curve PDA"))?
             } else {
                 self.address
@@ -269,7 +262,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             
             // Convert Address types to anchor_lang Pubkey for compatibility
             let user_wallet_old = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-            let input_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.input_token_mint.to_bytes());
+            let input_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
             let bonding_curve_old = anchor_lang::prelude::Pubkey::new_from_array(bonding_curve_addr.to_bytes());
             let token_program_old = anchor_lang::prelude::Pubkey::new_from_array(token_program.to_bytes());
             
@@ -299,7 +292,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 AccountMeta::new(params.user_wallet, true), // funding
                 AccountMeta::new(user_token_account, false), // associated_token
                 AccountMeta::new_readonly(params.user_wallet, false), // wallet
-                AccountMeta::new_readonly(params.input_token_mint, false), // mint
+                AccountMeta::new_readonly(params.input_token.address, false), // mint
                 constants::SYSTEM_PROGRAM_META, // system_program
                 token_program_meta.clone(), // token_program
             ];
@@ -320,7 +313,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             let sell_accounts: Vec<AccountMeta> = vec![
                 constants::GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,
-                AccountMeta::new_readonly(params.input_token_mint, false),
+                AccountMeta::new_readonly(params.input_token.address, false),
                 AccountMeta::new(bonding_curve_addr, false),
                 AccountMeta::new(associated_bonding_curve, false),
                 AccountMeta::new(user_token_account, false),
@@ -335,7 +328,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             ];
 
             instructions.push(Instruction::new_with_bytes(Self::get_program_id(), &sell_data, sell_accounts));
-            Ok((instructions, min_sol_output))
+            Ok(instructions)
         }
     }
 }

@@ -103,7 +103,7 @@ pub fn get_sell_sol_amount_from_token_amount(
 
     // Calculate transaction fee
     let fee = compute_fee(sol_cost, total_fee_basis_points_128);
-
+    
     sol_cost.saturating_sub(fee) as u64
 }
 

@@ -73,6 +73,7 @@ solana-streamer-sdk = { path = "./crates/solana-streamer" }
 
 solana-commitment-config = "3.0.0"
 solana-compute-budget = "3.0.0"
+solana-compute-budget-interface = "3.0.0"
 yellowstone-grpc-proto = {  version = "9.0.0" }
 
 axum = "0.7"

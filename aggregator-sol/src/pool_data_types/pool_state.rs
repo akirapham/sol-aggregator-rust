@@ -195,7 +195,6 @@ impl PoolState {
     ) -> u64 {
         match self {
             PoolState::Pumpfun(state) => {
-                log::info!("11111111111111111111 Pumpfun");
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::PumpSwap(state) => {

@@ -122,6 +122,7 @@ pub struct ArbitrageResponse {
     pub reverse_output: u64,
     pub time_taken_ms: u64,
     pub context_slot: u64,
+    pub transaction: String,
 }
 
 #[derive(Serialize)]

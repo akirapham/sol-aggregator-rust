@@ -593,8 +593,6 @@ impl DexAggregator {
             Some((profit, forward_route, reverse_route))
         } else {
             None
-            // let profit = token_a.input_amount - final_token_a_amount;
-            // Some((profit, forward_route, reverse_route))
         }
     }
 
@@ -630,7 +628,7 @@ impl DexAggregator {
         Ok(transaction)
     }
 
-    async fn build_arbitrade_transaction(
+    pub async fn build_arbitrage_transaction(
         &self,
         forward_route: &SwapRoute,
         reverse_route: &SwapRoute,

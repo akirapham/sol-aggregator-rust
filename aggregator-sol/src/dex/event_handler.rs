@@ -195,6 +195,12 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapBuy,
                         additional_event_type: 0,
+                        coin_creator_vault_ata: e.coin_creator_vault_ata,
+                        coin_creator_vault_authority: e.coin_creator_vault_authority,
+                        base_token_program: e.base_token_program,
+                        quote_token_program: e.quote_token_program,
+                        coin_creator: e.coin_creator,
+                        protocol_fee_recipient: e.protocol_fee_recipient,
                     }));
             },
             PumpSwapSellEvent => |e: PumpSwapSellEvent| {
@@ -215,6 +221,12 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapSell,
                         additional_event_type: 0,
+                        coin_creator_vault_ata: e.coin_creator_vault_ata,
+                        coin_creator_vault_authority: e.coin_creator_vault_authority,
+                        base_token_program: e.base_token_program,
+                        quote_token_program: e.quote_token_program,
+                        coin_creator: e.coin_creator,
+                        protocol_fee_recipient: e.protocol_fee_recipient,
                     }));
             },
             PumpSwapCreatePoolEvent => |e: PumpSwapCreatePoolEvent| {
@@ -235,6 +247,12 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapCreatePool,
                         additional_event_type: 0,
+                        coin_creator_vault_ata: e.coin_creator_vault_ata,
+                        coin_creator_vault_authority: e.coin_creator_vault_authority,
+                        base_token_program: e.base_token_program,
+                        quote_token_program: e.quote_token_program,
+                        coin_creator: e.coin_creator,
+                        protocol_fee_recipient: e.protocol_fee_recipient,
                     }));
             },
             PumpSwapDepositEvent => |e: PumpSwapDepositEvent| {

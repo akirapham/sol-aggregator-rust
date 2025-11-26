@@ -160,95 +160,40 @@ pub enum PdaCacheKey {
     PumpSwapUserVolume(Pubkey),
 }
 
-pub mod seeds {
-    /// Seed for bonding curve PDAs
-    pub const BONDING_CURVE_SEED: &[u8] = b"bonding-curve";
-
-    /// Seed for creator vault PDAs
-    pub const CREATOR_VAULT_SEED: &[u8] = b"creator-vault";
-
-    /// Seed for metadata PDAs
-    pub const METADATA_SEED: &[u8] = b"metadata";
-
-    /// Seed for user volume accumulator PDAs
-    pub const USER_VOLUME_ACCUMULATOR_SEED: &[u8] = b"user_volume_accumulator";
-
-    /// Seed for global volume accumulator PDAs
-    pub const GLOBAL_VOLUME_ACCUMULATOR_SEED: &[u8] = b"global_volume_accumulator";
-
-    pub const FEE_CONFIG_SEED: &[u8] = b"fee_config";
-}
-
-pub mod accounts {
-    use solana_sdk::{pubkey, pubkey::Pubkey};
-
-    /// Public key for the Pump.fun program
-    pub const PUMPFUN: Pubkey = pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
-
-    /// Public key for the MPL Token Metadata program
-    pub const MPL_TOKEN_METADATA: Pubkey = pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
-
-    /// Authority for program events
-    pub const EVENT_AUTHORITY: Pubkey = pubkey!("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1");
-
-    /// Associated Token Program ID
-    pub const ASSOCIATED_TOKEN_PROGRAM: Pubkey =
-        pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-
-    pub const AMM_PROGRAM: Pubkey = pubkey!("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
-
-    pub const FEE_PROGRAM: Pubkey = pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
-
-    pub const GLOBAL_VOLUME_ACCUMULATOR: Pubkey =
-        pubkey!("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y");
-
-    pub const FEE_CONFIG: Pubkey = pubkey!("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
-
-    // META
-    pub const PUMPFUN_META: solana_sdk::instruction::AccountMeta =
-        solana_sdk::instruction::AccountMeta {
-            pubkey: PUMPFUN,
-            is_signer: false,
-            is_writable: false,
-        };
-
-    pub const EVENT_AUTHORITY_META: solana_sdk::instruction::AccountMeta =
-        solana_sdk::instruction::AccountMeta {
-            pubkey: EVENT_AUTHORITY,
-            is_signer: false,
-            is_writable: false,
-        };
-
-    pub const FEE_PROGRAM_META: solana_sdk::instruction::AccountMeta =
-        solana_sdk::instruction::AccountMeta {
-            pubkey: FEE_PROGRAM,
-            is_signer: false,
-            is_writable: false,
-        };
-
-    pub const GLOBAL_VOLUME_ACCUMULATOR_META: solana_sdk::instruction::AccountMeta =
-        solana_sdk::instruction::AccountMeta {
-            pubkey: GLOBAL_VOLUME_ACCUMULATOR,
-            is_signer: false,
-            is_writable: true,
-        };
-
-    pub const FEE_CONFIG_META: solana_sdk::instruction::AccountMeta =
-        solana_sdk::instruction::AccountMeta {
-            pubkey: FEE_CONFIG,
-            is_signer: false,
-            is_writable: false,
-        };
-}
-
 pub fn get_user_volume_accumulator_pda(user: &Pubkey) -> Option<Pubkey> {
     get_cached_pda(
-        PdaCacheKey::PumpFunUserVolume(*user),
+        PdaCacheKey::PumpSwapUserVolume(*user),
         || {
-            let seeds: &[&[u8]; 2] = &[seeds::USER_VOLUME_ACCUMULATOR_SEED, user.as_ref()];
-            let program_id: &Pubkey = &accounts::PUMPFUN;
+            let seeds: &[&[u8]; 2] = &[&seeds::USER_VOLUME_ACCUMULATOR_SEED, user.as_ref()];
+            let program_id: &Pubkey = &&accounts::AMM_PROGRAM;
             let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
             pda.map(|pubkey| pubkey.0)
         },
     )
+}
+
+pub mod accounts {
+use solana_sdk::pubkey;
+use solana_sdk::pubkey::Pubkey;
+    pub const PUMPFUN: Pubkey = pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+    pub const AMM_PROGRAM: Pubkey = pubkey!("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA");
+}
+
+/// Constants used as seeds for deriving PDAs (Program Derived Addresses)
+pub mod seeds {
+    /// Seed for the global state PDA
+    pub const GLOBAL_SEED: &[u8] = b"global";
+
+    /// Seed for the mint authority PDA
+    pub const MINT_AUTHORITY_SEED: &[u8] = b"mint-authority";
+
+    /// Seed for bonding curve PDAs
+    pub const BONDING_CURVE_SEED: &[u8] = b"bonding-curve";
+
+    /// Seed for metadata PDAs
+    pub const METADATA_SEED: &[u8] = b"metadata";
+
+    pub const USER_VOLUME_ACCUMULATOR_SEED: &[u8] = b"user_volume_accumulator";
+    pub const GLOBAL_VOLUME_ACCUMULATOR_SEED: &[u8] = b"global_volume_accumulator";
+    pub const FEE_CONFIG_SEED: &[u8] = b"fee_config";
 }

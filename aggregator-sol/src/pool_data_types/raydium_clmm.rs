@@ -413,7 +413,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         let mut data = Vec::with_capacity(8 + 32);
         data.extend_from_slice(&discriminator);
         args.serialize(&mut data).map_err(|e| e.to_string())?;
-        // SwapV2 accounts
+
         let mut accounts = vec![
             AccountMeta::new(params.user_wallet, true), // payer
             AccountMeta::new_readonly(self.amm_config, false), // amm_config
@@ -440,6 +440,54 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         // Compute Budget Instruction
         let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
 
-        Ok(vec![compute_budget_instruction, swap_instruction])
+        let mut instructions = vec![compute_budget_instruction];
+
+        // Create input token ATA instruction (idempotent - creates if doesn't exist)
+        let create_input_ata_accounts = vec![
+            AccountMeta::new(params.user_wallet, true), // funding
+            AccountMeta::new(user_input_token, false), // associated_token
+            AccountMeta::new_readonly(params.user_wallet, false), // wallet
+            AccountMeta::new_readonly(input_mint, false), // mint
+            common::constants::SYSTEM_PROGRAM_META, // system_program
+            if self.is_token_mint0_2022 && zero_for_one || self.is_token_mint1_2022 && !zero_for_one {
+                common::constants::TOKEN_PROGRAM_2022_META
+            } else {
+                common::constants::TOKEN_PROGRAM_META
+            }, // token_program
+        ];
+        
+        let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(spl_associated_token_account::id().to_bytes());
+        let create_input_ata_ix = Instruction {
+            program_id: spl_associated_token_account_program_id,
+            accounts: create_input_ata_accounts,
+            data: vec![1], // Idempotent instruction discriminator
+        };
+        instructions.push(create_input_ata_ix);
+
+        // Create output token ATA instruction (idempotent - creates if doesn't exist)
+        let create_output_ata_accounts = vec![
+            AccountMeta::new(params.user_wallet, true), // funding
+            AccountMeta::new(user_output_token, false), // associated_token
+            AccountMeta::new_readonly(params.user_wallet, false), // wallet
+            AccountMeta::new_readonly(output_mint, false), // mint
+            common::constants::SYSTEM_PROGRAM_META, // system_program
+            if self.is_token_mint1_2022 && zero_for_one || self.is_token_mint0_2022 && !zero_for_one {
+                common::constants::TOKEN_PROGRAM_2022_META
+            } else {
+                common::constants::TOKEN_PROGRAM_META
+            }, // token_program
+        ];
+        
+        let create_output_ata_ix = Instruction {
+            program_id: spl_associated_token_account_program_id,
+            accounts: create_output_ata_accounts,
+            data: vec![1], // Idempotent instruction discriminator
+        };
+        instructions.push(create_output_ata_ix);
+
+        // Add swap instruction
+        instructions.push(swap_instruction);
+
+        Ok(instructions)
     }
 }

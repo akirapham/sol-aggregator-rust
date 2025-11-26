@@ -21,3 +21,11 @@ pub const SPL_MEMO_PROGRAM_META: solana_sdk::instruction::AccountMeta =
         is_signer: false,
         is_writable: false,
     };
+
+pub const SYSTEM_PROGRAM: Pubkey = pubkey!("11111111111111111111111111111111");
+pub const SYSTEM_PROGRAM_META: solana_sdk::instruction::AccountMeta =
+    solana_sdk::instruction::AccountMeta {
+        pubkey: SYSTEM_PROGRAM,
+        is_signer: false,
+        is_writable: false,
+    };

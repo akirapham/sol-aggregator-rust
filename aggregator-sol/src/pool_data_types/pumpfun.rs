@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
-use crate::types::SwapParams;
 use crate::pool_data_types::traits::BuildSwapInstruction;
+use crate::types::SwapParams;
 use crate::{
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType, pumpf::{constants, functions::*}, common},
+    pool_data_types::{
+        common,
+        pumpf::{constants, functions::*},
+        GetAmmConfig, PoolUpdateEventType,
+    },
     utils::{get_sol_mint, tokens_equal},
 };
 use async_trait::async_trait;
@@ -29,8 +33,6 @@ pub struct PumpfunPoolState {
     pub complete: bool,
     pub creator: Pubkey,
     pub is_mayhem_mode: bool,
-    pub is_base_token_2022: bool, // Whether token_mint0 uses Token-2022 program
-    pub is_quote_token_2022: bool, // Whether token_mint1 uses Token-2022 program
 }
 
 #[derive(Debug, Clone)]
@@ -99,8 +101,9 @@ impl PumpfunPoolState {
         }
 
         let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
-        let token_price =
-            (self.real_sol_reserves as f64 / self.real_token_reserves as f64) * decimal_scale * sol_price;
+        let token_price = (self.real_sol_reserves as f64 / self.real_token_reserves as f64)
+            * decimal_scale
+            * sol_price;
 
         (token_price, sol_price)
     }
@@ -116,14 +119,11 @@ impl BuildSwapInstruction for PumpfunPoolState {
     ) -> Result<Vec<Instruction>, String> {
         // Determine if this is a buy (SOL -> Token) or sell (Token -> SOL)
         let is_buy = tokens_equal(&params.input_token.address, &get_sol_mint());
-        
-        // Convert creator Address to old Pubkey type
-        let creator_old = anchor_lang::prelude::Pubkey::new_from_array(self.creator.to_bytes());
-        let creator_vault_pda_old = sol_trade_sdk::instruction::utils::pumpfun::get_creator_vault_pda(&creator_old)
-            .ok_or("Failed to derive creator vault")?;
-        
-        // Convert back to Address
-        let creator_vault_pda = Pubkey::new_from_array(creator_vault_pda_old.to_bytes());
+
+        let creator_vault_pda =
+            sol_trade_sdk::instruction::utils::pumpfun::get_creator_vault_pda(&self.creator)
+                .ok_or("Failed to derive creator vault")?;
+
         let is_mayhem_mode = self.is_mayhem_mode;
         let token_program = if is_mayhem_mode {
             common::constants::TOKEN_PROGRAM_2022
@@ -153,8 +153,8 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 params.input_amount,
             );
             // Calculate max SOL cost with slippage
-            let max_sol_cost = params.input_amount
-                + (params.input_amount * params.slippage_bps as u64) / 10000;
+            let max_sol_cost =
+                params.input_amount + (params.input_amount * params.slippage_bps as u64) / 10000;
 
             let bonding_curve_addr = if self.address == Pubkey::default() {
                 get_bonding_curve_pda(&params.output_token.address)
@@ -162,42 +162,54 @@ impl BuildSwapInstruction for PumpfunPoolState {
             } else {
                 self.address
             };
-            
+
             // Convert Address types to anchor_lang Pubkey for compatibility
-            let user_wallet_old = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-            let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
-            let bonding_curve_old = anchor_lang::prelude::Pubkey::new_from_array(bonding_curve_addr.to_bytes());
-            let token_program_old = anchor_lang::prelude::Pubkey::new_from_array(token_program.to_bytes());
-            
+            let user_wallet_old =
+                anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
+            let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(
+                params.output_token.address.to_bytes(),
+            );
+            let bonding_curve_old =
+                anchor_lang::prelude::Pubkey::new_from_array(bonding_curve_addr.to_bytes());
+            let token_program_old =
+                anchor_lang::prelude::Pubkey::new_from_array(token_program.to_bytes());
+
             // Get associated token accounts
-            let associated_bonding_curve_old = spl_associated_token_account::get_associated_token_address_with_program_id(
-                &bonding_curve_old,
-                &output_mint_old,
-                &token_program_old,
-            );
-            let user_token_account_old = spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &output_mint_old,
-                &token_program_old,
-            );
-            
+            let associated_bonding_curve_old =
+                spl_associated_token_account::get_associated_token_address_with_program_id(
+                    &bonding_curve_old,
+                    &output_mint_old,
+                    &token_program_old,
+                );
+            let user_token_account_old =
+                spl_associated_token_account::get_associated_token_address_with_program_id(
+                    &user_wallet_old,
+                    &output_mint_old,
+                    &token_program_old,
+                );
+
             // Convert back to Address for AccountMeta
-            let associated_bonding_curve = solana_sdk::pubkey::Pubkey::new_from_array(associated_bonding_curve_old.to_bytes());
-            let user_token_account = solana_sdk::pubkey::Pubkey::new_from_array(user_token_account_old.to_bytes());
-            
+            let associated_bonding_curve =
+                solana_sdk::pubkey::Pubkey::new_from_array(associated_bonding_curve_old.to_bytes());
+            let user_token_account =
+                solana_sdk::pubkey::Pubkey::new_from_array(user_token_account_old.to_bytes());
+
             let mut instructions = Vec::with_capacity(2);
 
             // Manually build create ATA instruction to match Instruction types
             let create_ata_accounts = vec![
-                AccountMeta::new(params.user_wallet, true), // funding
+                AccountMeta::new(params.user_wallet, true),  // funding
                 AccountMeta::new(user_token_account, false), // associated_token
                 AccountMeta::new_readonly(params.user_wallet, false), // wallet
                 AccountMeta::new_readonly(params.output_token.address, false), // mint
-                constants::SYSTEM_PROGRAM_META, // system_program
-                token_program_meta.clone(), // token_program
+                common::constants::SYSTEM_PROGRAM_META,      // system_program
+                token_program_meta.clone(),                  // token_program
             ];
-            
-            let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(spl_associated_token_account::id().to_bytes());
+
+            let spl_associated_token_account_program_id =
+                solana_sdk::pubkey::Pubkey::new_from_array(
+                    spl_associated_token_account::id().to_bytes(),
+                );
             let create_ata_ix = Instruction {
                 program_id: spl_associated_token_account_program_id,
                 accounts: create_ata_accounts,
@@ -222,7 +234,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 AccountMeta::new(associated_bonding_curve, false),
                 AccountMeta::new(user_token_account, false),
                 AccountMeta::new(params.user_wallet, true),
-                constants::SYSTEM_PROGRAM_META,
+                common::constants::SYSTEM_PROGRAM_META,
                 token_program_meta,
                 AccountMeta::new(creator_vault_pda, false),
                 constants::EVENT_AUTHORITY_META,
@@ -233,9 +245,13 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 constants::FEE_PROGRAM_META,
             ];
 
-            instructions.push(Instruction::new_with_bytes(Self::get_program_id(), &buy_data, buy_accounts));
+            instructions.push(Instruction::new_with_bytes(
+                Self::get_program_id(),
+                &buy_data,
+                buy_accounts,
+            ));
             Ok(instructions)
-        } else {    
+        } else {
             // ========================================
             // SELL: Token -> SOL
             // ========================================
@@ -247,7 +263,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 params.input_amount,
             );
             // Calculate minimum SOL output with slippage
-            let min_sol_output = if sol_amount <= params.slippage_bps as u64 {    
+            let min_sol_output = if sol_amount <= params.slippage_bps as u64 {
                 1
             } else {
                 sol_amount - (sol_amount * params.slippage_bps as u64) / 10000
@@ -259,45 +275,56 @@ impl BuildSwapInstruction for PumpfunPoolState {
             } else {
                 self.address
             };
-            
+
             // Convert Address types to anchor_lang Pubkey for compatibility
-            let user_wallet_old = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-            let input_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
-            let bonding_curve_old = anchor_lang::prelude::Pubkey::new_from_array(bonding_curve_addr.to_bytes());
-            let token_program_old = anchor_lang::prelude::Pubkey::new_from_array(token_program.to_bytes());
-            
+            let user_wallet_old =
+                anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
+            let input_mint_old =
+                anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
+            let bonding_curve_old =
+                anchor_lang::prelude::Pubkey::new_from_array(bonding_curve_addr.to_bytes());
+            let token_program_old =
+                anchor_lang::prelude::Pubkey::new_from_array(token_program.to_bytes());
+
             // Get associated token accounts
-            let associated_bonding_curve_old = spl_associated_token_account::get_associated_token_address_with_program_id(
-                &bonding_curve_old,
-                &input_mint_old,
-                &token_program_old,
-            );
-            let user_token_account_old = spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &input_mint_old,
-                &token_program_old,
-            );
-            
+            let associated_bonding_curve_old =
+                spl_associated_token_account::get_associated_token_address_with_program_id(
+                    &bonding_curve_old,
+                    &input_mint_old,
+                    &token_program_old,
+                );
+            let user_token_account_old =
+                spl_associated_token_account::get_associated_token_address_with_program_id(
+                    &user_wallet_old,
+                    &input_mint_old,
+                    &token_program_old,
+                );
+
             // Convert back to Address for AccountMeta
-            let associated_bonding_curve = solana_sdk::pubkey::Pubkey::new_from_array(associated_bonding_curve_old.to_bytes());
-            let user_token_account = solana_sdk::pubkey::Pubkey::new_from_array(user_token_account_old.to_bytes());
-            
+            let associated_bonding_curve =
+                solana_sdk::pubkey::Pubkey::new_from_array(associated_bonding_curve_old.to_bytes());
+            let user_token_account =
+                solana_sdk::pubkey::Pubkey::new_from_array(user_token_account_old.to_bytes());
+
             // ========================================
             // Build instructions
-            // ======================================== 
+            // ========================================
             let mut instructions = Vec::with_capacity(2);
-            
+
             // Manually build create ATA instruction to match Instruction types
             let create_ata_accounts = vec![
-                AccountMeta::new(params.user_wallet, true), // funding
+                AccountMeta::new(params.user_wallet, true),  // funding
                 AccountMeta::new(user_token_account, false), // associated_token
                 AccountMeta::new_readonly(params.user_wallet, false), // wallet
                 AccountMeta::new_readonly(params.input_token.address, false), // mint
-                constants::SYSTEM_PROGRAM_META, // system_program
-                token_program_meta.clone(), // token_program
+                common::constants::SYSTEM_PROGRAM_META,      // system_program
+                token_program_meta.clone(),                  // token_program
             ];
-            
-            let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(spl_associated_token_account::id().to_bytes());
+
+            let spl_associated_token_account_program_id =
+                solana_sdk::pubkey::Pubkey::new_from_array(
+                    spl_associated_token_account::id().to_bytes(),
+                );
             let create_ata_ix = Instruction {
                 program_id: spl_associated_token_account_program_id,
                 accounts: create_ata_accounts,
@@ -318,7 +345,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 AccountMeta::new(associated_bonding_curve, false),
                 AccountMeta::new(user_token_account, false),
                 AccountMeta::new(params.user_wallet, true),
-                constants::SYSTEM_PROGRAM_META,
+                common::constants::SYSTEM_PROGRAM_META,
                 AccountMeta::new(creator_vault_pda, false),
                 token_program_meta,
                 constants::EVENT_AUTHORITY_META,
@@ -327,7 +354,11 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 constants::FEE_PROGRAM_META,
             ];
 
-            instructions.push(Instruction::new_with_bytes(Self::get_program_id(), &sell_data, sell_accounts));
+            instructions.push(Instruction::new_with_bytes(
+                Self::get_program_id(),
+                &sell_data,
+                sell_accounts,
+            ));
             Ok(instructions)
         }
     }

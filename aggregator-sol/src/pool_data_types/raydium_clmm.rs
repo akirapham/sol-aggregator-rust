@@ -4,8 +4,7 @@ use crate::{
     constants::is_base_token,
     pool_data_types::{
         clmm::{pool::PoolUtils, tpe::ComputeClmmPoolInfo},
-        GetAmmConfig, PoolUpdateEventType,
-        common,
+        common, GetAmmConfig, PoolUpdateEventType,
     },
     utils::tokens_equal,
 };
@@ -15,12 +14,12 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
 
-use crate::types::SwapParams;
 use crate::pool_data_types::traits::BuildSwapInstruction;
+use crate::types::SwapParams;
 use async_trait::async_trait;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_program::instruction::{AccountMeta, Instruction};
 use spl_associated_token_account;
-use solana_compute_budget_interface::ComputeBudgetInstruction;
 
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
@@ -141,8 +140,6 @@ pub struct RaydiumClmmPoolState {
     pub token0_reserve: u64,
     pub token1_reserve: u64,
     pub is_state_keys_initialized: bool,
-    pub is_token_mint0_2022: bool, // Whether token_mint0 uses Token-2022 program
-    pub is_token_mint1_2022: bool, // Whether token_mint1 uses Token-2022 program
 }
 
 #[derive(Debug, Clone)]
@@ -295,7 +292,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         if !zero_for_one && params.input_token.address != self.token_mint1 {
             return Err("Input token does not match pool mints".to_string());
         }
-        
+
         // Get AMM config
         let amm_config = match amm_config_fetcher
             .get_raydium_clmm_amm_config(&self.amm_config)
@@ -320,14 +317,16 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
             &self.tick_array_state,
             &params.input_token.address,
             rug::Integer::from(params.input_amount),
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
         let expected_amount_out = calculation_result.expected_amount_out.to_u64().unwrap_or(0);
         let all_tick_arrays = calculation_result.remaining_accounts;
 
         // Calculate slippage
         let slippage_factor = 10000 - params.slippage_bps as u64;
-        let other_amount_threshold = (expected_amount_out as u128 * slippage_factor as u128 / 10000) as u64;
+        let other_amount_threshold =
+            (expected_amount_out as u128 * slippage_factor as u128 / 10000) as u64;
 
         // Sqrt price limit
         let sqrt_price_limit_x64 = if zero_for_one {
@@ -347,7 +346,6 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         } else {
             (self.token_mint1, self.token_mint0)
         };
-
         // Get tick array accounts for remaining_accounts
         if all_tick_arrays.is_empty() {
             return Err("No tick arrays returned from calculation".to_string());
@@ -355,18 +353,18 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
 
         // Build remaining accounts: tickarray_bitmap_extension + tick_arrays
         let mut remaining_accounts = Vec::new();
-        
+
         // Add all tick arrays as remaining accounts
         for &tick_array_key in &all_tick_arrays {
             remaining_accounts.push(AccountMeta::new(tick_array_key, false));
         }
 
-        let token_program_0 = if self.is_token_mint0_2022 {
+        let token_program_0 = if params.input_token.is_token_2022 {
             spl_token_2022::id()
         } else {
-            spl_token::id() 
+            spl_token::id()
         };
-        let token_program_1 = if self.is_token_mint1_2022 {
+        let token_program_1 = if params.output_token.is_token_2022 {
             spl_token_2022::id()
         } else {
             spl_token::id()
@@ -380,30 +378,37 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         };
 
         // Convert Address types to anchor_lang Pubkey for compatibility
-        let user_wallet_old = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-        let input_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
-        let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
+        let user_wallet_old =
+            anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
+        let input_mint_old =
+            anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
+        let output_mint_old =
+            anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
 
         // Get user's associated token accounts
-        let user_input_token_old = spl_associated_token_account::get_associated_token_address_with_program_id(
-            &user_wallet_old,
-            &input_mint_old,
-            &input_token_program,
-        );
-        let user_output_token_old = spl_associated_token_account::get_associated_token_address_with_program_id(
-            &user_wallet_old,
-            &output_mint_old,
-            &output_token_program,
-        );
-        
+        let user_input_token_old =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_old,
+                &input_mint_old,
+                &input_token_program,
+            );
+        let user_output_token_old =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_old,
+                &output_mint_old,
+                &output_token_program,
+            );
+
         // Convert back to Address for AccountMeta
-        let user_input_token = solana_sdk::pubkey::Pubkey::new_from_array(user_input_token_old.to_bytes());
-        let user_output_token = solana_sdk::pubkey::Pubkey::new_from_array(user_output_token_old.to_bytes());
+        let user_input_token =
+            solana_sdk::pubkey::Pubkey::new_from_array(user_input_token_old.to_bytes());
+        let user_output_token =
+            solana_sdk::pubkey::Pubkey::new_from_array(user_output_token_old.to_bytes());
 
         // SwapV2 instruction (supports both SPL Token and Token-2022)
         // Discriminator for SwapV2
         let discriminator: [u8; 8] = [43, 4, 237, 11, 26, 201, 30, 98]; // SwapV2 discriminator
-        
+
         let args = SwapV2Args {
             amount: params.input_amount,
             other_amount_threshold,
@@ -415,19 +420,19 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         args.serialize(&mut data).map_err(|e| e.to_string())?;
 
         let mut accounts = vec![
-            AccountMeta::new(params.user_wallet, true), // payer
+            AccountMeta::new(params.user_wallet, true),        // payer
             AccountMeta::new_readonly(self.amm_config, false), // amm_config
-            AccountMeta::new(self.address, false), // pool_state
-            AccountMeta::new(user_input_token, false), // input_token_account
-            AccountMeta::new(user_output_token, false), // output_token_account
-            AccountMeta::new(input_vault, false), // input_vault
-            AccountMeta::new(output_vault, false), // output_vault
-            AccountMeta::new(self.observation_key, false), // observation_state
-            common::constants::TOKEN_PROGRAM_META, // token_program
-            common::constants::TOKEN_PROGRAM_2022_META, // token_program_2022
-            common::constants::SPL_MEMO_PROGRAM_META, // memo_program
-            AccountMeta::new_readonly(input_mint, false), // input_vault_mint
-            AccountMeta::new_readonly(output_mint, false), // output_vault_mint
+            AccountMeta::new(self.address, false),             // pool_state
+            AccountMeta::new(user_input_token, false),         // input_token_account
+            AccountMeta::new(user_output_token, false),        // output_token_account
+            AccountMeta::new(input_vault, false),              // input_vault
+            AccountMeta::new(output_vault, false),             // output_vault
+            AccountMeta::new(self.observation_key, false),     // observation_state
+            common::constants::TOKEN_PROGRAM_META,             // token_program
+            common::constants::TOKEN_PROGRAM_2022_META,        // token_program_2022
+            common::constants::SPL_MEMO_PROGRAM_META,          // memo_program
+            AccountMeta::new_readonly(input_mint, false),      // input_vault_mint
+            AccountMeta::new_readonly(output_mint, false),     // output_vault_mint
         ];
         // Add remaining tick arrays
         accounts.extend(remaining_accounts);
@@ -438,25 +443,28 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         };
 
         // Compute Budget Instruction
-        let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+        let compute_budget_instruction =
+            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
 
         let mut instructions = vec![compute_budget_instruction];
 
         // Create input token ATA instruction (idempotent - creates if doesn't exist)
         let create_input_ata_accounts = vec![
             AccountMeta::new(params.user_wallet, true), // funding
-            AccountMeta::new(user_input_token, false), // associated_token
+            AccountMeta::new(user_input_token, false),  // associated_token
             AccountMeta::new_readonly(params.user_wallet, false), // wallet
             AccountMeta::new_readonly(input_mint, false), // mint
-            common::constants::SYSTEM_PROGRAM_META, // system_program
-            if self.is_token_mint0_2022 && zero_for_one || self.is_token_mint1_2022 && !zero_for_one {
+            common::constants::SYSTEM_PROGRAM_META,     // system_program
+            if params.input_token.is_token_2022 {
                 common::constants::TOKEN_PROGRAM_2022_META
             } else {
                 common::constants::TOKEN_PROGRAM_META
             }, // token_program
         ];
-        
-        let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(spl_associated_token_account::id().to_bytes());
+
+        let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(
+            spl_associated_token_account::id().to_bytes(),
+        );
         let create_input_ata_ix = Instruction {
             program_id: spl_associated_token_account_program_id,
             accounts: create_input_ata_accounts,
@@ -470,14 +478,14 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
             AccountMeta::new(user_output_token, false), // associated_token
             AccountMeta::new_readonly(params.user_wallet, false), // wallet
             AccountMeta::new_readonly(output_mint, false), // mint
-            common::constants::SYSTEM_PROGRAM_META, // system_program
-            if self.is_token_mint1_2022 && zero_for_one || self.is_token_mint0_2022 && !zero_for_one {
+            common::constants::SYSTEM_PROGRAM_META,     // system_program
+            if params.output_token.is_token_2022 {
                 common::constants::TOKEN_PROGRAM_2022_META
             } else {
                 common::constants::TOKEN_PROGRAM_META
             }, // token_program
         ];
-        
+
         let create_output_ata_ix = Instruction {
             program_id: spl_associated_token_account_program_id,
             accounts: create_output_ata_accounts,

@@ -17,10 +17,88 @@ use axum::{
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use solana_sdk::pubkey::Pubkey;
+use solana_client::nonblocking::rpc_client::RpcClient;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 use validator::Validate;
+use solana_sdk::transaction::Transaction;
+
+/// Helper function to serialize, validate, and simulate a transaction
+/// Returns the base64-encoded transaction if validation passes
+async fn validate_and_serialize_transaction(
+    transaction: Transaction,
+    rpc_client: &RpcClient,
+) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
+    // Serialize transaction to base64
+    let mut tx_bytes = Vec::new();
+    tx_bytes.push(transaction.signatures.len() as u8);
+    for sig in &transaction.signatures {
+        tx_bytes.extend_from_slice(sig.as_ref());
+    }
+    let message_bytes = transaction.message.serialize();
+    tx_bytes.extend_from_slice(&message_bytes);
+    let base64_tx = STANDARD.encode(&tx_bytes);
+
+    // Deserialize base64 back to Transaction to validate the round-trip
+    let decoded_bytes = STANDARD.decode(&base64_tx).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to decode base64 transaction".to_string(),
+                details: vec![format!("Decode error: {}", e)],
+            }),
+        )
+    })?;
+
+    // Deserialize transaction using bincode 2.x serde compatibility mode
+    let (deserialized_tx, _len): (Transaction, usize) = bincode::serde::decode_from_slice(
+        &decoded_bytes,
+        bincode::config::standard()
+    ).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to deserialize transaction".to_string(),
+                details: vec![format!("Deserialization error: {}", e)],
+            }),
+        )
+    })?;
+
+    // Simulate the deserialized transaction to validate it will succeed
+    let simulation = rpc_client
+        .simulate_transaction(&deserialized_tx)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to simulate transaction".to_string(),
+                    details: vec![format!("RPC error: {}", e)],
+                }),
+            )
+        })?;
+
+    // Check if simulation detected any errors
+    if let Some(err) = simulation.value.err {
+        let logs = simulation.value.logs.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Transaction simulation failed".to_string(),
+                details: vec![
+                    format!("Simulation error: {:?}", err),
+                    format!("This likely means the swap would fail due to slippage, insufficient liquidity, or account issues."),
+                    format!("Logs: {}", logs.join(" | ")),
+                ],
+            }),
+        ));
+    }
+
+    log::info!("Transaction validated: serialization round-trip successful, simulation passed - compute units: {:?}", simulation.value.units_consumed);
+
+    Ok(base64_tx)
+}
 
 pub async fn health_check() -> &'static str {
     "OK"
@@ -138,7 +216,6 @@ pub async fn get_quote(
                 });
             });
 
-
             let time_taken_ms = start_time.elapsed().as_millis() as u64;
             let transaction = state.aggregator.build_route_transaction(
                 &best_route, 
@@ -155,77 +232,9 @@ pub async fn get_quote(
                 )
             })?;
 
-            // Serialize transaction to base64 first
-            let mut tx_bytes = Vec::new();
-            tx_bytes.push(transaction.signatures.len() as u8);
-            for sig in &transaction.signatures {
-                tx_bytes.extend_from_slice(sig.as_ref());
-            }
-            let message_bytes = transaction.message.serialize();
-            tx_bytes.extend_from_slice(&message_bytes);
-            let base64_tx = STANDARD.encode(&tx_bytes);
-
-            // Deserialize base64 back to Transaction to validate the round-trip
-            // This ensures the base64 we return can be properly deserialized by clients
-            let decoded_bytes = STANDARD.decode(&base64_tx).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to decode base64 transaction".to_string(),
-                        details: vec![format!("Decode error: {}", e)],
-                    }),
-                )
-            })?;
-
-            // Deserialize transaction using bincode 2.x serde compatibility mode
-            // Transaction uses serde traits, so we need bincode::serde::decode_from_slice
-            use solana_sdk::transaction::Transaction;
-            let (deserialized_tx, _len): (Transaction, usize) = bincode::serde::decode_from_slice(
-                &decoded_bytes,
-                bincode::config::standard()
-            ).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to deserialize transaction".to_string(),
-                        details: vec![format!("Deserialization error: {}", e)],
-                    }),
-                )
-            })?;
-
-            // Simulate the deserialized transaction to validate it will succeed
-            // This validates both the serialization round-trip AND transaction execution
+            // Validate and serialize transaction
             let rpc_client = state.arbitrage_monitor.as_ref().unwrap().get_rpc_client();
-            let simulation = rpc_client
-                .simulate_transaction(&deserialized_tx)
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: "Failed to simulate transaction".to_string(),
-                            details: vec![format!("RPC error: {}", e)],
-                        }),
-                    )
-                })?;
-
-            // Check if simulation detected any errors
-            if let Some(err) = simulation.value.err {
-                let logs = simulation.value.logs.unwrap_or_default();
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        error: "Transaction simulation failed".to_string(),
-                        details: vec![
-                            format!("Simulation error: {:?}", err),
-                            format!("This likely means the swap would fail due to slippage, insufficient liquidity, or account issues."),
-                            format!("Logs: {}", logs.join(" | ")),
-                        ],
-                    }),
-                ));
-            }
-            
-            log::info!("Transaction validated: serialization round-trip successful, simulation passed - compute units: {:?}", simulation.value.units_consumed);
+            let base64_tx = validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
 
             let response = QuoteResponse {
                 routes: swap_routes,
@@ -401,6 +410,28 @@ pub async fn check_arbitrage(
                 }
             }
             let time_taken_ms = start_time.elapsed().as_millis() as u64;
+
+            // Build arbitrage transaction (forward + reverse swaps in one atomic transaction)
+            let rpc_client = state.arbitrage_monitor.as_ref().unwrap().get_rpc_client();
+            let transaction = state.aggregator.build_arbitrage_transaction(
+                &forward_route,
+                &reverse_route,
+                ExecutionPriority::Medium,
+                user_wallet,
+                rpc_client.as_ref()
+            ).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to build arbitrage transaction".to_string(),
+                        details: vec![e],
+                    }),
+                )
+            })?;
+
+            // Validate and serialize arbitrage transaction
+            let base64_tx = validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
+
             let response = ArbitrageResponse {
                 profitable: true,
                 profit_amount: profit,
@@ -411,6 +442,7 @@ pub async fn check_arbitrage(
                 reverse_output: reverse_route.output_amount,
                 time_taken_ms,
                 context_slot: forward_route.context_slot,
+                transaction: base64_tx,
             };
             Ok(Json(response))
         }
@@ -427,6 +459,7 @@ pub async fn check_arbitrage(
                 reverse_output: 0,
                 time_taken_ms,
                 context_slot: 0,
+                transaction: String::new(),
             };
             Ok(Json(response))
         }

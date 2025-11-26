@@ -14,6 +14,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -136,6 +138,7 @@ pub async fn get_quote(
                 });
             });
 
+
             let time_taken_ms = start_time.elapsed().as_millis() as u64;
             let transaction = state.aggregator.build_route_transaction(
                 &best_route, 
@@ -151,7 +154,79 @@ pub async fn get_quote(
                     }),
                 )
             })?;
+
+            // Serialize transaction to base64 first
+            let mut tx_bytes = Vec::new();
+            tx_bytes.push(transaction.signatures.len() as u8);
+            for sig in &transaction.signatures {
+                tx_bytes.extend_from_slice(sig.as_ref());
+            }
+            let message_bytes = transaction.message.serialize();
+            tx_bytes.extend_from_slice(&message_bytes);
+            let base64_tx = STANDARD.encode(&tx_bytes);
+
+            // Deserialize base64 back to Transaction to validate the round-trip
+            // This ensures the base64 we return can be properly deserialized by clients
+            let decoded_bytes = STANDARD.decode(&base64_tx).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to decode base64 transaction".to_string(),
+                        details: vec![format!("Decode error: {}", e)],
+                    }),
+                )
+            })?;
+
+            // Deserialize transaction using bincode 2.x serde compatibility mode
+            // Transaction uses serde traits, so we need bincode::serde::decode_from_slice
+            use solana_sdk::transaction::Transaction;
+            let (deserialized_tx, _len): (Transaction, usize) = bincode::serde::decode_from_slice(
+                &decoded_bytes,
+                bincode::config::standard()
+            ).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to deserialize transaction".to_string(),
+                        details: vec![format!("Deserialization error: {}", e)],
+                    }),
+                )
+            })?;
+
+            // Simulate the deserialized transaction to validate it will succeed
+            // This validates both the serialization round-trip AND transaction execution
+            let rpc_client = state.arbitrage_monitor.as_ref().unwrap().get_rpc_client();
+            let simulation = rpc_client
+                .simulate_transaction(&deserialized_tx)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "Failed to simulate transaction".to_string(),
+                            details: vec![format!("RPC error: {}", e)],
+                        }),
+                    )
+                })?;
+
+            // Check if simulation detected any errors
+            if let Some(err) = simulation.value.err {
+                let logs = simulation.value.logs.unwrap_or_default();
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "Transaction simulation failed".to_string(),
+                        details: vec![
+                            format!("Simulation error: {:?}", err),
+                            format!("This likely means the swap would fail due to slippage, insufficient liquidity, or account issues."),
+                            format!("Logs: {}", logs.join(" | ")),
+                        ],
+                    }),
+                ));
+            }
             
+            log::info!("Transaction validated: serialization round-trip successful, simulation passed - compute units: {:?}", simulation.value.units_consumed);
+
             let response = QuoteResponse {
                 routes: swap_routes,
                 input_amount: best_route.input_amount,
@@ -159,7 +234,7 @@ pub async fn get_quote(
                 other_output_amount: best_route.other_output_amount,
                 time_taken_ms,
                 context_slot: best_route.context_slot,
-                transaction,
+                transaction: base64_tx,
             };
             Ok(Json(response))
         }

@@ -74,7 +74,7 @@ pub struct QuoteResponse {
     pub other_output_amount: u64,
     pub time_taken_ms: u64,
     pub context_slot: u64,
-    pub transaction: Transaction,
+    pub transaction: String,
 }
 
 #[derive(Deserialize, Serialize, Validate)]

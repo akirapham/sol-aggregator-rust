@@ -1,20 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
-
 use crate::constants::BASE_TOKENS;
-use crate::pool_data_types::{DexType, GetAmmConfig, PoolState};
+use crate::pool_data_types::{DexType, GetAmmConfig, PoolState, traits::BuildSwapInstruction};
 use crate::pool_manager::PoolStateManager;
 use crate::types::{AggregatorConfig, SwapParams, ExecutionPriority};
 use crate::utils::{calculate_min_output_amount, tokens_equal};
-
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     instruction::Instruction,
     pubkey::Pubkey,
     transaction::Transaction,
+    message::Message,
 };
-use crate::pool_data_types::traits::BuildSwapInstruction;
 
 #[allow(unused)]
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
@@ -623,7 +621,6 @@ impl DexAggregator {
             .await
             .map_err(|e| format!("Failed to get blockhash: {}", e))?;
 
-        use solana_sdk::message::Message;
         let message = Message::new_with_blockhash(
             &all_instructions,
             Some(&payer),

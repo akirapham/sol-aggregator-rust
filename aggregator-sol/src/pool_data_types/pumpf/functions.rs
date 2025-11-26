@@ -1,7 +1,7 @@
-use solana_sdk::{native_token::sol_str_to_lamports, pubkey::Pubkey};
+use crate::pool_data_types::common;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-
+use solana_sdk::{native_token::sol_str_to_lamports, pubkey::Pubkey};
 pub const CREATOR_FEE: u64 = 30;
 pub const FEE_BASIS_POINTS: u64 = 95;
 
@@ -32,8 +32,12 @@ pub fn get_buy_token_amount_from_sol_amount(
         return 0;
     }
 
-    let total_fee_basis_points =
-        FEE_BASIS_POINTS + if creator != Pubkey::default() { CREATOR_FEE } else { 0 };
+    let total_fee_basis_points = FEE_BASIS_POINTS
+        + if creator != Pubkey::default() {
+            CREATOR_FEE
+        } else {
+            0
+        };
 
     // Convert to u128 to prevent overflow
     let amount_128 = amount as u128;
@@ -47,8 +51,11 @@ pub fn get_buy_token_amount_from_sol_amount(
 
     let denominator = virtual_sol_reserves + input_amount;
 
-    let mut tokens_received =
-        input_amount.checked_mul(virtual_token_reserves).unwrap().checked_div(denominator).unwrap();
+    let mut tokens_received = input_amount
+        .checked_mul(virtual_token_reserves)
+        .unwrap()
+        .checked_div(denominator)
+        .unwrap();
 
     tokens_received = tokens_received.min(real_token_reserves);
 
@@ -97,13 +104,17 @@ pub fn get_sell_sol_amount_from_token_amount(
 
     let sol_cost = numerator.checked_div(denominator).unwrap_or(0);
 
-    let total_fee_basis_points =
-        FEE_BASIS_POINTS + if creator != Pubkey::default() { CREATOR_FEE } else { 0 };
+    let total_fee_basis_points = FEE_BASIS_POINTS
+        + if creator != Pubkey::default() {
+            CREATOR_FEE
+        } else {
+            0
+        };
     let total_fee_basis_points_128 = total_fee_basis_points as u128;
 
     // Calculate transaction fee
     let fee = compute_fee(sol_cost, total_fee_basis_points_128);
-    
+
     sol_cost.saturating_sub(fee) as u64
 }
 
@@ -116,15 +127,12 @@ pub fn ceil_div(a: u128, b: u128) -> u128 {
 }
 
 pub fn get_bonding_curve_pda(mint: &Pubkey) -> Option<Pubkey> {
-    get_cached_pda(
-        PdaCacheKey::PumpFunBondingCurve(*mint),
-        || {
-            let seeds: &[&[u8]; 2] = &[seeds::BONDING_CURVE_SEED, mint.as_ref()];
-            let program_id: &Pubkey = &accounts::PUMPFUN;
-            let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
-            pda.map(|pubkey| pubkey.0)
-        },
-    )
+    get_cached_pda(PdaCacheKey::PumpFunBondingCurve(*mint), || {
+        let seeds: &[&[u8]; 2] = &[seeds::BONDING_CURVE_SEED, mint.as_ref()];
+        let program_id: &Pubkey = &accounts::PUMPFUN;
+        let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
+        pda.map(|pubkey| pubkey.0)
+    })
 }
 
 pub fn get_cached_pda<F>(cache_key: PdaCacheKey, compute_fn: F) -> Option<Pubkey>
@@ -152,48 +160,56 @@ const MAX_PDA_CACHE_SIZE: usize = 100_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PdaCacheKey {
-    PumpFunUserVolume(Pubkey),
     PumpFunBondingCurve(Pubkey),
-    PumpFunCreatorVault(Pubkey),
-    BonkPool(Pubkey, Pubkey),
-    BonkVault(Pubkey, Pubkey),
     PumpSwapUserVolume(Pubkey),
 }
 
 pub fn get_user_volume_accumulator_pda(user: &Pubkey) -> Option<Pubkey> {
-    get_cached_pda(
-        PdaCacheKey::PumpSwapUserVolume(*user),
-        || {
-            let seeds: &[&[u8]; 2] = &[&seeds::USER_VOLUME_ACCUMULATOR_SEED, user.as_ref()];
-            let program_id: &Pubkey = &&accounts::AMM_PROGRAM;
-            let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
-            pda.map(|pubkey| pubkey.0)
-        },
-    )
+    get_cached_pda(PdaCacheKey::PumpSwapUserVolume(*user), || {
+        let seeds: &[&[u8]; 2] = &[&seeds::USER_VOLUME_ACCUMULATOR_SEED, user.as_ref()];
+        let program_id: &Pubkey = &&accounts::AMM_PROGRAM;
+        let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
+        pda.map(|pubkey| pubkey.0)
+    })
 }
 
 pub mod accounts {
-use solana_sdk::pubkey;
-use solana_sdk::pubkey::Pubkey;
+    use solana_sdk::pubkey;
+    use solana_sdk::pubkey::Pubkey;
     pub const PUMPFUN: Pubkey = pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
     pub const AMM_PROGRAM: Pubkey = pubkey!("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA");
 }
 
-/// Constants used as seeds for deriving PDAs (Program Derived Addresses)
 pub mod seeds {
-    /// Seed for the global state PDA
-    pub const GLOBAL_SEED: &[u8] = b"global";
-
-    /// Seed for the mint authority PDA
-    pub const MINT_AUTHORITY_SEED: &[u8] = b"mint-authority";
-
-    /// Seed for bonding curve PDAs
     pub const BONDING_CURVE_SEED: &[u8] = b"bonding-curve";
-
-    /// Seed for metadata PDAs
-    pub const METADATA_SEED: &[u8] = b"metadata";
-
     pub const USER_VOLUME_ACCUMULATOR_SEED: &[u8] = b"user_volume_accumulator";
-    pub const GLOBAL_VOLUME_ACCUMULATOR_SEED: &[u8] = b"global_volume_accumulator";
-    pub const FEE_CONFIG_SEED: &[u8] = b"fee_config";
+}
+
+pub fn coin_creator_vault_authority(coin_creator: Pubkey) -> Pubkey {
+    let (pump_pool_authority, _) = Pubkey::find_program_address(
+        &[b"creator_vault", &coin_creator.to_bytes()],
+        &accounts::AMM_PROGRAM,
+    );
+    pump_pool_authority
+}
+
+pub fn coin_creator_vault_ata(coin_creator: Pubkey, quote_mint: Pubkey) -> Pubkey {
+    let creator_vault_authority = coin_creator_vault_authority(coin_creator);
+
+    let creator_vault_authority_old =
+        anchor_lang::prelude::Pubkey::new_from_array(creator_vault_authority.to_bytes());
+    let quote_mint_old = anchor_lang::prelude::Pubkey::new_from_array(quote_mint.to_bytes());
+    let token_program_old =
+        anchor_lang::prelude::Pubkey::new_from_array(common::constants::TOKEN_PROGRAM.to_bytes());
+
+    let associated_token_creator_vault_authority_old =
+        spl_associated_token_account::get_associated_token_address_with_program_id(
+            &creator_vault_authority_old,
+            &quote_mint_old,
+            &token_program_old,
+        );
+    let associated_token_creator_vault_authority = solana_sdk::pubkey::Pubkey::new_from_array(
+        associated_token_creator_vault_authority_old.to_bytes(),
+    );
+    associated_token_creator_vault_authority
 }

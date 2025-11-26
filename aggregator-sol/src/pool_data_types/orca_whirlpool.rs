@@ -1,14 +1,10 @@
 use crate::{
     constants::is_base_token,
     pool_data_types::{GetAmmConfig, PoolUpdateEventType},
-
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use orca_whirlpools_core::{
-    TickArrayFacade, TickFacade,
-    TransferFee, TICK_ARRAY_SIZE,
-};
+use orca_whirlpools_core::{TickArrayFacade, TickFacade, TransferFee, TICK_ARRAY_SIZE};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
@@ -54,8 +50,6 @@ pub struct WhirlpoolPoolState {
     pub is_state_keys_initialized: bool,
     #[serde(skip)]
     pub oracle_state: OracleState,
-    pub is_token_mint_a_2022: bool, // Whether token_mint_a uses Token-2022 program
-    pub is_token_mint_b_2022: bool, // Whether token_mint_b uses Token-2022 program
 }
 
 #[derive(Clone, Debug)]

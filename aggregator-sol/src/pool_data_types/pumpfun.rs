@@ -227,7 +227,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             buy_data[16..24].copy_from_slice(&max_sol_cost.to_le_bytes());
             // Build accounts array
             let buy_accounts: Vec<AccountMeta> = vec![
-                constants::GLOBAL_ACCOUNT_META,
+                constants::PUMPFUN_GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,
                 AccountMeta::new_readonly(params.output_token.address, false),
                 AccountMeta::new(bonding_curve_addr, false),
@@ -237,12 +237,12 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 common::constants::SYSTEM_PROGRAM_META,
                 token_program_meta,
                 AccountMeta::new(creator_vault_pda, false),
-                constants::EVENT_AUTHORITY_META,
+                constants::PUMPFUN_EVENT_AUTHORITY_META,
                 constants::PUMPFUN_META,
-                constants::GLOBAL_VOLUME_ACCUMULATOR_META,
+                constants::PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR_META,
                 AccountMeta::new(user_volume_accumulator, false),
-                constants::FEE_CONFIG_META,
-                constants::FEE_PROGRAM_META,
+                constants::PUMPFUN_FEE_CONFIG_META,
+                constants::PUMPFUN_FEE_PROGRAM_META,
             ];
 
             instructions.push(Instruction::new_with_bytes(
@@ -338,7 +338,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             sell_data[16..24].copy_from_slice(&min_sol_output.to_le_bytes());
             // Build accounts array (14 accounts for sell)
             let sell_accounts: Vec<AccountMeta> = vec![
-                constants::GLOBAL_ACCOUNT_META,
+                constants::PUMPFUN_GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,
                 AccountMeta::new_readonly(params.input_token.address, false),
                 AccountMeta::new(bonding_curve_addr, false),
@@ -348,10 +348,10 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 common::constants::SYSTEM_PROGRAM_META,
                 AccountMeta::new(creator_vault_pda, false),
                 token_program_meta,
-                constants::EVENT_AUTHORITY_META,
+                constants::PUMPFUN_EVENT_AUTHORITY_META,
                 constants::PUMPFUN_META,
-                constants::FEE_CONFIG_META,
-                constants::FEE_PROGRAM_META,
+                constants::PUMPFUN_FEE_CONFIG_META,
+                constants::PUMPFUN_FEE_PROGRAM_META,
             ];
 
             instructions.push(Instruction::new_with_bytes(

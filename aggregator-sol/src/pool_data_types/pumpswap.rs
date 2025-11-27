@@ -163,15 +163,32 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         let creator = self.coin_creator;
         let coin_creator_vault_ata = functions::coin_creator_vault_ata(creator, quote_mint);
         let coin_creator_vault_authority = functions::coin_creator_vault_authority(creator);
-        let base_token_program = if params.input_token.is_token_2022 {
-            common::constants::TOKEN_PROGRAM_2022
+        let base_token_program = if params.input_token.address == base_mint {
+            if params.input_token.is_token_2022 {
+                common::constants::TOKEN_PROGRAM_2022
+            } else {
+                common::constants::TOKEN_PROGRAM
+            }
         } else {
-            common::constants::TOKEN_PROGRAM
+            if params.output_token.is_token_2022 {
+                common::constants::TOKEN_PROGRAM_2022
+            } else {
+                common::constants::TOKEN_PROGRAM
+            }
         };
-        let quote_token_program = if params.output_token.is_token_2022 {
-            common::constants::TOKEN_PROGRAM_2022
+
+        let quote_token_program = if params.input_token.address == quote_mint {
+            if params.input_token.is_token_2022 {
+                common::constants::TOKEN_PROGRAM_2022
+            } else {
+                common::constants::TOKEN_PROGRAM
+            }
         } else {
-            common::constants::TOKEN_PROGRAM
+            if params.output_token.is_token_2022 {
+                common::constants::TOKEN_PROGRAM_2022
+            } else {
+                common::constants::TOKEN_PROGRAM
+            }
         };
 
         let is_wsol = (base_mint == common::constants::WSOL_TOKEN_ACCOUNT
@@ -244,9 +261,9 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         let user_wallet_old =
             anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
         let base_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
+            anchor_lang::prelude::Pubkey::new_from_array(base_mint.to_bytes());
         let quote_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
+            anchor_lang::prelude::Pubkey::new_from_array(quote_mint.to_bytes());
         let base_token_program_old =
             anchor_lang::prelude::Pubkey::new_from_array(base_token_program.to_bytes());
         let quote_token_program_old =
@@ -271,7 +288,13 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         let user_quote_token_account =
             solana_sdk::pubkey::Pubkey::new_from_array(user_quote_token_account_old.to_bytes());
 
-        let fee_recipient = self.protocol_fee_recipient;
+
+        // Determine fee recipient based on pool's protocol_fee_recipient
+        let fee_recipient = if self.protocol_fee_recipient == constants::MAYHEM_FEE_RECIPIENT {
+            constants::MAYHEM_FEE_RECIPIENT
+        } else {
+            constants::FEE_RECIPIENT
+        };
         let fee_recipient_meta = if fee_recipient == constants::MAYHEM_FEE_RECIPIENT {
             constants::MAYHEM_FEE_RECIPIENT_META
         } else {
@@ -303,36 +326,54 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             );
         }
 
-        // Create output token ATA instruction (idempotent - creates if doesn't exist)
-        let create_output_ata_accounts = vec![
-            AccountMeta::new(params.user_wallet, true), // funding
-            AccountMeta::new(user_quote_token_account, false), // associated_token
-            AccountMeta::new_readonly(params.user_wallet, false), // wallet
-            AccountMeta::new_readonly(quote_mint, false), // mint
-            common::constants::SYSTEM_PROGRAM_META,     // system_program
-            if params.output_token.is_token_2022 {
-                common::constants::TOKEN_PROGRAM_2022_META
-            } else {
-                common::constants::TOKEN_PROGRAM_META
-            },
-        ];
-
         let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(
             spl_associated_token_account::id().to_bytes(),
         );
-        let create_output_ata_ix = Instruction {
-            program_id: spl_associated_token_account_program_id,
-            accounts: create_output_ata_accounts,
-            data: vec![1], // Idempotent instruction discriminator
-        };
-        instructions.push(create_output_ata_ix);
+
+        // Create output token ATA instruction (idempotent - creates if doesn't exist)
+        // Only if output is NOT WSOL
+        if params.output_token.address != common::constants::WSOL_TOKEN_ACCOUNT {
+            let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
+            let output_token_program_old = if params.output_token.is_token_2022 {
+                anchor_lang::prelude::Pubkey::new_from_array(common::constants::TOKEN_PROGRAM_2022.to_bytes())
+            } else {
+                anchor_lang::prelude::Pubkey::new_from_array(common::constants::TOKEN_PROGRAM.to_bytes())
+            };
+            
+            let user_output_token_account_old = spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_old,
+                &output_mint_old,
+                &output_token_program_old,
+            );
+            let user_output_token_account = solana_sdk::pubkey::Pubkey::new_from_array(user_output_token_account_old.to_bytes());
+
+            let create_output_ata_accounts = vec![
+                AccountMeta::new(params.user_wallet, true), // funding
+                AccountMeta::new(user_output_token_account, false), // associated_token
+                AccountMeta::new_readonly(params.user_wallet, false), // wallet
+                AccountMeta::new_readonly(params.output_token.address, false), // mint
+                common::constants::SYSTEM_PROGRAM_META,     // system_program
+                if params.output_token.is_token_2022 {
+                    common::constants::TOKEN_PROGRAM_2022_META
+                } else {
+                    common::constants::TOKEN_PROGRAM_META
+                },
+            ];
+
+            let create_output_ata_ix = Instruction {
+                program_id: spl_associated_token_account_program_id,
+                accounts: create_output_ata_accounts,
+                data: vec![1], // Idempotent instruction discriminator
+            };
+            instructions.push(create_output_ata_ix);
+        }
 
         // Create buy instruction
         let mut accounts = Vec::with_capacity(23);
         accounts.extend([
             AccountMeta::new(pool, false),                         // pool_id
             AccountMeta::new(params.user_wallet, true),            // user (signer)
-            constants::GLOBAL_ACCOUNT_META,                        // global (readonly)
+            constants::PUMPSWAP_GLOBAL_ACCOUNT_META,                        // global (readonly)
             AccountMeta::new_readonly(base_mint, false),           // base_mint (readonly)
             AccountMeta::new_readonly(quote_mint, false),          // quote_mint (readonly)
             AccountMeta::new(user_base_token_account, false),      // user_base_token_account
@@ -344,27 +385,27 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             AccountMeta::new_readonly(base_token_program, false),  // TOKEN_PROGRAM_ID (readonly)
             AccountMeta::new_readonly(quote_token_program, false), // TOKEN_PROGRAM_ID (readonly, duplicated as in JS)
             common::constants::SYSTEM_PROGRAM_META,                // System Program (readonly)
-            common::constants::ASSOCIATED_TOKEN_PROGRAM_META, // ASSOCIATED_TOKEN_PROGRAM_ID (readonly)
-            constants::EVENT_AUTHORITY_META,                  // event_authority (readonly)
-            constants::AMM_PROGRAM_META,                      // PUMP_AMM_PROGRAM_ID (readonly)
+            AccountMeta::new(spl_associated_token_account_program_id, false), // ASSOCIATED_TOKEN_PROGRAM_ID (readonly)
+            constants::PUMPSWAP_EVENT_AUTHORITY_META,                  // event_authority (readonly)
+            constants::PUMPSWAP_AMM_PROGRAM_META,                      // PUMP_AMM_PROGRAM_ID (readonly)
             AccountMeta::new(coin_creator_vault_ata, false),  // coin_creator_vault_ata
             AccountMeta::new_readonly(coin_creator_vault_authority, false), // coin_creator_vault_authority (readonly)
         ]);
         if is_buy && quote_is_wsol_or_usdc {
-            accounts.push(constants::GLOBAL_VOLUME_ACCUMULATOR_META);
+            accounts.push(constants::PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR_META);
             accounts.push(AccountMeta::new(
                 get_user_volume_accumulator_pda(&params.user_wallet).unwrap(),
                 false,
             ));
         } else if !is_buy && !quote_is_wsol_or_usdc {
-            accounts.push(constants::GLOBAL_VOLUME_ACCUMULATOR_META);
+            accounts.push(constants::PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR_META);
             accounts.push(AccountMeta::new(
                 get_user_volume_accumulator_pda(&params.user_wallet).unwrap(),
                 false,
             ));
         }
-        accounts.push(constants::FEE_CONFIG_META);
-        accounts.push(constants::FEE_PROGRAM_META);
+        accounts.push(constants::PUMPSWAP_FEE_CONFIG_META);
+        accounts.push(constants::PUMPSWAP_FEE_PROGRAM_META);
 
         // Create instruction data
         let mut data = [0u8; 24];
@@ -408,26 +449,6 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         instructions.extend(sol_trade_sdk::trading::common::close_wsol(
             &params.user_wallet,
         ));
-        if !is_buy {
-            instructions.push(
-                sol_trade_sdk::common::spl_token::close_account(
-                    if quote_is_wsol_or_usdc {
-                        &base_token_program
-                    } else {
-                        &quote_token_program
-                    },
-                    if quote_is_wsol_or_usdc {
-                        &user_base_token_account
-                    } else {
-                        &user_quote_token_account
-                    },
-                    &params.user_wallet,
-                    &params.user_wallet,
-                    &[&params.user_wallet],
-                )
-                .unwrap(),
-            );
-        }
         Ok(instructions)
     }
 }

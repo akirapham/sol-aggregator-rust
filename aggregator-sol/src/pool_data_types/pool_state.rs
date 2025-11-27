@@ -272,9 +272,7 @@ impl BuildSwapInstruction for PoolState {
         match self {
             PoolState::Pumpfun(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::PumpSwap(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
-            PoolState::RaydiumAmmV4(_state) => {
-                Err("Raydium AMM V4 BuildSwapInstruction not yet implemented".to_string())
-            }
+            PoolState::RaydiumAmmV4(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::RaydiumCpmm(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::Bonk(_state) => {
                 Err("Bonk BuildSwapInstruction not yet implemented".to_string())

@@ -271,15 +271,11 @@ impl BuildSwapInstruction for PoolState {
     ) -> std::result::Result<Vec<Instruction>, String> {
         match self {
             PoolState::Pumpfun(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
-            PoolState::PumpSwap(_state) => {
-                Err("PumpSwap BuildSwapInstruction not yet implemented".to_string())
-            }
+            PoolState::PumpSwap(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::RaydiumAmmV4(_state) => {
                 Err("Raydium AMM V4 BuildSwapInstruction not yet implemented".to_string())
             }
-            PoolState::RaydiumCpmm(_state) => {
-                Err("Raydium CPMM BuildSwapInstruction not yet implemented".to_string())
-            }
+            PoolState::RaydiumCpmm(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
             PoolState::Bonk(_state) => {
                 Err("Bonk BuildSwapInstruction not yet implemented".to_string())
             }

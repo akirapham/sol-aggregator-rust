@@ -158,18 +158,14 @@ impl DexAggregator {
                 .pool_manager
                 .get_pool_state_by_address(pool_address)
                 .await;
-            
+
             if let Some(pool_state) = pool_state {
-                // Skip tick sync check for PumpFun pools (they don't use tick arrays)
-                let needs_tick_sync = !matches!(pool_state.dex(), DexType::PumpFun);
-                
-                if needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await {
+                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun) || matches!(pool_state.dex(), DexType::RaydiumCpmm) || matches!(pool_state.dex(), DexType::PumpFunSwap);
+                if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await {
                     log::debug!("Skipping pool without synced ticks: {}", pool_address);
                     continue;
                 }
-
                 if pool_state.get_liquidity_usd() < min_liquidity_usd {
-                    // Skip pools with very low liquidity
                     continue;
                 }
                 all_pool_state.insert(*pool_address, Arc::new(pool_state));

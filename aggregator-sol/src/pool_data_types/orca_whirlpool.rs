@@ -4,7 +4,11 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use orca_whirlpools_core::{TickArrayFacade, TickFacade, TransferFee, TICK_ARRAY_SIZE};
+use orca_whirlpools_core::{
+    compute_swap, AdaptiveFeeConstantsFacade, AdaptiveFeeInfo, AdaptiveFeeVariablesFacade,
+    TickArrayFacade, TickArraySequence, TickFacade, WhirlpoolFacade, WhirlpoolRewardInfoFacade,
+    NUM_REWARDS, TICK_ARRAY_SIZE,
+};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
@@ -13,15 +17,7 @@ use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use solana_sdk::account::Account as SolanaAccount;
-use spl_token_2022::extension::transfer_fee::TransferFeeConfig;
-use spl_token_2022::extension::{BaseStateWithExtensions, StateWithExtensions};
-use spl_token_2022::state::Mint;
-use std::error::Error;
-
-// Whirlpool sqrt price limits (same as Raydium CLMM)
-const MIN_SQRT_PRICE_X64: u128 = 4295048016;
-const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
+use crate::utils::tokens_equal;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct WhirlpoolPoolState {
@@ -100,145 +96,143 @@ impl WhirlpoolPoolState {
         input_amount: u64,
         _amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> u64 {
-        // Return 0 on any errors to avoid stack overflow
-        let result = self
-            .calculate_output_amount_internal(input_token, input_amount)
-            .await;
+        if input_amount == 0 {
+            return 0;
+        }
+
+        let specified_token_a = tokens_equal(input_token, &self.token_mint_a);
+        let a_to_b = specified_token_a; // ExactIn: Input A -> Output B (A to B)
+
+        // Construct WhirlpoolFacade
+        let whirlpool = WhirlpoolFacade {
+            fee_tier_index_seed: self.tick_spacing_seed,
+            tick_spacing: self.tick_spacing,
+            fee_rate: self.fee_rate,
+            protocol_fee_rate: self.protocol_fee_rate,
+            liquidity: self.liquidity,
+            sqrt_price: self.sqrt_price,
+            tick_current_index: self.tick_current_index,
+            fee_growth_global_a: 0,
+            fee_growth_global_b: 0,
+            reward_last_updated_timestamp: 0,
+            reward_infos: [WhirlpoolRewardInfoFacade::default(); NUM_REWARDS],
+        };
+
+        // Construct AdaptiveFeeInfo
+        let adaptive_fee_info = if self.oracle_state.whirlpool == Pubkey::default() {
+            None
+        } else {
+            Some(AdaptiveFeeInfo {
+                constants: AdaptiveFeeConstantsFacade {
+                    filter_period: self.oracle_state.adaptive_fee_constants.filter_period,
+                    decay_period: self.oracle_state.adaptive_fee_constants.decay_period,
+                    reduction_factor: self.oracle_state.adaptive_fee_constants.reduction_factor,
+                    adaptive_fee_control_factor: self
+                        .oracle_state
+                        .adaptive_fee_constants
+                        .adaptive_fee_control_factor,
+                    max_volatility_accumulator: self
+                        .oracle_state
+                        .adaptive_fee_constants
+                        .max_volatility_accumulator,
+                    tick_group_size: self.oracle_state.adaptive_fee_constants.tick_group_size,
+                    major_swap_threshold_ticks: self
+                        .oracle_state
+                        .adaptive_fee_constants
+                        .major_swap_threshold_ticks,
+                },
+                variables: AdaptiveFeeVariablesFacade {
+                    last_reference_update_timestamp: self
+                        .oracle_state
+                        .adaptive_fee_variables
+                        .last_reference_update_timestamp,
+                    last_major_swap_timestamp: self
+                        .oracle_state
+                        .adaptive_fee_variables
+                        .last_major_swap_timestamp,
+                    volatility_reference: self
+                        .oracle_state
+                        .adaptive_fee_variables
+                        .volatility_reference,
+                    tick_group_index_reference: self
+                        .oracle_state
+                        .adaptive_fee_variables
+                        .tick_group_index_reference,
+                    volatility_accumulator: self
+                        .oracle_state
+                        .adaptive_fee_variables
+                        .volatility_accumulator,
+                },
+            })
+        };
+
+        // Construct TickArraySequence
+        let start_tick_index = orca_whirlpools_core::get_tick_array_start_tick_index(
+            self.tick_current_index,
+            self.tick_spacing,
+        );
+        let offset = self.tick_spacing as i32 * TICK_ARRAY_SIZE as i32;
+
+        // We need a sequence of tick arrays. Let's try to get 5 arrays centered around current.
+        let mut tick_arrays: [Option<TickArrayFacade>; 5] = [None, None, None, None, None];
+
+        for i in 0..5 {
+            let index = start_tick_index + (i as i32 - 2) * offset;
+            if let Some(state) = self.tick_array_state.get(&index) {
+                // Convert TickArrayState to TickArrayFacade
+                let mut ticks = [TickFacade::default(); TICK_ARRAY_SIZE];
+                for (j, t) in state.ticks.iter().enumerate() {
+                    if j >= TICK_ARRAY_SIZE {
+                        break;
+                    }
+                    ticks[j] = TickFacade {
+                        initialized: t.initialized,
+                        liquidity_net: t.liquidity_net,
+                        liquidity_gross: t.liquidity_gross,
+                        fee_growth_outside_a: t.fee_growth_outside_a,
+                        fee_growth_outside_b: t.fee_growth_outside_b,
+                        reward_growths_outside: t.reward_growths_outside,
+                    };
+                }
+
+                tick_arrays[i] = Some(TickArrayFacade {
+                    start_tick_index: state.start_tick_index,
+                    ticks,
+                });
+            }
+        }
+
+        let tick_sequence = match TickArraySequence::new(tick_arrays, self.tick_spacing) {
+            Ok(seq) => seq,
+            Err(_) => return 0,
+        };
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let result = compute_swap(
+            input_amount,
+            0, // sqrt_price_limit (0 means default min/max)
+            whirlpool,
+            tick_sequence,
+            a_to_b,
+            true, // specified_input = true (ExactIn)
+            timestamp,
+            adaptive_fee_info,
+        );
 
         match result {
-            Ok(amount) => amount,
-            Err(_e) => 0, // Return 0 on any error instead of unwrapping
+            Ok(swap_result) => {
+                if a_to_b {
+                    swap_result.token_b
+                } else {
+                    swap_result.token_a
+                }
+            }
+            Err(_) => 0,
         }
-    }
-
-    async fn calculate_output_amount_internal(
-        &self,
-        _input_token: &Pubkey,
-        _input_amount: u64,
-    ) -> Result<u64, Box<dyn Error>> {
-        // let whirlpool_address = self.address;
-        // let slippage_tolerance_bps = 50;
-
-        // let whirlpool_info = rpc.get_account(&whirlpool_address).await?;
-
-        // let whirlpool = Whirlpool::from_bytes(&whirlpool_info.data)?;
-        // let specified_input = swap_type == SwapType::ExactIn;
-        // let specified_token_a = specified_mint == whirlpool.token_mint_a;
-        // let a_to_b = specified_token_a == specified_input;
-
-        // let tick_arrays = fetch_tick_arrays_or_default(rpc, whirlpool_address, &whirlpool).await?;
-
-        // let mint_infos = rpc
-        //     .get_multiple_accounts(&[whirlpool.token_mint_a, whirlpool.token_mint_b])
-        //     .await?;
-
-        // let mint_a_info = mint_infos[0]
-        //     .as_ref()
-        //     .ok_or(format!("Mint a not found: {}", whirlpool.token_mint_a))?;
-
-        // let mint_b_info = mint_infos[1]
-        //     .as_ref()
-        //     .ok_or(format!("Mint b not found: {}", whirlpool.token_mint_b))?;
-
-        // let oracle_address = get_oracle_address(&whirlpool_address)?.0;
-        // let oracle = fetch_oracle(rpc, oracle_address, &whirlpool).await?;
-
-        // let current_epoch = rpc.get_epoch_info().await?.epoch;
-        // let transfer_fee_a = get_current_transfer_fee(Some(mint_a_info), current_epoch);
-        // let transfer_fee_b = get_current_transfer_fee(Some(mint_b_info), current_epoch);
-
-        // let timestamp = SystemTime::now()
-        //     .duration_since(UNIX_EPOCH)
-        //     .unwrap()
-        //     .as_secs();
-        // let trade_enable_timestamp = oracle
-        //     .as_ref()
-        //     .map(|x| x.trade_enable_timestamp)
-        //     .unwrap_or(0);
-
-        // let quote = match swap_type {
-        //     SwapType::ExactIn => SwapQuote::ExactIn(swap_quote_by_input_token(
-        //         amount,
-        //         specified_token_a,
-        //         slippage_tolerance_bps,
-        //         whirlpool.clone().into(),
-        //         oracle.map(|oracle| oracle.into()),
-        //         tick_arrays.map(|x| x.1).into(),
-        //         timestamp,
-        //         transfer_fee_a,
-        //         transfer_fee_b,
-        //     )?),
-        //     SwapType::ExactOut => SwapQuote::ExactOut(swap_quote_by_output_token(
-        //         amount,
-        //         specified_token_a,
-        //         slippage_tolerance_bps,
-        //         whirlpool.clone().into(),
-        //         oracle.map(|oracle| oracle.into()),
-        //         tick_arrays.map(|x| x.1).into(),
-        //         timestamp,
-        //         transfer_fee_a,
-        //         transfer_fee_b,
-        //     )?),
-        // };
-        // Ok(quote.token_est_out)
-        Ok(0)
-
-        // let whirlpool_address = self.address;
-        // let slippage_tolerance_bps = 50;
-
-        // let whirlpool_addr = Address::from_str(&whirlpool_address.to_string()).unwrap();
-        // let whirlpool_info = rpc_client.get_account(&whirlpool_address).await?;
-        // let whirlpool = Whirlpool::from_bytes(&whirlpool_info.data)?;
-        // let (token_a, _) = (self.token_mint_a, self.token_mint_b);
-        // let specified_token_a = tokens_equal(input_token, &token_a);
-        // let mint_infos = rpc_client
-        //     .get_multiple_accounts(&[Pubkey::from_str(&whirlpool.token_mint_a.to_string()).unwrap(), Pubkey::from_str(&whirlpool.token_mint_b.to_string()).unwrap()])
-        //     .await?;
-
-        // let mint_a_info = mint_infos[0]
-        //     .as_ref()
-        //     .ok_or(format!("Mint a not found: {}", whirlpool.token_mint_a))?;
-
-        // let mint_b_info = mint_infos[1]
-        //     .as_ref()
-        //     .ok_or(format!("Mint b not found: {}", whirlpool.token_mint_b))?;
-
-        //     //             let whirlpool_addr = Address::from_str(&whirlpool_address.to_string()).unwrap();
-        //     // get_tick_array_address(&whirlpool_addr, x)
-        //     //     .map(|(addr, _)| Pubkey::from_str(&addr.to_string()).unwrap())
-
-        // let oracle_address = get_oracle_address(&whirlpool_addr)?.0;
-        // let oracle_info = rpc_client.get_account(&Pubkey::from_str(&oracle_address.to_string()).unwrap()).await;
-        // let oracle = oracle_info.ok().and_then(|acc| Oracle::from_bytes(&acc.data).ok());
-
-        // let current_epoch = rpc_client.get_epoch_info().await?.epoch;
-        // let transfer_fee_a = get_current_transfer_fee(Some(mint_a_info), current_epoch);
-        // let transfer_fee_b = get_current_transfer_fee(Some(mint_b_info), current_epoch);
-
-        // let timestamp = SystemTime::now()
-        //     .duration_since(UNIX_EPOCH)?
-        //     .as_secs();
-
-        // let tick_arrays = fetch_tick_arrays_or_default(rpc_client, whirlpool_address, &whirlpool).await?;
-
-        // let quote = tokio::task::spawn_blocking(move || {
-        //     swap_quote_by_input_token(
-        //         input_amount,
-        //         specified_token_a,
-        //         slippage_tolerance_bps,
-        //         whirlpool.into(),
-        //         oracle.map(|o| o.into()),
-        //         tick_arrays.map(|x| x.1).into(),
-        //         timestamp,
-        //         transfer_fee_a,
-        //         transfer_fee_b,
-        //     )
-        // })
-        // .await
-        // .map_err(|e| format!("spawn_blocking error: {}", e))?
-        // .map_err(|e| format!("swap quote error: {:?}", e))?;
-
-        // Ok(quote.token_est_out)
     }
 
     pub fn calculate_token_prices(
@@ -293,83 +287,5 @@ impl WhirlpoolPoolState {
             // Neither token is a base token, assume relative pricing
             (price_ratio, 1.0)
         }
-    }
-}
-
-/// Result of a single swap step computation
-#[allow(unused)]
-struct SwapStepResult {
-    amount_in: u64,
-    amount_out: u64,
-    next_sqrt_price: u128,
-    fee_amount: u64,
-}
-
-// async fn fetch_tick_arrays_or_default(
-//     rpc_client: &RpcClient,
-//     whirlpool_address: Pubkey,
-//     whirlpool: &Whirlpool,
-// ) -> Result<[(Pubkey, TickArrayFacade); 5], Box<dyn Error>> {
-//     let tick_array_start_index =
-//         get_tick_array_start_tick_index(whirlpool.tick_current_index, whirlpool.tick_spacing);
-//     let offset = whirlpool.tick_spacing as i32 * TICK_ARRAY_SIZE as i32;
-
-//     let tick_array_indexes = [
-//         tick_array_start_index,
-//         tick_array_start_index + offset,
-//         tick_array_start_index + offset * 2,
-//         tick_array_start_index - offset,
-//         tick_array_start_index - offset * 2,
-//     ];
-
-//     let tick_array_addresses: Vec<Pubkey> = tick_array_indexes
-//         .iter()
-//         .map(|&x| get_tick_array_address(&whirlpool_address, x).map(|y| y.0))
-//         .collect::<Result<Vec<Pubkey>, _>>()?;
-
-//     let tick_array_infos = rpc.get_multiple_accounts(&tick_array_addresses).await?;
-
-//     let maybe_tick_arrays: Vec<Option<TickArrayFacade>> = tick_array_infos
-//         .iter()
-//         .map(|x| x.as_ref().and_then(|y| TickArray::from_bytes(&y.data).ok()))
-//         .map(|x| x.map(|y| y.into()))
-//         .collect();
-
-//     let tick_arrays: Vec<TickArrayFacade> = maybe_tick_arrays
-//         .iter()
-//         .enumerate()
-//         .map(|(i, x)| x.unwrap_or(uninitialized_tick_array(tick_array_indexes[i])))
-//         .collect::<Vec<TickArrayFacade>>();
-
-//     let result: [(Pubkey, TickArrayFacade); 5] = zip(tick_array_addresses, tick_arrays)
-//         .collect::<Vec<(Pubkey, TickArrayFacade)>>()
-//         .try_into()
-//         .map_err(|_| "Failed to convert tick arrays to array".to_string())?;
-
-//     Ok(result)
-// }
-
-pub fn get_current_transfer_fee(
-    mint_account_info: Option<&SolanaAccount>,
-    current_epoch: u64,
-) -> Option<TransferFee> {
-    let token_mint_data = &mint_account_info?.data;
-    let token_mint_unpacked = StateWithExtensions::<Mint>::unpack(token_mint_data).ok()?;
-
-    if let Ok(transfer_fee_config) = token_mint_unpacked.get_extension::<TransferFeeConfig>() {
-        let fee = transfer_fee_config.get_epoch_fee(current_epoch);
-        return Some(TransferFee {
-            fee_bps: fee.transfer_fee_basis_points.into(),
-            max_fee: fee.maximum_fee.into(),
-        });
-    }
-
-    None
-}
-
-fn uninitialized_tick_array(start_tick_index: i32) -> TickArrayFacade {
-    TickArrayFacade {
-        start_tick_index,
-        ticks: [TickFacade::default(); TICK_ARRAY_SIZE],
     }
 }

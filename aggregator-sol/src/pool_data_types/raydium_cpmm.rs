@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    constants::is_base_token,
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType, common},
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType, common, common::functions},
     utils::tokens_equal,
     
 };
@@ -112,48 +111,15 @@ impl RaydiumCpmmPoolState {
         base_decimals: u8,
         quote_decimals: u8,
     ) -> (f64, f64) {
-        if self.token1_reserve == 0 || self.token0_reserve == 0 {
-            return (0.0, 0.0);
-        }
-
-        let token0_str = self.token0.to_string();
-        let token1_str = self.token1.to_string();
-
-        let is_token0_a_base_token = is_base_token(&token0_str);
-        let is_token1_a_base_token = is_base_token(&token1_str);
-
-        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
-
-        // If token1 is a base token (like USDC, SOL), use its price
-        if is_token1_a_base_token {
-            let token1_price = if token1_str == "So11111111111111111111111111111111111111112" {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let token0_price = (self.token1_reserve as f64 / self.token0_reserve as f64)
-                * decimal_scale
-                * token1_price;
-            (token0_price, token1_price)
-        } else if is_token0_a_base_token {
-            // If token0 is a base token, use its price
-            let token0_price = if token0_str == "So11111111111111111111111111111111111111112" {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let token1_price = (self.token0_reserve as f64 / self.token1_reserve as f64)
-                * (1.0 / decimal_scale)
-                * token0_price;
-            (token0_price, token1_price)
-        } else {
-            // Neither token is a base token, assume relative pricing
-            let token0_price =
-                (self.token1_reserve as f64 / self.token0_reserve as f64) * decimal_scale * 1.0;
-            (token0_price, 1.0)
-        }
+        functions::calculate_amm_token_prices(
+            &self.token0,
+            &self.token1,
+            self.token0_reserve,
+            self.token1_reserve,
+            sol_price,
+            base_decimals,
+            quote_decimals,
+        )
     }
 }
 
@@ -180,8 +146,7 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         );
 
         // 3. Calculate minimum output amount (slippage)
-        let slippage_factor = 10000 - params.slippage_bps as u64;
-        let minimum_amount_out = (amount_out as u128 * slippage_factor as u128 / 10000) as u64;
+        let minimum_amount_out = functions::calculate_slippage(amount_out, params.slippage_bps);
 
         // 4. Prepare accounts
         let (
@@ -197,16 +162,8 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
                 self.token1_vault,
                 self.token0,
                 self.token1,
-                if params.input_token.is_token_2022 {
-                    common::constants::TOKEN_PROGRAM_2022
-                } else {
-                    common::constants::TOKEN_PROGRAM
-                },
-                if params.output_token.is_token_2022 {
-                    common::constants::TOKEN_PROGRAM_2022
-                } else {
-                    common::constants::TOKEN_PROGRAM
-                },
+                functions::get_token_program(params.input_token.is_token_2022),
+                functions::get_token_program(params.output_token.is_token_2022),
             )
         } else {
             (
@@ -214,44 +171,31 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
                 self.token0_vault,
                 self.token1,
                 self.token0,
-                if params.input_token.is_token_2022 {
-                    common::constants::TOKEN_PROGRAM_2022
-                } else {
-                    common::constants::TOKEN_PROGRAM
-                },
-                if params.output_token.is_token_2022 {
-                    common::constants::TOKEN_PROGRAM_2022
-                } else {
-                    common::constants::TOKEN_PROGRAM
-                },
+                functions::get_token_program(params.input_token.is_token_2022),
+                functions::get_token_program(params.output_token.is_token_2022),
             )
         };
 
         // User ATAs
-        let user_wallet_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-        let input_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
-        let output_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
+        let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
+        let input_mint_anchor = functions::to_pubkey(&params.input_token.address);
+        let output_mint_anchor = functions::to_pubkey(&params.output_token.address);
 
         let user_input_token_old =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &input_mint_old,
-                &anchor_lang::prelude::Pubkey::new_from_array(input_token_program.to_bytes()),
+                &user_wallet_anchor,
+                &input_mint_anchor,
+                &functions::to_pubkey(&input_token_program),
             );
         let user_output_token_old =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &output_mint_old,
-                &anchor_lang::prelude::Pubkey::new_from_array(output_token_program.to_bytes()),
+                &user_wallet_anchor,
+                &output_mint_anchor,
+                &functions::to_pubkey(&output_token_program),
             );
 
-        let user_input_token =
-            solana_sdk::pubkey::Pubkey::new_from_array(user_input_token_old.to_bytes());
-        let user_output_token =
-            solana_sdk::pubkey::Pubkey::new_from_array(user_output_token_old.to_bytes());
+        let user_input_token = functions::to_address(&user_input_token_old);
+        let user_output_token = functions::to_address(&user_output_token_old);
 
         // 5. Construct Instruction Data
         // global:swap_base_input discriminator: [143, 190, 90, 218, 196, 30, 51, 222]
@@ -263,22 +207,6 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         let mut data = Vec::with_capacity(8 + 16);
         data.extend_from_slice(&discriminator);
         args.serialize(&mut data).map_err(|e| e.to_string())?;
-
-        // 6. Construct Account Metas
-        // Order:
-        // 0. payer (signer, writable)
-        // 1. authority (readonly) - derived from program
-        // 2. amm_config (readonly)
-        // 3. pool_state (writable)
-        // 4. input_token_account (writable)
-        // 5. output_token_account (writable)
-        // 6. input_vault (writable)
-        // 7. output_vault (writable)
-        // 8. input_token_program (readonly)
-        // 9. output_token_program (readonly)
-        // 10. input_token_mint (readonly)
-        // 11. output_token_mint (readonly)
-        // 12. observation_state (writable)
 
         // Derive Authority
         // AUTH_SEED = "vault_and_lp_mint_auth_seed"
@@ -309,31 +237,18 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
             data,
         };
 
-        // 7. Assemble Instructions
         let mut instructions = Vec::new();
 
         // Compute Budget
         instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(1_400_000));
 
-        // Create Input ATA (Idempotent)
-        let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(
-            spl_associated_token_account::id().to_bytes(),
-        );
-
         // Create Output ATA (Idempotent)
-        let create_output_ata_accounts = vec![
-            AccountMeta::new(params.user_wallet, true),
-            AccountMeta::new(user_output_token, false),
-            AccountMeta::new_readonly(params.user_wallet, false),
-            AccountMeta::new_readonly(output_mint, false),
-            common::constants::SYSTEM_PROGRAM_META, // system_program
-            AccountMeta::new_readonly(output_token_program, false),                 // token_program
-        ];
-        instructions.push(Instruction {
-            program_id: spl_associated_token_account_program_id,
-            accounts: create_output_ata_accounts,
-            data: vec![1], // Idempotent
-        });
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            user_output_token,
+            output_mint,
+            params.output_token.is_token_2022,
+        ));
 
         // Swap Instruction
         instructions.push(swap_instruction);

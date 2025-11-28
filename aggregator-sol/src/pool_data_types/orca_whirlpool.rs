@@ -1,6 +1,6 @@
 use crate::{
     constants::is_base_token,
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType},
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType, common::{constants, functions}},
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 
@@ -21,7 +21,6 @@ use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
 use async_trait::async_trait;
 use solana_program::instruction::{AccountMeta, Instruction};
-use crate::pool_data_types::common::constants;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
@@ -345,9 +344,7 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         }
 
         // 3. Calculate slippage
-        let slippage_factor = 10000 - params.slippage_bps as u64;
-        let other_amount_threshold =
-            (expected_amount_out as u128 * slippage_factor as u128 / 10000) as u64;
+        let other_amount_threshold = functions::calculate_slippage(expected_amount_out, params.slippage_bps);
 
         // 4. Get tick array addresses
         let start_tick_index = orca_whirlpools_core::get_tick_array_start_tick_index(
@@ -377,16 +374,8 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         let oracle_seeds = &[b"oracle", self.address.as_ref()];
         let (oracle_address, _) = Pubkey::find_program_address(oracle_seeds, &program_id);
 
-        let token_program_0 = if params.input_token.is_token_2022 {
-            constants::TOKEN_PROGRAM_2022
-        } else {
-            constants::TOKEN_PROGRAM
-        };
-        let token_program_1 = if params.output_token.is_token_2022 {
-            constants::TOKEN_PROGRAM_2022
-        } else {
-            constants::TOKEN_PROGRAM
-        };
+        let token_program_0 = functions::get_token_program(params.input_token.is_token_2022);
+        let token_program_1 = functions::get_token_program(params.output_token.is_token_2022);
 
         // Determine which token program to use for input and output
         let (token_program_a, token_program_b) = if a_to_b {
@@ -415,30 +404,25 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         };
 
         // 7. Get user's ATAs
-        let user_wallet_anchor =
-            anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-        let mint_a_anchor =
-            anchor_lang::prelude::Pubkey::new_from_array(self.token_mint_a.to_bytes());
-        let mint_b_anchor =
-            anchor_lang::prelude::Pubkey::new_from_array(self.token_mint_b.to_bytes());
+        let user_wallet_pubkey = functions::to_pubkey(&params.user_wallet);
+        let mint_a_pubkey = functions::to_pubkey(&self.token_mint_a);
+        let mint_b_pubkey = functions::to_pubkey(&self.token_mint_b);
 
-        let token_owner_account_a_anchor =
+        let token_owner_account_a_pubkey =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_anchor,
-                &mint_a_anchor,
+                &user_wallet_pubkey,
+                &mint_a_pubkey,
                 &token_program_a_id,
             );
-        let token_owner_account_b_anchor =
+        let token_owner_account_b_pubkey =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_anchor,
-                &mint_b_anchor,
+                &user_wallet_pubkey,
+                &mint_b_pubkey,
                 &token_program_b_id,
             );
 
-        let token_owner_account_a =
-            Pubkey::new_from_array(token_owner_account_a_anchor.to_bytes());
-        let token_owner_account_b =
-            Pubkey::new_from_array(token_owner_account_b_anchor.to_bytes());
+        let token_owner_account_a = functions::to_address(&token_owner_account_a_pubkey);
+        let token_owner_account_b = functions::to_address(&token_owner_account_b_pubkey);
 
         // 8. Build SwapV2 instruction
         // Discriminator for SwapV2: sha256("global:swap_v2")[..8]
@@ -496,45 +480,20 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         ];
 
         // Create ATA for token A if needed
-        let create_ata_a_accounts = vec![
-            AccountMeta::new(params.user_wallet, true),
-            AccountMeta::new(token_owner_account_a, false),
-            AccountMeta::new_readonly(params.user_wallet, false),
-            AccountMeta::new_readonly(self.token_mint_a, false),
-            constants::SYSTEM_PROGRAM_META,
-            if token_program_a == constants::TOKEN_PROGRAM_2022 {
-                constants::TOKEN_PROGRAM_2022_META
-            } else {
-                constants::TOKEN_PROGRAM_META
-            },
-        ];
-
-        let spl_ata_program = Pubkey::new_from_array(spl_associated_token_account::id().to_bytes());
-        instructions.push(Instruction {
-            program_id: spl_ata_program,
-            accounts: create_ata_a_accounts,
-            data: vec![1], // Idempotent
-        });
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            token_owner_account_a,
+            self.token_mint_a,
+            token_program_a == constants::TOKEN_PROGRAM_2022,
+        ));
 
         // Create ATA for token B if needed
-        let create_ata_b_accounts = vec![
-            AccountMeta::new(params.user_wallet, true),
-            AccountMeta::new(token_owner_account_b, false),
-            AccountMeta::new_readonly(params.user_wallet, false),
-            AccountMeta::new_readonly(self.token_mint_b, false),
-            constants::SYSTEM_PROGRAM_META,
-            if token_program_b == constants::TOKEN_PROGRAM_2022 {
-                constants::TOKEN_PROGRAM_2022_META
-            } else {
-                constants::TOKEN_PROGRAM_META
-            },
-        ];
-
-        instructions.push(Instruction {
-            program_id: spl_ata_program,
-            accounts: create_ata_b_accounts,
-            data: vec![1], // Idempotent
-        });
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            token_owner_account_b,
+            self.token_mint_b,
+            token_program_b == constants::TOKEN_PROGRAM_2022,
+        ));
 
         // Add swap instruction
         instructions.push(swap_instruction);

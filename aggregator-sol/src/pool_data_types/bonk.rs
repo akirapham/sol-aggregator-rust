@@ -59,7 +59,7 @@ pub struct BonkPoolUpdate {
     pub last_updated: u64,
     pub is_account_state_update: bool,
     pub pool_update_event_type: PoolUpdateEventType,
-    pub additional_event_type: i32, // for tick array index tracking, 0 for others
+    pub additional_event_type: i32,
 }
 
 #[allow(dead_code)]

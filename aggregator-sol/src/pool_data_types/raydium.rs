@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use crate::{
-    constants::is_base_token,
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType, traits::BuildSwapInstruction, common::constants},
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType, traits::BuildSwapInstruction, common::{constants, functions}},
     utils::tokens_equal,
 };
 use serde::{Deserialize, Serialize};
@@ -99,48 +98,15 @@ impl RaydiumAmmV4PoolState {
         base_decimals: u8,
         quote_decimals: u8,
     ) -> (f64, f64) {
-        if self.quote_reserve == 0 || self.base_reserve == 0 {
-            return (0.0, 0.0);
-        }
-
-        let base_token_str = self.base_mint.to_string();
-        let quote_token_str = self.quote_mint.to_string();
-
-        let is_base_a_base_token = is_base_token(&base_token_str);
-        let is_quote_a_base_token = is_base_token(&quote_token_str);
-
-        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
-
-        // If quote is a base token (like USDC, SOL), use its price
-        if is_quote_a_base_token {
-            let quote_price = if quote_token_str == "So11111111111111111111111111111111111111112" {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let base_price = (self.quote_reserve as f64 / self.base_reserve as f64)
-                * decimal_scale
-                * quote_price;
-            (base_price, quote_price)
-        } else if is_base_a_base_token {
-            // If base is a base token, use its price
-            let base_price = if base_token_str == "So11111111111111111111111111111111111111112" {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let quote_price = (self.base_reserve as f64 / self.quote_reserve as f64)
-                * (1.0 / decimal_scale)
-                * base_price;
-            (base_price, quote_price)
-        } else {
-            // Neither token is a base token, assume relative pricing
-            let base_price =
-                (self.quote_reserve as f64 / self.base_reserve as f64) * decimal_scale * 1.0;
-            (base_price, 1.0)
-        }
+        functions::calculate_amm_token_prices(
+            &self.base_mint,
+            &self.quote_mint,
+            self.base_reserve,
+            self.quote_reserve,
+            sol_price,
+            base_decimals,
+            quote_decimals,
+        )
     }
 }
 
@@ -172,7 +138,7 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         );
 
         // Apply slippage tolerance
-        let minimum_amount_out = (output_amount as u64) * (10000 - params.slippage_bps as u64) / 10000;
+        let minimum_amount_out = functions::calculate_slippage(output_amount, params.slippage_bps);
 
         // Determine source and destination token accounts
         let (source_mint, dest_mint) = if is_buy {
@@ -188,9 +154,9 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         };
 
         // Convert to anchor_lang Pubkey for ATA derivation
-        let user_wallet_anchor = anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-        let source_mint_anchor = anchor_lang::prelude::Pubkey::new_from_array(source_mint.to_bytes());
-        let dest_mint_anchor = anchor_lang::prelude::Pubkey::new_from_array(dest_mint.to_bytes());
+        let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
+        let source_mint_anchor = functions::to_pubkey(&source_mint);
+        let dest_mint_anchor = functions::to_pubkey(&dest_mint);
 
         // Derive ATAs using anchor_lang types
         let user_source_token_account_anchor = spl_associated_token_account::get_associated_token_address(
@@ -203,8 +169,8 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         );
 
         // Convert back to solana_sdk Pubkey for AccountMeta
-        let user_source_token_account = solana_sdk::pubkey::Pubkey::new_from_array(user_source_token_account_anchor.to_bytes());
-        let user_destination_token_account = solana_sdk::pubkey::Pubkey::new_from_array(user_destination_token_account_anchor.to_bytes());
+        let user_source_token_account = functions::to_address(&user_source_token_account_anchor);
+        let user_destination_token_account = functions::to_address(&user_destination_token_account_anchor);
 
         // Build instructions
         let mut instructions = Vec::with_capacity(6);
@@ -223,27 +189,14 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
             );
         }
 
-        let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(
-            spl_associated_token_account::id().to_bytes(),
-        );
-
         // Create output ATA if needed (for buying tokens)
-        
-        let user_output_token_account = solana_sdk::pubkey::Pubkey::new_from_array(user_destination_token_account_anchor.to_bytes());
-        let create_output_ata_accounts = vec![
-            AccountMeta::new(params.user_wallet, true),                 // funding
-            AccountMeta::new(user_output_token_account, false),         // associated_token
-            AccountMeta::new_readonly(params.user_wallet, false),       // wallet
-            AccountMeta::new_readonly(params.output_token.address, false), // mint
-            constants::SYSTEM_PROGRAM_META,                     // system_program
-            constants::TOKEN_PROGRAM_META,                      // token_program (SPL Token only for Raydium V4)
-        ];
-        let create_output_ata_ix = Instruction {
-            program_id: spl_associated_token_account_program_id,
-            accounts: create_output_ata_accounts,
-            data: vec![1], // Idempotent instruction discriminator
-        };
-        instructions.push(create_output_ata_ix);
+        let user_output_token_account = functions::to_address(&user_destination_token_account_anchor);
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            user_output_token_account,
+            params.output_token.address,
+            false, // Raydium V4 only supports SPL Token
+        ));
         
         // Build the swap instruction (SwapBaseIn - tag 9)
         // 17 accounts as per Raydium AMM V4 spec

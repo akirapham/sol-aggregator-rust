@@ -16,8 +16,13 @@ use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-
 use crate::utils::tokens_equal;
+use crate::pool_data_types::traits::BuildSwapInstruction;
+use crate::types::SwapParams;
+use async_trait::async_trait;
+use solana_program::instruction::{AccountMeta, Instruction};
+use crate::pool_data_types::common::constants;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct WhirlpoolPoolState {
@@ -288,4 +293,263 @@ impl WhirlpoolPoolState {
             (price_ratio, 1.0)
         }
     }
+}
+
+#[derive(BorshSerialize)]
+struct SwapV2InstructionArgs {
+    amount: u64,
+    other_amount_threshold: u64,
+    sqrt_price_limit: u128,
+    amount_specified_is_input: bool,
+    a_to_b: bool,
+    remaining_accounts_info: Option<RemainingAccountsInfo>,
+}
+
+#[derive(BorshSerialize)]
+struct RemainingAccountsInfo {
+    slices: Vec<RemainingAccountsSlice>,
+}
+
+#[derive(BorshSerialize)]
+struct RemainingAccountsSlice {
+    accounts_type: u8, // 0 = SupplementalTickArrays
+    length: u8,
+}
+
+#[async_trait]
+impl BuildSwapInstruction for WhirlpoolPoolState {
+    async fn build_swap_instruction(
+        &self,
+        params: &SwapParams,
+        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> std::result::Result<Vec<Instruction>, String> {
+        // 1. Determine swap direction
+        let specified_token_a = tokens_equal(&params.input_token.address, &self.token_mint_a);
+        let a_to_b = specified_token_a; // ExactIn: Input A -> Output B (A to B)
+
+        if !specified_token_a && !tokens_equal(&params.input_token.address, &self.token_mint_b) {
+            return Err("Input token does not match pool mints".to_string());
+        }
+
+        // 2. Calculate output amount using existing function
+        let expected_amount_out = self
+            .calculate_output_amount(
+                &params.input_token.address,
+                params.input_amount,
+                _amm_config_fetcher,
+            )
+            .await;
+
+        if expected_amount_out == 0 {
+            return Err("Failed to calculate output amount or output is zero".to_string());
+        }
+
+        // 3. Calculate slippage
+        let slippage_factor = 10000 - params.slippage_bps as u64;
+        let other_amount_threshold =
+            (expected_amount_out as u128 * slippage_factor as u128 / 10000) as u64;
+
+        // 4. Get tick array addresses
+        let start_tick_index = orca_whirlpools_core::get_tick_array_start_tick_index(
+            self.tick_current_index,
+            self.tick_spacing,
+        );
+        let offset = self.tick_spacing as i32 * TICK_ARRAY_SIZE as i32;
+
+        let tick_array_indexes = [
+            start_tick_index,
+            start_tick_index + offset,
+            start_tick_index + offset * 2,
+            start_tick_index - offset,
+            start_tick_index - offset * 2,
+        ];
+
+        let program_id = Self::get_program_id();
+        let tick_array_addresses: [Pubkey; 5] = [
+            get_tick_array_pda(&self.address, tick_array_indexes[0], &program_id),
+            get_tick_array_pda(&self.address, tick_array_indexes[1], &program_id),
+            get_tick_array_pda(&self.address, tick_array_indexes[2], &program_id),
+            get_tick_array_pda(&self.address, tick_array_indexes[3], &program_id),
+            get_tick_array_pda(&self.address, tick_array_indexes[4], &program_id),
+        ];
+        
+        // 5. Get oracle address
+        let oracle_seeds = &[b"oracle", self.address.as_ref()];
+        let (oracle_address, _) = Pubkey::find_program_address(oracle_seeds, &program_id);
+
+        let token_program_0 = if params.input_token.is_token_2022 {
+            constants::TOKEN_PROGRAM_2022
+        } else {
+            constants::TOKEN_PROGRAM
+        };
+        let token_program_1 = if params.output_token.is_token_2022 {
+            constants::TOKEN_PROGRAM_2022
+        } else {
+            constants::TOKEN_PROGRAM
+        };
+
+        // Determine which token program to use for input and output
+        let (token_program_a, token_program_b) = if a_to_b {
+            (token_program_0, token_program_1)
+        } else {
+            (token_program_1, token_program_0)
+        };
+
+        // For ATA creation
+        let token_program_0_id = if params.input_token.is_token_2022 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id()
+        };
+        let token_program_1_id = if params.output_token.is_token_2022 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id()
+        };
+
+        // Determine which token program to use for input and output
+        let (token_program_a_id, token_program_b_id) = if a_to_b {
+            (token_program_0_id, token_program_1_id)
+        } else {
+            (token_program_1_id, token_program_0_id)
+        };
+
+        // 7. Get user's ATAs
+        let user_wallet_anchor =
+            anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
+        let mint_a_anchor =
+            anchor_lang::prelude::Pubkey::new_from_array(self.token_mint_a.to_bytes());
+        let mint_b_anchor =
+            anchor_lang::prelude::Pubkey::new_from_array(self.token_mint_b.to_bytes());
+
+        let token_owner_account_a_anchor =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_anchor,
+                &mint_a_anchor,
+                &token_program_a_id,
+            );
+        let token_owner_account_b_anchor =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_anchor,
+                &mint_b_anchor,
+                &token_program_b_id,
+            );
+
+        let token_owner_account_a =
+            Pubkey::new_from_array(token_owner_account_a_anchor.to_bytes());
+        let token_owner_account_b =
+            Pubkey::new_from_array(token_owner_account_b_anchor.to_bytes());
+
+        // 8. Build SwapV2 instruction
+        // Discriminator for SwapV2: sha256("global:swap_v2")[..8]
+        let discriminator: [u8; 8] = [43, 4, 237, 11, 26, 201, 30, 98];
+
+        let args = SwapV2InstructionArgs {
+            amount: params.input_amount,
+            other_amount_threshold,
+            sqrt_price_limit: 0, // 0 means default min/max
+            amount_specified_is_input: true, // ExactIn
+            a_to_b,
+            remaining_accounts_info: Some(RemainingAccountsInfo {
+                slices: vec![RemainingAccountsSlice {
+                    accounts_type: 0, // SupplementalTickArrays
+                    length: 2,
+                }],
+            }),
+        };
+
+        let mut data = Vec::with_capacity(8 + 64);
+        data.extend_from_slice(&discriminator);
+        args.serialize(&mut data).map_err(|e| e.to_string())?;
+
+        let mut accounts = vec![
+            AccountMeta::new_readonly(token_program_a, false),         // token_program_a
+            AccountMeta::new_readonly(token_program_b, false),         // token_program_b
+            AccountMeta::new_readonly(constants::SPL_MEMO_PROGRAM, false), // memo_program
+            AccountMeta::new_readonly(params.user_wallet, true),       // token_authority (signer)
+            AccountMeta::new(self.address, false),                     // whirlpool
+            AccountMeta::new_readonly(self.token_mint_a, false),       // token_mint_a
+            AccountMeta::new_readonly(self.token_mint_b, false),       // token_mint_b
+            AccountMeta::new(token_owner_account_a, false),        // token_owner_account_a
+            AccountMeta::new(self.token_vault_a, false),               // token_vault_a
+            AccountMeta::new(token_owner_account_b, false),        // token_owner_account_b
+            AccountMeta::new(self.token_vault_b, false),               // token_vault_b
+            AccountMeta::new(tick_array_addresses[0], false),          // tick_array_0
+            AccountMeta::new(tick_array_addresses[1], false),          // tick_array_1
+            AccountMeta::new(tick_array_addresses[2], false),          // tick_array_2
+            AccountMeta::new(oracle_address, false),                   // oracle
+        ];
+
+        // Add supplemental tick arrays as remaining accounts
+        accounts.push(AccountMeta::new(tick_array_addresses[3], false));
+        accounts.push(AccountMeta::new(tick_array_addresses[4], false));
+
+        let swap_instruction = Instruction {
+            program_id: Self::get_program_id(),
+            accounts,
+            data,
+        };
+
+        // 9. Build instruction list
+        let mut instructions = vec![
+            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
+        ];
+
+        // Create ATA for token A if needed
+        let create_ata_a_accounts = vec![
+            AccountMeta::new(params.user_wallet, true),
+            AccountMeta::new(token_owner_account_a, false),
+            AccountMeta::new_readonly(params.user_wallet, false),
+            AccountMeta::new_readonly(self.token_mint_a, false),
+            constants::SYSTEM_PROGRAM_META,
+            if token_program_a == constants::TOKEN_PROGRAM_2022 {
+                constants::TOKEN_PROGRAM_2022_META
+            } else {
+                constants::TOKEN_PROGRAM_META
+            },
+        ];
+
+        let spl_ata_program = Pubkey::new_from_array(spl_associated_token_account::id().to_bytes());
+        instructions.push(Instruction {
+            program_id: spl_ata_program,
+            accounts: create_ata_a_accounts,
+            data: vec![1], // Idempotent
+        });
+
+        // Create ATA for token B if needed
+        let create_ata_b_accounts = vec![
+            AccountMeta::new(params.user_wallet, true),
+            AccountMeta::new(token_owner_account_b, false),
+            AccountMeta::new_readonly(params.user_wallet, false),
+            AccountMeta::new_readonly(self.token_mint_b, false),
+            constants::SYSTEM_PROGRAM_META,
+            if token_program_b == constants::TOKEN_PROGRAM_2022 {
+                constants::TOKEN_PROGRAM_2022_META
+            } else {
+                constants::TOKEN_PROGRAM_META
+            },
+        ];
+
+        instructions.push(Instruction {
+            program_id: spl_ata_program,
+            accounts: create_ata_b_accounts,
+            data: vec![1], // Idempotent
+        });
+
+        // Add swap instruction
+        instructions.push(swap_instruction);
+
+        Ok(instructions)
+    }
+}
+// Helper function to derive tick array PDAs
+fn get_tick_array_pda(whirlpool: &Pubkey, start_tick_index: i32, program_id: &Pubkey) -> Pubkey {
+    let start_tick_index_str = start_tick_index.to_string();
+    let seeds = &[
+        b"tick_array",
+        whirlpool.as_ref(),
+        &start_tick_index_str.as_bytes(),
+    ];
+    let (pda, _) = Pubkey::find_program_address(seeds, program_id);
+    pda
 }

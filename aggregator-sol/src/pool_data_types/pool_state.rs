@@ -281,9 +281,7 @@ impl BuildSwapInstruction for PoolState {
             PoolState::MeteoraDbc(_state) => {
                 Err("Meteora DBC BuildSwapInstruction not yet implemented".to_string())
             }
-            PoolState::OrcaWhirlpool(_state) => {
-                Err("Orca Whirlpool BuildSwapInstruction not yet implemented".to_string())
-            }
+            PoolState::OrcaWhirlpool(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
         }
     }
 }

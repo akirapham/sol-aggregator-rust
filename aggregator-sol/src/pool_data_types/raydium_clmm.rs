@@ -4,7 +4,7 @@ use crate::{
     constants::is_base_token,
     pool_data_types::{
         clmm::{pool::PoolUtils, tpe::ComputeClmmPoolInfo},
-        common, GetAmmConfig, PoolUpdateEventType,
+        common::{self, functions}, GetAmmConfig, PoolUpdateEventType,
     },
     utils::tokens_equal,
 };
@@ -324,9 +324,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         let all_tick_arrays = calculation_result.remaining_accounts;
 
         // Calculate slippage
-        let slippage_factor = 10000 - params.slippage_bps as u64;
-        let other_amount_threshold =
-            (expected_amount_out as u128 * slippage_factor as u128 / 10000) as u64;
+        let other_amount_threshold = functions::calculate_slippage(expected_amount_out, params.slippage_bps);
 
         // Sqrt price limit
         let sqrt_price_limit_x64 = if zero_for_one {
@@ -378,32 +376,27 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         };
 
         // Convert Address types to anchor_lang Pubkey for compatibility
-        let user_wallet_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-        let input_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.input_token.address.to_bytes());
-        let output_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
+        let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
+        let input_mint_anchor = functions::to_pubkey(&params.input_token.address);
+        let output_mint_anchor = functions::to_pubkey(&params.output_token.address);
 
         // Get user's associated token accounts
         let user_input_token_old =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &input_mint_old,
+                &user_wallet_anchor,
+                &input_mint_anchor,
                 &input_token_program,
             );
         let user_output_token_old =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &output_mint_old,
+                &user_wallet_anchor,
+                &output_mint_anchor,
                 &output_token_program,
             );
 
         // Convert back to Address for AccountMeta
-        let user_input_token =
-            solana_sdk::pubkey::Pubkey::new_from_array(user_input_token_old.to_bytes());
-        let user_output_token =
-            solana_sdk::pubkey::Pubkey::new_from_array(user_output_token_old.to_bytes());
+        let user_input_token = functions::to_address(&user_input_token_old);
+        let user_output_token = functions::to_address(&user_output_token_old);
 
         // SwapV2 instruction (supports both SPL Token and Token-2022)
         // Discriminator for SwapV2
@@ -449,49 +442,20 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         let mut instructions = vec![compute_budget_instruction];
 
         // Create input token ATA instruction (idempotent - creates if doesn't exist)
-        let create_input_ata_accounts = vec![
-            AccountMeta::new(params.user_wallet, true), // funding
-            AccountMeta::new(user_input_token, false),  // associated_token
-            AccountMeta::new_readonly(params.user_wallet, false), // wallet
-            AccountMeta::new_readonly(input_mint, false), // mint
-            common::constants::SYSTEM_PROGRAM_META,     // system_program
-            if params.input_token.is_token_2022 {
-                common::constants::TOKEN_PROGRAM_2022_META
-            } else {
-                common::constants::TOKEN_PROGRAM_META
-            }, // token_program
-        ];
-
-        let spl_associated_token_account_program_id = solana_sdk::pubkey::Pubkey::new_from_array(
-            spl_associated_token_account::id().to_bytes(),
-        );
-        let create_input_ata_ix = Instruction {
-            program_id: spl_associated_token_account_program_id,
-            accounts: create_input_ata_accounts,
-            data: vec![1], // Idempotent instruction discriminator
-        };
-        instructions.push(create_input_ata_ix);
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            user_input_token,
+            input_mint,
+            params.input_token.is_token_2022,
+        ));
 
         // Create output token ATA instruction (idempotent - creates if doesn't exist)
-        let create_output_ata_accounts = vec![
-            AccountMeta::new(params.user_wallet, true), // funding
-            AccountMeta::new(user_output_token, false), // associated_token
-            AccountMeta::new_readonly(params.user_wallet, false), // wallet
-            AccountMeta::new_readonly(output_mint, false), // mint
-            common::constants::SYSTEM_PROGRAM_META,     // system_program
-            if params.output_token.is_token_2022 {
-                common::constants::TOKEN_PROGRAM_2022_META
-            } else {
-                common::constants::TOKEN_PROGRAM_META
-            }, // token_program
-        ];
-
-        let create_output_ata_ix = Instruction {
-            program_id: spl_associated_token_account_program_id,
-            accounts: create_output_ata_accounts,
-            data: vec![1], // Idempotent instruction discriminator
-        };
-        instructions.push(create_output_ata_ix);
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            user_output_token,
+            output_mint,
+            params.output_token.is_token_2022,
+        ));
 
         // Add swap instruction
         instructions.push(swap_instruction);

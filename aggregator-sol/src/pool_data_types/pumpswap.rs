@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use crate::{
-    constants::is_base_token,
     pool_data_types::{
         common,
         pumpf::{
             constants,
-            functions::{self, *},
+            functions::{self as pumpf_functions, *},
         },
         GetAmmConfig, PoolUpdateEventType,
+        common::functions,
     },
     utils::{get_sol_mint, tokens_equal},
 };
@@ -101,50 +101,15 @@ impl PumpSwapPoolState {
         base_decimals: u8,
         quote_decimals: u8,
     ) -> (f64, f64) {
-        if self.quote_reserve == 0 || self.base_reserve == 0 {
-            return (0.0, 0.0);
-        }
-
-        let base_token_str = self.base_mint.to_string();
-        let quote_token_str = self.quote_mint.to_string();
-
-        let is_base_a_base_token = is_base_token(&base_token_str);
-        let is_quote_a_base_token = is_base_token(&quote_token_str);
-
-        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
-
-        // If quote is a base token (like USDC, SOL), use its price
-        if is_quote_a_base_token {
-            let quote_price = if is_quote_a_base_token
-                && quote_token_str == "So11111111111111111111111111111111111111112"
-            {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let base_price = (self.quote_reserve as f64 / self.base_reserve as f64)
-                * decimal_scale
-                * quote_price;
-            (base_price, quote_price)
-        } else if is_base_a_base_token {
-            // If base is a base token, use its price
-            let base_price = if base_token_str == "So11111111111111111111111111111111111111112" {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let quote_price = (self.base_reserve as f64 / self.quote_reserve as f64)
-                * (1.0 / decimal_scale)
-                * base_price;
-            (base_price, quote_price)
-        } else {
-            // Neither token is a base token, assume quote_reserve is the pricing reference
-            let base_price =
-                (self.quote_reserve as f64 / self.base_reserve as f64) * decimal_scale * 1.0;
-            (base_price, 1.0)
-        }
+        functions::calculate_amm_token_prices(
+            &self.base_mint,
+            &self.quote_mint,
+            self.base_reserve,
+            self.quote_reserve,
+            sol_price,
+            base_decimals,
+            quote_decimals,
+        )
     }
 }
 
@@ -161,35 +126,23 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         let pool_base_token_account = self.pool_base_token_account;
         let pool_quote_token_account = self.pool_quote_token_account;
         let creator = self.coin_creator;
-        let coin_creator_vault_ata = functions::coin_creator_vault_ata(creator, quote_mint);
-        let coin_creator_vault_authority = functions::coin_creator_vault_authority(creator);
-        let base_token_program = if params.input_token.address == base_mint {
-            if params.input_token.is_token_2022 {
-                common::constants::TOKEN_PROGRAM_2022
+        let coin_creator_vault_ata = pumpf_functions::coin_creator_vault_ata(creator, quote_mint);
+        let coin_creator_vault_authority = pumpf_functions::coin_creator_vault_authority(creator);
+        let base_token_program = functions::get_token_program(
+            if params.input_token.address == base_mint {
+                params.input_token.is_token_2022
             } else {
-                common::constants::TOKEN_PROGRAM
+                params.output_token.is_token_2022
             }
-        } else {
-            if params.output_token.is_token_2022 {
-                common::constants::TOKEN_PROGRAM_2022
-            } else {
-                common::constants::TOKEN_PROGRAM
-            }
-        };
+        );
 
-        let quote_token_program = if params.input_token.address == quote_mint {
-            if params.input_token.is_token_2022 {
-                common::constants::TOKEN_PROGRAM_2022
+        let quote_token_program = functions::get_token_program(
+            if params.input_token.address == quote_mint {
+                params.input_token.is_token_2022
             } else {
-                common::constants::TOKEN_PROGRAM
+                params.output_token.is_token_2022
             }
-        } else {
-            if params.output_token.is_token_2022 {
-                common::constants::TOKEN_PROGRAM_2022
-            } else {
-                common::constants::TOKEN_PROGRAM
-            }
-        };
+        );
 
         let is_wsol = (base_mint == common::constants::WSOL_TOKEN_ACCOUNT
             && quote_mint != common::constants::USDC_TOKEN_ACCOUNT)
@@ -258,35 +211,28 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         }
 
         // Convert Address types to anchor_lang Pubkey for compatibility
-        let user_wallet_old =
-            anchor_lang::prelude::Pubkey::new_from_array(params.user_wallet.to_bytes());
-        let base_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(base_mint.to_bytes());
-        let quote_mint_old =
-            anchor_lang::prelude::Pubkey::new_from_array(quote_mint.to_bytes());
-        let base_token_program_old =
-            anchor_lang::prelude::Pubkey::new_from_array(base_token_program.to_bytes());
-        let quote_token_program_old =
-            anchor_lang::prelude::Pubkey::new_from_array(quote_token_program.to_bytes());
+        let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
+        let base_mint_anchor = functions::to_pubkey(&base_mint);
+        let quote_mint_anchor = functions::to_pubkey(&quote_mint);
+        let base_token_program_anchor = functions::to_pubkey(&base_token_program);
+        let quote_token_program_anchor = functions::to_pubkey(&quote_token_program);
 
         // Get user's associated token accounts
         let user_base_token_account_old =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &base_mint_old,
-                &base_token_program_old,
+                &user_wallet_anchor,
+                &base_mint_anchor,
+                &base_token_program_anchor,
             );
         let user_quote_token_account_old =
             spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &quote_mint_old,
-                &quote_token_program_old,
+                &user_wallet_anchor,
+                &quote_mint_anchor,
+                &quote_token_program_anchor,
             );
         // Convert back to Address for AccountMeta
-        let user_base_token_account =
-            solana_sdk::pubkey::Pubkey::new_from_array(user_base_token_account_old.to_bytes());
-        let user_quote_token_account =
-            solana_sdk::pubkey::Pubkey::new_from_array(user_quote_token_account_old.to_bytes());
+        let user_base_token_account = functions::to_address(&user_base_token_account_old);
+        let user_quote_token_account = functions::to_address(&user_quote_token_account_old);
 
 
         // Determine fee recipient based on pool's protocol_fee_recipient
@@ -301,14 +247,12 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             constants::FEE_RECIPIENT_META
         };
 
-        let fee_recipient_old =
-            anchor_lang::prelude::Pubkey::new_from_array(fee_recipient.to_bytes());
-        let fee_recipient_ata_old = spl_associated_token_account::get_associated_token_address(
-            &fee_recipient_old,
-            &quote_mint_old,
+        let fee_recipient_anchor = functions::to_pubkey(&fee_recipient);
+        let fee_recipient_ata_anchor = spl_associated_token_account::get_associated_token_address(
+            &fee_recipient_anchor,
+            &quote_mint_anchor,
         );
-        let fee_recipient_ata =
-            solana_sdk::pubkey::Pubkey::new_from_array(fee_recipient_ata_old.to_bytes());
+        let fee_recipient_ata = functions::to_address(&fee_recipient_ata_anchor);
 
         // ========================================
         // Build instructions
@@ -333,39 +277,19 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         // Create output token ATA instruction (idempotent - creates if doesn't exist)
         // Only if output is NOT WSOL
         if params.output_token.address != common::constants::WSOL_TOKEN_ACCOUNT {
-            let output_mint_old = anchor_lang::prelude::Pubkey::new_from_array(params.output_token.address.to_bytes());
-            let output_token_program_old = if params.output_token.is_token_2022 {
-                anchor_lang::prelude::Pubkey::new_from_array(common::constants::TOKEN_PROGRAM_2022.to_bytes())
-            } else {
-                anchor_lang::prelude::Pubkey::new_from_array(common::constants::TOKEN_PROGRAM.to_bytes())
-            };
-            
-            let user_output_token_account_old = spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_old,
-                &output_mint_old,
-                &output_token_program_old,
+            let user_output_token_account_anchor = spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_anchor,
+                &functions::to_pubkey(&params.output_token.address),
+                &functions::to_pubkey(&functions::get_token_program(params.output_token.is_token_2022)),
             );
-            let user_output_token_account = solana_sdk::pubkey::Pubkey::new_from_array(user_output_token_account_old.to_bytes());
+            let user_output_token_account = functions::to_address(&user_output_token_account_anchor);
 
-            let create_output_ata_accounts = vec![
-                AccountMeta::new(params.user_wallet, true), // funding
-                AccountMeta::new(user_output_token_account, false), // associated_token
-                AccountMeta::new_readonly(params.user_wallet, false), // wallet
-                AccountMeta::new_readonly(params.output_token.address, false), // mint
-                common::constants::SYSTEM_PROGRAM_META,     // system_program
-                if params.output_token.is_token_2022 {
-                    common::constants::TOKEN_PROGRAM_2022_META
-                } else {
-                    common::constants::TOKEN_PROGRAM_META
-                },
-            ];
-
-            let create_output_ata_ix = Instruction {
-                program_id: spl_associated_token_account_program_id,
-                accounts: create_output_ata_accounts,
-                data: vec![1], // Idempotent instruction discriminator
-            };
-            instructions.push(create_output_ata_ix);
+            instructions.push(functions::create_ata_instruction(
+                params.user_wallet,
+                user_output_token_account,
+                params.output_token.address,
+                params.output_token.is_token_2022,
+            ));
         }
 
         // Create buy instruction
@@ -446,9 +370,11 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         };
 
         instructions.push(instruction);
+
         instructions.extend(sol_trade_sdk::trading::common::close_wsol(
             &params.user_wallet,
         ));
         Ok(instructions)
     }
 }
+

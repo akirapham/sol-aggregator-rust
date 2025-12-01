@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::types::SwapParams;
 use crate::{
     constants::wsol,
     pool_data_types::{
@@ -12,7 +13,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
-use crate::types::SwapParams;
 
 /// Macro to delegate simple field access across all PoolState variants
 /// Usage: pool_state_delegate!(self, field_name)
@@ -77,7 +77,8 @@ pub enum PoolUpdateEventType {
     RaydiumClmmTickArrayStateAccount,
     RaydiumClmmTickArrayBitmapExtensionAccount,
     RaydiumCpmmPoolStateAccount,
-    DbcPoolStateAccount,
+    DbcPoolConfigAccount,
+    DbcVirtualPoolAccount,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
     WhirlpoolOracleStateAccount,
@@ -270,18 +271,42 @@ impl BuildSwapInstruction for PoolState {
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         match self {
-            PoolState::Pumpfun(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
-            PoolState::PumpSwap(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
-            PoolState::RaydiumAmmV4(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
-            PoolState::RaydiumCpmm(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
+            PoolState::Pumpfun(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
+            PoolState::PumpSwap(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
+            PoolState::RaydiumAmmV4(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
+            PoolState::RaydiumCpmm(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
             PoolState::Bonk(_state) => {
                 Err("Bonk BuildSwapInstruction not yet implemented".to_string())
             }
-            PoolState::RadyiumClmm(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
+            PoolState::RadyiumClmm(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
             PoolState::MeteoraDbc(_state) => {
                 Err("Meteora DBC BuildSwapInstruction not yet implemented".to_string())
             }
-            PoolState::OrcaWhirlpool(state) => state.build_swap_instruction(params, amm_config_fetcher).await,
+            PoolState::OrcaWhirlpool(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
         }
     }
 }

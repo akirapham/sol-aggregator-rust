@@ -70,10 +70,10 @@ use tokio::sync::mpsc;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
-        RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart, RaydiumClmmPoolUpdate,
-        RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState, TickState,
-        WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate,
+        DbcPoolUpdate, PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
+        RaydiumAmmV4PoolUpdate, RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart,
+        RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState,
+        TickState, WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate,
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
@@ -1293,10 +1293,92 @@ pub fn handle_dex_event(
                     })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
-                // do nothing for now
+                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
+                    DbcPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey,
+                        config: e.virtual_pool.config,
+                        creator: e.virtual_pool.creator,
+                        base_mint: e.virtual_pool.base_mint,
+                        base_vault: e.virtual_pool.base_vault,
+                        quote_vault: e.virtual_pool.quote_vault,
+                        base_reserve: e.virtual_pool.base_reserve,
+                        quote_reserve: e.virtual_pool.quote_reserve,
+                        protocol_base_fee: e.virtual_pool.protocol_base_fee,
+                        protocol_quote_fee: e.virtual_pool.protocol_quote_fee,
+                        partner_base_fee: e.virtual_pool.partner_base_fee,
+                        partner_quote_fee: e.virtual_pool.partner_quote_fee,
+                        sqrt_price: e.virtual_pool.sqrt_price,
+                        activation_point: e.virtual_pool.activation_point,
+                        pool_type: e.virtual_pool.pool_type,
+                        is_migrated: e.virtual_pool.is_migrated,
+                        is_partner_withdraw_surplus: e.virtual_pool.is_partner_withdraw_surplus,
+                        is_protocol_withdraw_surplus: e.virtual_pool.is_protocol_withdraw_surplus,
+                        migration_progress: e.virtual_pool.migration_progress,
+                        is_withdraw_leftover: e.virtual_pool.is_withdraw_leftover,
+                        is_creator_withdraw_surplus: e.virtual_pool.is_creator_withdraw_surplus,
+                        migration_fee_withdraw_status: e.virtual_pool.migration_fee_withdraw_status,
+                        finish_curve_timestamp: e.virtual_pool.finish_curve_timestamp,
+                        creator_base_fee: e.virtual_pool.creator_base_fee,
+                        creator_quote_fee: e.virtual_pool.creator_quote_fee,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::DbcVirtualPoolAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+
+                        // Config fields (default for virtual pool update)
+                        is_config_update: false,
+                        pool_config: None,
+
+                        // Volatility Tracker
+                        volatility_tracker: Some(e.virtual_pool.volatility_tracker),
+                    }));
             },
             DbcPoolConfigAccountEvent => |e: DbcPoolConfigAccountEvent| {
-                // do nothing for now
+                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
+                    DbcPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey, // For config update, address is the config pubkey
+                        config: e.pubkey,  // Config key is the account key itself
+
+                        // Config fields
+                        is_config_update: true,
+                        pool_config: Some(e.pool_config),
+
+                        // Volatility Tracker (default for config update)
+                        volatility_tracker: None,
+
+                        // Virtual Pool fields (default for config update)
+                        creator: Pubkey::default(),
+                        base_mint: Pubkey::default(),
+                        base_vault: Pubkey::default(),
+                        quote_vault: Pubkey::default(),
+                        base_reserve: 0,
+                        quote_reserve: 0,
+                        protocol_base_fee: 0,
+                        protocol_quote_fee: 0,
+                        partner_base_fee: 0,
+                        partner_quote_fee: 0,
+                        sqrt_price: 0,
+                        activation_point: 0,
+                        pool_type: 0,
+                        is_migrated: 0,
+                        is_partner_withdraw_surplus: 0,
+                        is_protocol_withdraw_surplus: 0,
+                        migration_progress: 0,
+                        is_withdraw_leftover: 0,
+                        is_creator_withdraw_surplus: 0,
+                        migration_fee_withdraw_status: 0,
+                        finish_curve_timestamp: 0,
+                        creator_base_fee: 0,
+                        creator_quote_fee: 0,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::DbcPoolConfigAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+                    }));
             },
         });
     }

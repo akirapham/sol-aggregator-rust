@@ -6,7 +6,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::constants::is_base_token;
 use crate::pool_data_types::{
-    BonkPoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState,
+    BonkPoolState, DbcPoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState,
     RaydiumClmmPoolState, RaydiumCpmmPoolState,
 };
 use crate::pool_data_types::{PoolState, WhirlpoolPoolState};
@@ -333,7 +333,64 @@ pub fn pool_update_event_to_pool_state(
 
             (Some(PoolState::OrcaWhirlpool(pool_state)), true)
         }
-        PoolUpdateEvent::MeteoraDbc(_dbc_pool_update) => todo!(),
+        PoolUpdateEvent::MeteoraDbc(dbc_pool_update) => {
+            let liquidity_usd = if let Some(config) = &dbc_pool_update.pool_config {
+                if dbc_pool_update.is_account_state_update && !dbc_pool_update.is_config_update {
+                    compute_pool_liquidity_usd(
+                        &dbc_pool_update.base_mint,
+                        &config.quote_mint,
+                        dbc_pool_update.base_reserve,
+                        dbc_pool_update.quote_reserve,
+                        sol_price,
+                    )
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+
+            (
+                Some(PoolState::MeteoraDbc(DbcPoolState {
+                    slot: dbc_pool_update.slot,
+                    transaction_index: dbc_pool_update.transaction_index,
+                    address: dbc_pool_update.address,
+                    config: dbc_pool_update.config,
+                    creator: dbc_pool_update.creator,
+                    base_mint: dbc_pool_update.base_mint,
+                    base_vault: dbc_pool_update.base_vault,
+                    quote_vault: dbc_pool_update.quote_vault,
+                    base_reserve: dbc_pool_update.base_reserve,
+                    quote_reserve: dbc_pool_update.quote_reserve,
+                    protocol_base_fee: dbc_pool_update.protocol_base_fee,
+                    protocol_quote_fee: dbc_pool_update.protocol_quote_fee,
+                    partner_base_fee: dbc_pool_update.partner_base_fee,
+                    partner_quote_fee: dbc_pool_update.partner_quote_fee,
+                    sqrt_price: dbc_pool_update.sqrt_price,
+                    activation_point: dbc_pool_update.activation_point,
+                    pool_type: dbc_pool_update.pool_type,
+                    is_migrated: dbc_pool_update.is_migrated,
+                    is_partner_withdraw_surplus: dbc_pool_update.is_partner_withdraw_surplus,
+                    is_protocol_withdraw_surplus: dbc_pool_update.is_protocol_withdraw_surplus,
+                    migration_progress: dbc_pool_update.migration_progress,
+                    is_withdraw_leftover: dbc_pool_update.is_withdraw_leftover,
+                    is_creator_withdraw_surplus: dbc_pool_update.is_creator_withdraw_surplus,
+                    migration_fee_withdraw_status: dbc_pool_update.migration_fee_withdraw_status,
+                    finish_curve_timestamp: dbc_pool_update.finish_curve_timestamp,
+                    creator_base_fee: dbc_pool_update.creator_base_fee,
+                    creator_quote_fee: dbc_pool_update.creator_quote_fee,
+                    liquidity_usd,
+                    last_updated: dbc_pool_update.last_updated,
+
+                    // Config fields
+                    pool_config: dbc_pool_update.pool_config.clone(),
+
+                    // Volatility Tracker
+                    volatility_tracker: dbc_pool_update.volatility_tracker.clone(),
+                })),
+                false,
+            )
+        }
     }
 }
 
@@ -710,8 +767,54 @@ pub fn update_pool_state_by_event(
                 }
             }
         }
-        PoolUpdateEvent::MeteoraDbc(_dbc_pool_update) => {
-            if let PoolState::MeteoraDbc(_state) = &mut **existing_state {}
+        PoolUpdateEvent::MeteoraDbc(dbc_pool_update) => {
+            if let PoolState::MeteoraDbc(state) = &mut **existing_state {
+                state.last_updated = dbc_pool_update.last_updated;
+                state.slot = dbc_pool_update.slot;
+                state.transaction_index = dbc_pool_update.transaction_index;
+
+                if dbc_pool_update.is_config_update {
+                    // Update config fields
+                    state.pool_config = dbc_pool_update.pool_config.clone();
+                } else {
+                    // Update pool fields
+                    state.base_reserve = dbc_pool_update.base_reserve;
+                    state.quote_reserve = dbc_pool_update.quote_reserve;
+                    state.protocol_base_fee = dbc_pool_update.protocol_base_fee;
+                    state.protocol_quote_fee = dbc_pool_update.protocol_quote_fee;
+                    state.partner_base_fee = dbc_pool_update.partner_base_fee;
+                    state.partner_quote_fee = dbc_pool_update.partner_quote_fee;
+                    state.sqrt_price = dbc_pool_update.sqrt_price;
+                    state.activation_point = dbc_pool_update.activation_point;
+                    state.pool_type = dbc_pool_update.pool_type;
+                    state.is_migrated = dbc_pool_update.is_migrated;
+                    state.is_partner_withdraw_surplus = dbc_pool_update.is_partner_withdraw_surplus;
+                    state.is_protocol_withdraw_surplus =
+                        dbc_pool_update.is_protocol_withdraw_surplus;
+                    state.migration_progress = dbc_pool_update.migration_progress;
+                    state.is_withdraw_leftover = dbc_pool_update.is_withdraw_leftover;
+                    state.is_creator_withdraw_surplus = dbc_pool_update.is_creator_withdraw_surplus;
+                    state.migration_fee_withdraw_status =
+                        dbc_pool_update.migration_fee_withdraw_status;
+                    state.finish_curve_timestamp = dbc_pool_update.finish_curve_timestamp;
+                    state.creator_base_fee = dbc_pool_update.creator_base_fee;
+                    state.creator_quote_fee = dbc_pool_update.creator_quote_fee;
+
+                    // Update Volatility Tracker
+                    state.volatility_tracker = dbc_pool_update.volatility_tracker.clone();
+
+                    // Recalculate liquidity USD
+                    if let Some(config) = &state.pool_config {
+                        state.liquidity_usd = compute_pool_liquidity_usd(
+                            &state.base_mint,
+                            &config.quote_mint,
+                            state.base_reserve,
+                            state.quote_reserve,
+                            sol_price,
+                        );
+                    }
+                }
+            }
         }
     }
     is_pool_with_ticks

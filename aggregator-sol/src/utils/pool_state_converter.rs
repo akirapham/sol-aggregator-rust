@@ -2,12 +2,11 @@ use std::collections::HashMap;
 
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::MutexGuard;
-use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::constants::is_base_token;
 use crate::pool_data_types::{
-    BonkPoolState, DbcPoolState, PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState,
-    RaydiumClmmPoolState, RaydiumCpmmPoolState,
+    BonkPoolState, DbcPoolState, MeteoraDammv2PoolState, PumpSwapPoolState, PumpfunPoolState,
+    RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState,
 };
 use crate::pool_data_types::{PoolState, WhirlpoolPoolState};
 use crate::types::PoolUpdateEvent;
@@ -32,6 +31,46 @@ fn compute_pool_liquidity_usd(
     } else {
         0.0
     }
+}
+
+/// Calculate token reserves from Meteora DAMM V2 pool state
+/// Uses the same formulas as the on-chain program:
+/// - reserve_b = L * (√P - √P_min) / 2^128
+/// - reserve_a = L * (√P_max - √P) / (√P_max * √P)
+fn calculate_damm_v2_reserves(
+    liquidity: u128,
+    sqrt_price: u128,
+    sqrt_min_price: u128,
+    sqrt_max_price: u128,
+) -> (u64, u64) {
+    // Calculate reserve_b: L * (√P - √P_min) / 2^128
+    // Use u256 to handle the multiplication, then divide by 2^128
+    let delta_sqrt_price_b = sqrt_price.saturating_sub(sqrt_min_price);
+    let product_b = (liquidity as u128).saturating_mul(delta_sqrt_price_b);
+    
+    // Divide by 2^128 by splitting into high and low parts
+    // Since we're in Q64.64 format, we need to shift right by 128 bits
+    // which is equivalent to dividing by 2^128
+    let reserve_b = if product_b > 0 {
+        // The result after shifting right by 128 is in the upper 128 bits
+        // For u128, shifting right by 128 would give 0, so we need a different approach
+        // Split the 128-bit result: the lower 64 bits are fractional, upper 64 are integer
+        (product_b / (1u128 << 64) / (1u128 << 64)) as u64
+    } else {
+        0
+    };
+
+    // Calculate reserve_a: L * (√P_max - √P) / (√P_max * √P)
+    let numerator = (liquidity as u128).saturating_mul(sqrt_max_price.saturating_sub(sqrt_price));
+    let denominator = (sqrt_max_price as u128).saturating_mul(sqrt_price as u128);
+
+    let reserve_a = if denominator > 0 {
+        (numerator / denominator) as u64
+    } else {
+        0
+    };
+
+    (reserve_a, reserve_b)
 }
 
 pub fn pool_update_event_to_pool_state(
@@ -387,6 +426,71 @@ pub fn pool_update_event_to_pool_state(
 
                     // Volatility Tracker
                     volatility_tracker: dbc_pool_update.volatility_tracker.clone(),
+                })),
+                false,
+            )
+        }
+        PoolUpdateEvent::MeteoraDammv2(meteora_dammv2_pool_update) => {
+            // Calculate reserves from pool state using DAMM V2 formulas
+            let (token_a_reserve, token_b_reserve) = if !meteora_dammv2_pool_update.is_account_state_update {
+                calculate_damm_v2_reserves(
+                    meteora_dammv2_pool_update.liquidity,
+                    meteora_dammv2_pool_update.sqrt_price,
+                    meteora_dammv2_pool_update.sqrt_min_price,
+                    meteora_dammv2_pool_update.sqrt_max_price,
+                )
+            } else {
+                (0, 0)
+            };
+
+            let liquidity_usd = if !meteora_dammv2_pool_update.is_account_state_update {
+                compute_pool_liquidity_usd(
+                    &meteora_dammv2_pool_update.token_a_mint,
+                    &meteora_dammv2_pool_update.token_b_mint,
+                    token_a_reserve,
+                    token_b_reserve,
+                    sol_price,
+                )
+            } else {
+                0.0
+            };
+
+            (
+                Some(PoolState::MeteoraDammV2(MeteoraDammv2PoolState {
+                    slot: meteora_dammv2_pool_update.slot,
+                    transaction_index: meteora_dammv2_pool_update.transaction_index,
+                    address: meteora_dammv2_pool_update.address,
+                    pool_fees: meteora_dammv2_pool_update.pool_fees.clone(),
+                    token_a_mint: meteora_dammv2_pool_update.token_a_mint,
+                    token_b_mint: meteora_dammv2_pool_update.token_b_mint,
+                    token_a_vault: meteora_dammv2_pool_update.token_a_vault,
+                    token_b_vault: meteora_dammv2_pool_update.token_b_vault,
+                    whitelisted_vault: meteora_dammv2_pool_update.whitelisted_vault,
+                    partner: meteora_dammv2_pool_update.partner,
+                    liquidity: meteora_dammv2_pool_update.liquidity,
+                    protocol_a_fee: meteora_dammv2_pool_update.protocol_a_fee,
+                    protocol_b_fee: meteora_dammv2_pool_update.protocol_b_fee,
+                    partner_a_fee: meteora_dammv2_pool_update.partner_a_fee,
+                    partner_b_fee: meteora_dammv2_pool_update.partner_b_fee,
+                    sqrt_min_price: meteora_dammv2_pool_update.sqrt_min_price,
+                    sqrt_max_price: meteora_dammv2_pool_update.sqrt_max_price,
+                    sqrt_price: meteora_dammv2_pool_update.sqrt_price,
+                    activation_point: meteora_dammv2_pool_update.activation_point,
+                    activation_type: meteora_dammv2_pool_update.activation_type,
+                    pool_status: meteora_dammv2_pool_update.pool_status,
+                    token_a_flag: meteora_dammv2_pool_update.token_a_flag,
+                    token_b_flag: meteora_dammv2_pool_update.token_b_flag,
+                    collect_fee_mode: meteora_dammv2_pool_update.collect_fee_mode,
+                    pool_type: meteora_dammv2_pool_update.pool_type,
+                    version: meteora_dammv2_pool_update.version,
+                    fee_a_per_liquidity: meteora_dammv2_pool_update.fee_a_per_liquidity,
+                    fee_b_per_liquidity: meteora_dammv2_pool_update.fee_b_per_liquidity,
+                    permanent_lock_liquidity: meteora_dammv2_pool_update.permanent_lock_liquidity,
+                    metrics: meteora_dammv2_pool_update.metrics.clone(),
+                    creator: meteora_dammv2_pool_update.creator,
+                    reward_infos: meteora_dammv2_pool_update.reward_infos.clone(),
+                    liquidity_usd,
+                    last_updated: meteora_dammv2_pool_update.last_updated,
                 })),
                 false,
             )
@@ -813,6 +917,58 @@ pub fn update_pool_state_by_event(
                             sol_price,
                         );
                     }
+                }
+            }
+        }
+        PoolUpdateEvent::MeteoraDammv2(meteora_dammv2_pool_update) => {
+            if let PoolState::MeteoraDammV2(state) = &mut **existing_state {
+                // Update slot and timestamp
+                if !meteora_dammv2_pool_update.is_account_state_update {
+                    state.last_updated = meteora_dammv2_pool_update.last_updated;
+                }
+                state.slot = meteora_dammv2_pool_update.slot;
+                state.transaction_index = meteora_dammv2_pool_update.transaction_index;
+
+                // Update pool state fields
+                state.pool_fees = meteora_dammv2_pool_update.pool_fees.clone();
+                state.whitelisted_vault = meteora_dammv2_pool_update.whitelisted_vault;
+                state.partner = meteora_dammv2_pool_update.partner;
+                state.liquidity = meteora_dammv2_pool_update.liquidity;
+                state.protocol_a_fee = meteora_dammv2_pool_update.protocol_a_fee;
+                state.protocol_b_fee = meteora_dammv2_pool_update.protocol_b_fee;
+                state.partner_a_fee = meteora_dammv2_pool_update.partner_a_fee;
+                state.partner_b_fee = meteora_dammv2_pool_update.partner_b_fee;
+                state.sqrt_min_price = meteora_dammv2_pool_update.sqrt_min_price;
+                state.sqrt_max_price = meteora_dammv2_pool_update.sqrt_max_price;
+                state.sqrt_price = meteora_dammv2_pool_update.sqrt_price;
+                state.activation_point = meteora_dammv2_pool_update.activation_point;
+                state.activation_type = meteora_dammv2_pool_update.activation_type;
+                state.pool_status = meteora_dammv2_pool_update.pool_status;
+                state.collect_fee_mode = meteora_dammv2_pool_update.collect_fee_mode;
+                state.pool_type = meteora_dammv2_pool_update.pool_type;
+                state.version = meteora_dammv2_pool_update.version;
+                state.fee_a_per_liquidity = meteora_dammv2_pool_update.fee_a_per_liquidity;
+                state.fee_b_per_liquidity = meteora_dammv2_pool_update.fee_b_per_liquidity;
+                state.permanent_lock_liquidity = meteora_dammv2_pool_update.permanent_lock_liquidity;
+                state.metrics = meteora_dammv2_pool_update.metrics.clone();
+                state.reward_infos = meteora_dammv2_pool_update.reward_infos.clone();
+
+                // Recalculate liquidity USD from pool state
+                if !meteora_dammv2_pool_update.is_account_state_update {
+                    let (token_a_reserve, token_b_reserve) = calculate_damm_v2_reserves(
+                        state.liquidity,
+                        state.sqrt_price,
+                        state.sqrt_min_price,
+                        state.sqrt_max_price,
+                    );
+
+                    state.liquidity_usd = compute_pool_liquidity_usd(
+                        &state.token_a_mint,
+                        &state.token_b_mint,
+                        token_a_reserve,
+                        token_b_reserve,
+                        sol_price,
+                    );
                 }
             }
         }

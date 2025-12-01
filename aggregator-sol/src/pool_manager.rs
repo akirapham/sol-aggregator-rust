@@ -1212,6 +1212,7 @@ impl PoolStateManager {
     /// Get token metadata from cache
     pub async fn get_token(&self, token_address: &Pubkey) -> Option<Token> {
         let cache = self.token_cache.read().await;
+        log::info!("Token cache size: {} {:?}", cache.len(), cache.get(token_address));
         cache.get(token_address).cloned()
     }
 
@@ -1459,6 +1460,15 @@ impl PoolStateManager {
                     if !self.config.enable_meteora_dbc {
                         log::debug!(
                             "Skipping Meteora DBC pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
+                PoolState::MeteoraDammV2(_) => {
+                    if !self.config.enable_meteora_dammv2 {
+                        log::debug!(
+                            "Skipping Meteora DAMMV2 pool {} - disabled in configuration",
                             pool_address
                         );
                         continue;

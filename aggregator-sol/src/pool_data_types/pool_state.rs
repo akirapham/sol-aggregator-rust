@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::pool_data_types::MeteoraDammv2PoolState;
 use crate::types::SwapParams;
 use crate::{
     constants::wsol,
@@ -26,6 +27,7 @@ macro_rules! pool_state_delegate {
             PoolState::Bonk(state) => state.$field,
             PoolState::RadyiumClmm(state) => state.$field,
             PoolState::MeteoraDbc(state) => state.$field,
+            PoolState::MeteoraDammV2(state) => state.$field,
             PoolState::OrcaWhirlpool(state) => state.$field,
         }
     };
@@ -40,6 +42,7 @@ pub enum PoolState {
     Bonk(BonkPoolState),
     RadyiumClmm(RaydiumClmmPoolState),
     MeteoraDbc(DbcPoolState),
+    MeteoraDammV2(MeteoraDammv2PoolState),
     OrcaWhirlpool(WhirlpoolPoolState),
 }
 
@@ -79,6 +82,7 @@ pub enum PoolUpdateEventType {
     RaydiumCpmmPoolStateAccount,
     DbcPoolConfigAccount,
     DbcVirtualPoolAccount,
+    MeteoraDammV2PoolStateAccount,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
     WhirlpoolOracleStateAccount,
@@ -116,8 +120,9 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => (state.token0, state.token1),
             PoolState::Bonk(state) => (state.base_mint, state.quote_mint),
             PoolState::RadyiumClmm(state) => (state.token_mint0, state.token_mint1),
-            PoolState::MeteoraDbc(state) => (state.base_mint, state.base_mint),
+            PoolState::MeteoraDbc(state) => (state.base_mint, state.pool_config.as_ref().unwrap().quote_mint),
             PoolState::OrcaWhirlpool(state) => (state.token_mint_a, state.token_mint_b),
+            PoolState::MeteoraDammV2(state) => (state.token_a_mint, state.token_b_mint),
         }
     }
 
@@ -131,6 +136,7 @@ impl PoolState {
             PoolState::RadyiumClmm(_) => DexType::RaydiumClmm,
             PoolState::MeteoraDbc(_) => DexType::MeteoraDbc,
             PoolState::OrcaWhirlpool(_) => DexType::Orca,
+            PoolState::MeteoraDammV2(_) => DexType::MeteoraDammv2,
         }
     }
 
@@ -168,6 +174,10 @@ impl PoolState {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
+            PoolState::MeteoraDammV2(state) => PoolStateMetadata {
+                slot: state.slot,
+                transaction_index: state.transaction_index,
+            },
         }
     }
 
@@ -181,6 +191,26 @@ impl PoolState {
             PoolState::RadyiumClmm(state) => (state.token0_reserve, state.token1_reserve),
             PoolState::MeteoraDbc(state) => (state.base_reserve, state.quote_reserve),
             PoolState::OrcaWhirlpool(state) => (state.token_a_reserve, state.token_b_reserve),
+            PoolState::MeteoraDammV2(state) => {
+                // Calculate reserves from DAMM V2 state
+                let delta_sqrt_price_b = state.sqrt_price.saturating_sub(state.sqrt_min_price);
+                let product_b = (state.liquidity as u128).saturating_mul(delta_sqrt_price_b);
+                let reserve_b = if product_b > 0 {
+                    (product_b / (1u128 << 64) / (1u128 << 64)) as u64
+                } else {
+                    0
+                };
+
+                let numerator = (state.liquidity as u128).saturating_mul(state.sqrt_max_price.saturating_sub(state.sqrt_price));
+                let denominator = (state.sqrt_max_price as u128).saturating_mul(state.sqrt_price as u128);
+                let reserve_a = if denominator > 0 {
+                    (numerator / denominator) as u64
+                } else {
+                    0
+                };
+
+                (reserve_a, reserve_b)
+            }
         }
     }
 
@@ -225,6 +255,9 @@ impl PoolState {
                     .await;
                 output_amount
             }
+            PoolState::MeteoraDammV2(state) => {
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+            }
         }
     }
 
@@ -257,6 +290,9 @@ impl PoolState {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
             }
             PoolState::OrcaWhirlpool(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::MeteoraDammV2(state) => {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
             }
         }
@@ -299,10 +335,17 @@ impl BuildSwapInstruction for PoolState {
                     .build_swap_instruction(params, amm_config_fetcher)
                     .await
             }
-            PoolState::MeteoraDbc(_state) => {
-                Err("Meteora DBC BuildSwapInstruction not yet implemented".to_string())
+            PoolState::MeteoraDbc(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
             }
             PoolState::OrcaWhirlpool(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
+            PoolState::MeteoraDammV2(state) => {
                 state
                     .build_swap_instruction(params, amm_config_fetcher)
                     .await

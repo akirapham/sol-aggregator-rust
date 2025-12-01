@@ -9,6 +9,7 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::parser::DBC_PROGRAM_ID;
+use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dammv2::parser::METEORA_DAMM_V2_PROGRAM_ID;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::parser::ORCA_WHIRLPOOL_PROGRAM_ID;
 use solana_streamer_sdk::streaming::{
     event_parser::{
@@ -288,6 +289,10 @@ pub async fn create_grpc_service(
     if agg_config.enable_meteora_dbc {
         account_include.push(DBC_PROGRAM_ID.to_string());
         protocols.push(Protocol::MeteoraDbc);
+    }
+    if agg_config.enable_meteora_dammv2 {
+        account_include.push(METEORA_DAMM_V2_PROGRAM_ID.to_string());
+        protocols.push(Protocol::MeteoraDammV2);
     }
 
     if agg_config.enable_orca_whirlpools {

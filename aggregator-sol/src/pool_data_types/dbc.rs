@@ -335,3 +335,132 @@ impl DbcPoolState {
         (base_price, sol_price)
     }
 }
+use crate::types::SwapParams;
+use async_trait::async_trait;
+use crate::pool_data_types::traits::BuildSwapInstruction;
+use crate::pool_data_types::common::functions as common_functions;
+use solana_program::instruction::{AccountMeta, Instruction};
+use spl_associated_token_account::get_associated_token_address_with_program_id;
+use borsh::BorshSerialize;
+
+#[derive(BorshSerialize)]
+struct SwapParameters {
+    pub amount_in: u64,
+    pub minimum_amount_out: u64,
+}
+
+#[async_trait]
+impl BuildSwapInstruction for DbcPoolState {
+    async fn build_swap_instruction(
+        &self,
+        params: &SwapParams,
+        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> Result<Vec<Instruction>, String> {
+        // Determine input/output mints based on trade direction
+        let base_mint = self.base_mint;
+        let quote_mint = self.pool_config.as_ref()
+            .ok_or_else(|| "Missing pool config".to_string())?
+            .quote_mint;
+
+        let input_mint = params.input_token.address;
+        let output_mint = params.output_token.address;
+
+        // Determine if we're trading base->quote or quote->base
+        let (base_program_pubkey, quote_program_pubkey) = if input_mint == base_mint {
+            // Base -> Quote swap
+            (
+                if params.input_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() },
+                if params.output_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() }
+            )
+        } else {
+            // Quote -> Base swap
+            (
+                if params.output_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() },
+                if params.input_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() }
+            )
+        };
+
+        // Convert to anchor Pubkey for ATA derivation
+        let user_wallet_anchor = common_functions::to_pubkey(&params.user_wallet);
+        let input_mint_anchor = common_functions::to_pubkey(&input_mint);
+        let output_mint_anchor = common_functions::to_pubkey(&output_mint);
+        let base_program_address = common_functions::to_address(&base_program_pubkey);
+        let quote_program_address = common_functions::to_address(&quote_program_pubkey);
+
+        // Derive user token accounts using anchor types
+        let input_token_account_pubkey = get_associated_token_address_with_program_id(
+            &user_wallet_anchor,
+            &input_mint_anchor,
+            &if input_mint == base_mint { base_program_pubkey } else { quote_program_pubkey },
+        );
+        let output_token_account_pubkey = get_associated_token_address_with_program_id(
+            &user_wallet_anchor,
+            &output_mint_anchor,
+            &if output_mint == base_mint { base_program_pubkey } else { quote_program_pubkey },
+        );
+
+        // Convert back to solana_sdk Pubkey
+        let input_token_account = common_functions::to_address(&input_token_account_pubkey);
+        let output_token_account = common_functions::to_address(&output_token_account_pubkey);
+
+        // Derive pool authority PDA
+        let program_id = Self::get_program_id();
+        let (pool_authority, _) = Pubkey::find_program_address(
+            &[b"pool_authority"],
+            &program_id,
+        );
+
+        // Pool account is stored in self.address
+        let pool_pubkey = self.address;
+
+        // Config is stored in self.config
+        let config_pubkey = self.config;
+
+        // Calculate minimum output based on slippage
+        let estimated_output = self.calculate_output_amount(
+            &input_mint,
+            params.input_amount,
+            _amm_config_fetcher.clone(),
+        );
+        
+        let minimum_amount_out = estimated_output
+            .saturating_mul(10000 - params.slippage_bps as u64)
+            / 10000;
+
+        // Build accounts list
+        let accounts = vec![
+            AccountMeta::new_readonly(pool_authority, false),
+            AccountMeta::new_readonly(config_pubkey, false),
+            AccountMeta::new(pool_pubkey, false),
+            AccountMeta::new(input_token_account, false),
+            AccountMeta::new(output_token_account, false),
+            AccountMeta::new(self.base_vault, false),
+            AccountMeta::new(self.quote_vault, false),
+            AccountMeta::new_readonly(base_mint, false),
+            AccountMeta::new_readonly(quote_mint, false),
+            AccountMeta::new_readonly(params.user_wallet, true),
+            AccountMeta::new_readonly(base_program_address, false),
+            AccountMeta::new_readonly(quote_program_address, false),
+            // Note: referral_token_account is optional and not included
+        ];
+
+        // Build instruction data
+        let discriminator: [u8; 8] = [248, 198, 158, 145, 225, 117, 135, 200]; // swap discriminator
+        let args = SwapParameters {
+            amount_in: params.input_amount,
+            minimum_amount_out,
+        };
+
+        let mut data = Vec::with_capacity(8 + 16);
+        data.extend_from_slice(&discriminator);
+        args.serialize(&mut data).map_err(|e| e.to_string())?;
+
+        let swap_ix = Instruction {
+            program_id,
+            accounts,
+            data,
+        };
+
+        Ok(vec![swap_ix])
+    }
+}

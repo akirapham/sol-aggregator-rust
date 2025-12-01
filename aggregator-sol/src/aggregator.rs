@@ -160,7 +160,7 @@ impl DexAggregator {
                 .await;
 
             if let Some(pool_state) = pool_state {
-                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun) || matches!(pool_state.dex(), DexType::RaydiumCpmm) || matches!(pool_state.dex(), DexType::PumpFunSwap) || matches!(pool_state.dex(), DexType::Raydium);
+                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun) || matches!(pool_state.dex(), DexType::RaydiumCpmm) || matches!(pool_state.dex(), DexType::PumpFunSwap) || matches!(pool_state.dex(), DexType::Raydium) || matches!(pool_state.dex(), DexType::MeteoraDbc);
                 if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await {
                     log::debug!("Skipping pool without synced ticks: {}", pool_address);
                     continue;

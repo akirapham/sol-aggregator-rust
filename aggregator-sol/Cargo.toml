@@ -95,9 +95,10 @@ uint = "0.10.0"
 spl-associated-token-account = { workspace = true }
 solana-address = { workspace = true }
 orca_whirlpools_core = { workspace = true }
-orca_whirlpools_client = { workspace = true }
-orca_whirlpools = { workspace = true }
-# raydium_clmm_client = { workspace = true}
+dynamic_bonding_curve_sdk = { workspace = true }
+dynamic_bonding_curve = { workspace = true }
+cp-amm = { workspace = true }
+cp-amm-sdk = { workspace = true }
 arrayref = { version = "0.3.6" }
 spl-memo = "6.0.0"
 dashmap.workspace = true

@@ -1,6 +1,5 @@
-use crate::aggregator::{DexAggregator, SwapRoute};
+use crate::aggregator::DexAggregator;
 use crate::arbitrage_config::ArbitrageConfig;
-// use crate::arbitrage_transaction_handler::{ArbitrageExecution, ArbitrageTransactionHandler};
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
 use rocksdb::{Options, DB};
@@ -9,11 +8,9 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::keypair::Keypair;
 use solana_sdk::signer::Signer;
-use std::collections::HashSet;
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 
 /// Detected arbitrage opportunity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,27 +43,13 @@ pub enum OpportunityStatus {
     Failed,
 }
 
-/// Dashboard summary of arbitrage opportunities
-#[derive(Debug, Clone)]
-pub struct DashboardSummary {
-    pub total_pending: usize,
-    pub total_executing: usize,
-    pub total_executed: usize,
-    pub total_profit: u64,
-    pub pending_opportunities: Vec<ArbitrageOpportunity>,
-    pub executing_opportunities: Vec<ArbitrageOpportunity>,
-    pub executed_opportunities: Vec<ArbitrageOpportunity>,
-}
-
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
 #[derive(Clone)]
 pub struct ArbitrageMonitor {
     aggregator: Arc<DexAggregator>,
     config: ArbitrageConfig,
     db: Arc<DB>,
-    executing_opportunities: Arc<RwLock<HashSet<String>>>, // Track opportunities being executed
-    rpc_client: Arc<RpcClient>,                            // Mainnet RPC connection
-    keypair: Arc<Keypair>,                                 // Keypair for transaction signing
+    rpc_client: Arc<RpcClient>,
 }
 
 impl ArbitrageMonitor {
@@ -90,9 +73,7 @@ impl ArbitrageMonitor {
             aggregator,
             config,
             db: Arc::new(db),
-            executing_opportunities: Arc::new(RwLock::new(HashSet::new())),
             rpc_client,
-            keypair,
         })
     }
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::pool_data_types::MeteoraDammv2PoolState;
+use crate::pool_data_types::MeteoraDammV2PoolState;
 use crate::types::SwapParams;
 use crate::{
     constants::wsol,
@@ -42,7 +42,7 @@ pub enum PoolState {
     Bonk(BonkPoolState),
     RadyiumClmm(RaydiumClmmPoolState),
     MeteoraDbc(DbcPoolState),
-    MeteoraDammV2(MeteoraDammv2PoolState),
+    MeteoraDammV2(MeteoraDammV2PoolState),
     OrcaWhirlpool(WhirlpoolPoolState),
 }
 
@@ -120,7 +120,13 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => (state.token0, state.token1),
             PoolState::Bonk(state) => (state.base_mint, state.quote_mint),
             PoolState::RadyiumClmm(state) => (state.token_mint0, state.token_mint1),
-            PoolState::MeteoraDbc(state) => (state.base_mint, state.pool_config.as_ref().unwrap().quote_mint),
+            PoolState::MeteoraDbc(state) => {
+                let quote_mint = state.pool_config
+                    .as_ref()
+                    .map(|config| config.quote_mint)
+                    .unwrap_or_default();
+                (state.base_mint, quote_mint)
+            },
             PoolState::OrcaWhirlpool(state) => (state.token_mint_a, state.token_mint_b),
             PoolState::MeteoraDammV2(state) => (state.token_a_mint, state.token_b_mint),
         }
@@ -136,7 +142,7 @@ impl PoolState {
             PoolState::RadyiumClmm(_) => DexType::RaydiumClmm,
             PoolState::MeteoraDbc(_) => DexType::MeteoraDbc,
             PoolState::OrcaWhirlpool(_) => DexType::Orca,
-            PoolState::MeteoraDammV2(_) => DexType::MeteoraDammv2,
+            PoolState::MeteoraDammV2(_) => DexType::MeteoraDammV2,
         }
     }
 

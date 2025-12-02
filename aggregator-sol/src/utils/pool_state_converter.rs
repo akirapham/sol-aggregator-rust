@@ -5,7 +5,7 @@ use tokio::sync::MutexGuard;
 
 use crate::constants::is_base_token;
 use crate::pool_data_types::{
-    BonkPoolState, DbcPoolState, MeteoraDammv2PoolState, PumpSwapPoolState, PumpfunPoolState,
+    BonkPoolState, DbcPoolState, MeteoraDammV2PoolState, PumpSwapPoolState, PumpfunPoolState,
     RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState,
 };
 use crate::pool_data_types::{PoolState, WhirlpoolPoolState};
@@ -33,6 +33,12 @@ fn compute_pool_liquidity_usd(
     }
 }
 
+use uint::construct_uint;
+
+construct_uint! {
+    pub struct U256(4);
+}
+
 /// Calculate token reserves from Meteora DAMM V2 pool state
 /// Uses the same formulas as the on-chain program:
 /// - reserve_b = L * (√P - √P_min) / 2^128
@@ -43,29 +49,25 @@ fn calculate_damm_v2_reserves(
     sqrt_min_price: u128,
     sqrt_max_price: u128,
 ) -> (u64, u64) {
+    // Convert inputs to U256 to prevent overflow during intermediate calculations
+    let liquidity_256 = U256::from(liquidity);
+    let sqrt_price_256 = U256::from(sqrt_price);
+    let sqrt_min_price_256 = U256::from(sqrt_min_price);
+    let sqrt_max_price_256 = U256::from(sqrt_max_price);
+
     // Calculate reserve_b: L * (√P - √P_min) / 2^128
-    // Use u256 to handle the multiplication, then divide by 2^128
-    let delta_sqrt_price_b = sqrt_price.saturating_sub(sqrt_min_price);
-    let product_b = (liquidity as u128).saturating_mul(delta_sqrt_price_b);
+    let delta_sqrt_price_b = sqrt_price_256.saturating_sub(sqrt_min_price_256);
+    let product_b = liquidity_256.saturating_mul(delta_sqrt_price_b);
     
-    // Divide by 2^128 by splitting into high and low parts
-    // Since we're in Q64.64 format, we need to shift right by 128 bits
-    // which is equivalent to dividing by 2^128
-    let reserve_b = if product_b > 0 {
-        // The result after shifting right by 128 is in the upper 128 bits
-        // For u128, shifting right by 128 would give 0, so we need a different approach
-        // Split the 128-bit result: the lower 64 bits are fractional, upper 64 are integer
-        (product_b / (1u128 << 64) / (1u128 << 64)) as u64
-    } else {
-        0
-    };
+    // Divide by 2^128 (shift right by 128 bits)
+    let reserve_b = (product_b >> 128).as_u64();
 
     // Calculate reserve_a: L * (√P_max - √P) / (√P_max * √P)
-    let numerator = (liquidity as u128).saturating_mul(sqrt_max_price.saturating_sub(sqrt_price));
-    let denominator = (sqrt_max_price as u128).saturating_mul(sqrt_price as u128);
+    let numerator = liquidity_256.saturating_mul(sqrt_max_price_256.saturating_sub(sqrt_price_256));
+    let denominator = sqrt_max_price_256.saturating_mul(sqrt_price_256);
 
-    let reserve_a = if denominator > 0 {
-        (numerator / denominator) as u64
+    let reserve_a = if !denominator.is_zero() {
+        (numerator / denominator).as_u64()
     } else {
         0
     };
@@ -76,6 +78,7 @@ fn calculate_damm_v2_reserves(
 pub fn pool_update_event_to_pool_state(
     event: &PoolUpdateEvent,
     sol_price: f64,
+    dbc_configs: Option<&std::collections::HashMap<solana_sdk::pubkey::Pubkey, crate::pool_data_types::dbc::PoolConfig>>,
 ) -> (Option<PoolState>, bool) {
     match event {
         PoolUpdateEvent::Pumpfun(pumpfun_pool_update) => (
@@ -373,7 +376,13 @@ pub fn pool_update_event_to_pool_state(
             (Some(PoolState::OrcaWhirlpool(pool_state)), true)
         }
         PoolUpdateEvent::MeteoraDbc(dbc_pool_update) => {
-            let liquidity_usd = if let Some(config) = &dbc_pool_update.pool_config {
+            // Get pool config from update or from dbc_configs parameter
+            let pool_config = dbc_pool_update.pool_config.as_ref()
+                .or_else(|| {
+                    dbc_configs.and_then(|configs| configs.get(&dbc_pool_update.config))
+                });
+
+            let liquidity_usd = if let Some(config) = pool_config {
                 if dbc_pool_update.is_account_state_update && !dbc_pool_update.is_config_update {
                     compute_pool_liquidity_usd(
                         &dbc_pool_update.base_mint,
@@ -421,8 +430,8 @@ pub fn pool_update_event_to_pool_state(
                     liquidity_usd,
                     last_updated: dbc_pool_update.last_updated,
 
-                    // Config fields
-                    pool_config: dbc_pool_update.pool_config.clone(),
+                    // Config fields - use from update or from dbc_configs parameter
+                    pool_config: pool_config.cloned(),
 
                     // Volatility Tracker
                     volatility_tracker: dbc_pool_update.volatility_tracker.clone(),
@@ -430,7 +439,7 @@ pub fn pool_update_event_to_pool_state(
                 false,
             )
         }
-        PoolUpdateEvent::MeteoraDammv2(meteora_dammv2_pool_update) => {
+        PoolUpdateEvent::MeteoraDammV2(meteora_dammv2_pool_update) => {
             // Calculate reserves from pool state using DAMM V2 formulas
             let (token_a_reserve, token_b_reserve) = if !meteora_dammv2_pool_update.is_account_state_update {
                 calculate_damm_v2_reserves(
@@ -454,9 +463,9 @@ pub fn pool_update_event_to_pool_state(
             } else {
                 0.0
             };
-
+            
             (
-                Some(PoolState::MeteoraDammV2(MeteoraDammv2PoolState {
+                Some(PoolState::MeteoraDammV2(MeteoraDammV2PoolState {
                     slot: meteora_dammv2_pool_update.slot,
                     transaction_index: meteora_dammv2_pool_update.transaction_index,
                     address: meteora_dammv2_pool_update.address,
@@ -920,12 +929,11 @@ pub fn update_pool_state_by_event(
                 }
             }
         }
-        PoolUpdateEvent::MeteoraDammv2(meteora_dammv2_pool_update) => {
+        PoolUpdateEvent::MeteoraDammV2(meteora_dammv2_pool_update) => {
             if let PoolState::MeteoraDammV2(state) = &mut **existing_state {
                 // Update slot and timestamp
-                if !meteora_dammv2_pool_update.is_account_state_update {
-                    state.last_updated = meteora_dammv2_pool_update.last_updated;
-                }
+                state.last_updated = meteora_dammv2_pool_update.last_updated;
+
                 state.slot = meteora_dammv2_pool_update.slot;
                 state.transaction_index = meteora_dammv2_pool_update.transaction_index;
 
@@ -954,22 +962,19 @@ pub fn update_pool_state_by_event(
                 state.reward_infos = meteora_dammv2_pool_update.reward_infos.clone();
 
                 // Recalculate liquidity USD from pool state
-                if !meteora_dammv2_pool_update.is_account_state_update {
-                    let (token_a_reserve, token_b_reserve) = calculate_damm_v2_reserves(
-                        state.liquidity,
-                        state.sqrt_price,
-                        state.sqrt_min_price,
-                        state.sqrt_max_price,
-                    );
-
-                    state.liquidity_usd = compute_pool_liquidity_usd(
-                        &state.token_a_mint,
-                        &state.token_b_mint,
-                        token_a_reserve,
-                        token_b_reserve,
-                        sol_price,
-                    );
-                }
+                let (token_a_reserve, token_b_reserve) = calculate_damm_v2_reserves(
+                    state.liquidity,
+                    state.sqrt_price,
+                    state.sqrt_min_price,
+                    state.sqrt_max_price,
+                );
+                state.liquidity_usd = compute_pool_liquidity_usd(
+                    &state.token_a_mint,
+                    &state.token_b_mint,
+                    token_a_reserve,
+                    token_b_reserve,
+                    sol_price,
+                );
             }
         }
     }

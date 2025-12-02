@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MeteoraDammv2PoolState {
+pub struct MeteoraDammV2PoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
@@ -76,7 +76,7 @@ pub struct MeteoraDammv2PoolState {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct MeteoraDammv2PoolUpdate {
+pub struct MeteoraDammV2PoolUpdate {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
@@ -144,7 +144,7 @@ pub struct MeteoraDammv2PoolUpdate {
 }
 
 #[allow(dead_code)]
-impl MeteoraDammv2PoolState {
+impl MeteoraDammV2PoolState {
     pub fn get_program_id() -> Pubkey {
         Pubkey::from_str(&METEORA_DAMM_V2_PROGRAM_ID.to_string()).unwrap_or_else(|_| Pubkey::default())
     }
@@ -324,7 +324,7 @@ struct SwapParameters2 {
 }
 
 #[async_trait]
-impl BuildSwapInstruction for MeteoraDammv2PoolState {
+impl BuildSwapInstruction for MeteoraDammV2PoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
@@ -379,6 +379,12 @@ impl BuildSwapInstruction for MeteoraDammv2PoolState {
             &program_id,
         );
 
+        // Derive event authority PDA (required for #[event_cpi])
+        let (event_authority, _) = Pubkey::find_program_address(
+            &[b"__event_authority"],
+            &program_id,
+        );
+
         // Calculate minimum output based on slippage
         let estimated_output = self.calculate_output_amount(
             &input_mint,
@@ -390,19 +396,6 @@ impl BuildSwapInstruction for MeteoraDammv2PoolState {
             .saturating_mul(10000 - params.slippage_bps as u64)
             / 10000;
 
-        // Build accounts list for swap2 instruction
-        // Account order from damm-v2/programs/cp-amm/src/instructions/swap/ix_swap.rs:
-        // 1. pool_authority (PDA with seed "pool_authority")
-        // 2. pool
-        // 3. input_token_account (user's token account for input)
-        // 4. output_token_account (user's token account for output)  
-        // 5. token_a_vault
-        // 6. token_b_vault
-        // 7. token_a_mint
-        // 8. token_b_mint
-        // 9. payer (signer)
-        // 10. token_a_program
-        // 11. token_b_program
         let accounts = vec![
             AccountMeta::new_readonly(pool_authority, false),                              // pool_authority
             AccountMeta::new(self.address, false),                                         // pool
@@ -415,6 +408,9 @@ impl BuildSwapInstruction for MeteoraDammv2PoolState {
             AccountMeta::new_readonly(params.user_wallet, true),                           // payer (signer)
             AccountMeta::new_readonly(common_functions::to_address(&token_a_program), false), // token_a_program
             AccountMeta::new_readonly(common_functions::to_address(&token_b_program), false), // token_b_program
+            AccountMeta::new_readonly(program_id, false),                                  // referral_token_account (None)
+            AccountMeta::new_readonly(event_authority, false),                             // event_authority
+            AccountMeta::new_readonly(program_id, false),                                  // program
         ];
 
         // Build instruction data for swap2

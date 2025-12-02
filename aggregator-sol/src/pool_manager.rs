@@ -6,7 +6,7 @@ use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{
     DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig,
     RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig, WhirlpoolPoolState,
-    WhirlpoolPoolUpdate,
+    WhirlpoolPoolUpdate, dbc,
 };
 use crate::types::Token;
 use crate::types::{AggregatorConfig, ChainStateUpdate, PoolUpdateEvent};
@@ -114,6 +114,8 @@ pub struct PoolStateManager {
     startup_time: SystemTime,
     /// Application configuration with DEX enable/disable flags
     config: AggregatorConfig,
+    /// Meteora DBC config cache (config_address -> PoolConfig)
+    dbc_configs: Arc<RwLock<HashMap<Pubkey, dbc::PoolConfig>>>,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
@@ -169,6 +171,7 @@ impl PoolStateManager {
             arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
             startup_time: SystemTime::now(),
             config,
+            dbc_configs: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Load data from RocksDB on startup
@@ -240,6 +243,11 @@ impl PoolStateManager {
     pub async fn get_arbitrage_monitored_tokens(&self) -> HashSet<Pubkey> {
         let monitored = self.arbitrage_monitored_tokens.read().await;
         monitored.clone()
+    }
+
+    /// Get DBC config cache for caching configs from events
+    pub fn get_dbc_config_cache(&self) -> Arc<RwLock<HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>>> {
+        Arc::clone(&self.dbc_configs)
     }
 
     /// Add a token to arbitrage monitoring and save to DB
@@ -341,6 +349,7 @@ impl PoolStateManager {
         let db_clone = Arc::clone(&self.db);
         let pools_clone = Arc::clone(&self.pools);
         let token_cache_clone = Arc::clone(&self.token_cache);
+        let dbc_configs_clone = Arc::clone(&self.dbc_configs);
 
         tokio::spawn(async move {
             let mut save_ticker = interval(Duration::from_secs(6 * 60 * 60)); // 6h
@@ -354,6 +363,22 @@ impl PoolStateManager {
                 } else {
                     let save_ns = save_start.elapsed();
                     log::info!("Saved pool state to RocksDB in {:?}", save_ns);
+                }
+                
+                // Save DBC configs
+                let configs = dbc_configs_clone.read().await;
+                let config_count = configs.len();
+                if config_count > 0 {
+                    if let Ok(serialized_configs) = bincode::serde::encode_to_vec(
+                        (*configs).clone(),
+                        bincode::config::standard(),
+                    ) {
+                        if let Err(e) = db_clone.put(b"dbc_configs", serialized_configs) {
+                            log::error!("Failed to save DBC configs to RocksDB: {:?}", e);
+                        } else {
+                            log::info!("Saved {} DBC configs to RocksDB", config_count);
+                        }
+                    }
                 }
             }
         });
@@ -591,6 +616,7 @@ impl PoolStateManager {
         let price_service = Arc::clone(&self.price_service);
         let arbitrage_pool_tx = self.arbitrage_pool_tx.clone();
         let arbitrage_monitored_tokens = Arc::clone(&self.arbitrage_monitored_tokens);
+        let dbc_configs = Arc::clone(&self.dbc_configs);
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_millis(100));
@@ -626,17 +652,18 @@ impl PoolStateManager {
                         v
                     }
                 };
-
+                
                 let draineds: Vec<PoolUpdateEvent> = {
                     let mut buf = pending.lock().await;
                     if buf.is_empty() {
-                        continue;
+                        Vec::new()
+                    } else {
+                        let mut v = Vec::with_capacity(buf.len());
+                        for (_k, v_event) in buf.drain() {
+                            v.push(v_event);
+                        }
+                        v
                     }
-                    let mut v = Vec::with_capacity(buf.len());
-                    for (_k, v_event) in buf.drain() {
-                        v.push(v_event);
-                    }
-                    v
                 };
                 let _ = drain_start.elapsed();
 
@@ -644,7 +671,7 @@ impl PoolStateManager {
                 let count_account = draineds_account_event.len();
                 let count_normal = draineds.len();
                 let total_count = count_account + count_normal;
-
+                
                 // bounded concurrency (hybrid)
                 let concurrency_limit = 64usize;
 
@@ -653,7 +680,7 @@ impl PoolStateManager {
                     let tokens = arbitrage_monitored_tokens.read().await;
                     tokens.clone()
                 };
-
+                
                 // Process account events and normal events in parallel using join!
                 let apply_start = std::time::Instant::now();
                 let (_, _) = tokio::join!(
@@ -671,6 +698,7 @@ impl PoolStateManager {
                             let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
                             let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
                             let monitored_tokens_c = monitored_tokens_snapshot.clone();
+                            let dbc_configs_c = Arc::clone(&dbc_configs);
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -684,6 +712,7 @@ impl PoolStateManager {
                                     sol_price,
                                     &arbitrage_pool_tx_c,
                                     &monitored_tokens_c,
+                                    dbc_configs_c,
                                 )
                                 .await;
                             }
@@ -707,6 +736,7 @@ impl PoolStateManager {
                             let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
                             let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
                             let monitored_tokens_c = monitored_tokens_snapshot.clone();
+                            let dbc_configs_c = Arc::clone(&dbc_configs);
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -720,6 +750,7 @@ impl PoolStateManager {
                                     sol_price,
                                     &arbitrage_pool_tx_c,
                                     &monitored_tokens_c,
+                                    dbc_configs_c,
                                 )
                                 .await;
                             }
@@ -738,7 +769,7 @@ impl PoolStateManager {
                 window_total_apply_duration =
                     window_total_apply_duration.saturating_add(total_apply_ns);
                 window_iterations = window_iterations.saturating_add(1);
-
+                
                 // Emit aggregated log once every 10s summarizing the last window
                 if window_start.elapsed() >= Duration::from_secs(10) {
                     let avg_per_update_ms = if window_total_events > 0 {
@@ -898,16 +929,68 @@ impl PoolStateManager {
         sol_price: f64,
         arbitrage_pool_tx: &broadcast::Sender<ArbitragePoolUpdate>,
         arbitrage_monitored_tokens: &HashSet<Pubkey>,
+        dbc_configs: Arc<RwLock<HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>>>,
     ) {
+        // Cache DBC config if this is a config update
+        if let PoolUpdateEvent::MeteoraDbc(dbc_update) = update {
+            if dbc_update.is_config_update {
+                if let Some(config) = &dbc_update.pool_config {
+                    let mut configs_write = dbc_configs.write().await;
+                    configs_write.insert(dbc_update.config, config.clone());
+                    log::info!("Cached DBC config: {}", dbc_update.config);
+                    
+                    // If this is a config-only update (no pool data), return early
+                    if dbc_update.base_mint == Pubkey::default() {
+                        return;
+                    }
+                }
+            }
+            
+            // If this is a pool update without config, try to fetch config from RPC
+            if !dbc_update.is_config_update && dbc_update.pool_config.is_none() {
+                let config_exists = {
+                    let configs_read = dbc_configs.read().await;
+                    configs_read.contains_key(&dbc_update.config)
+                };
+                
+                if !config_exists {
+                    log::info!("Fetching DBC config from RPC: {}", dbc_update.config);
+                    match fetch_account_data(&rpc_client, &dbc_update.config).await {
+                        Ok(data) => {
+                            // Skip 8-byte discriminator for Anchor accounts
+                            if data.len() > 8 {
+                                match borsh::from_slice::<solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig>(&data[8..]) {
+                                    Ok(config) => {
+                                        let mut configs_write = dbc_configs.write().await;
+                                        configs_write.insert(dbc_update.config, config.clone());
+                                        log::info!("Successfully fetched and cached DBC config: {}", dbc_update.config);
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to deserialize DBC config {}: {:?}", dbc_update.config, e);
+                                    }
+                                }
+                            } else {
+                                log::error!("DBC config account {} data too short: {} bytes", dbc_update.config, data.len());
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to fetch DBC config {} from RPC: {:?}", dbc_update.config, e);
+                        }
+                    }
+                }
+            }
+        }
+
         let pool_address = update.address();
         let mut pool_with_ticks = false;
         let mut pool_dex_type: Option<DexType> = None;
-
+        
         // check if pool exists
         let pool_exists = {
             let pools_read = pools.read().await;
             pools_read.contains_key(&pool_address)
         };
+        
         if pool_exists {
             // Get the pool's individual mutex (no blocking other pools)
             let pool_mutex = {
@@ -922,15 +1005,19 @@ impl PoolStateManager {
             }
         } else {
             // Insert new pool
-            let (pool_state, is_pool_with_ticks) =
-                pool_update_event_to_pool_state(update, sol_price);
+            let (pool_state, is_pool_with_ticks) = {
+                let dbc_configs_read = dbc_configs.read().await;
+                pool_update_event_to_pool_state(update, sol_price, Some(&*dbc_configs_read))
+            };
             pool_with_ticks = is_pool_with_ticks;
+
             if let Some(pool_state) = pool_state {
                 let (token0, token1) = pool_state.get_tokens();
                 if token0 == Pubkey::default() || token1 == Pubkey::default() {
                     return;
                 }
                 pool_dex_type = Some(pool_state.dex());
+
                 Self::insert_new_pool(
                     pool_state,
                     pools.clone(),
@@ -1212,7 +1299,6 @@ impl PoolStateManager {
     /// Get token metadata from cache
     pub async fn get_token(&self, token_address: &Pubkey) -> Option<Token> {
         let cache = self.token_cache.read().await;
-        log::info!("Token cache size: {} {:?}", cache.len(), cache.get(token_address));
         cache.get(token_address).cloned()
     }
 
@@ -1347,6 +1433,19 @@ impl PoolStateManager {
                 let mut token_write = self.token_cache.write().await;
                 *token_write = serialized.0;
                 log::info!("Loaded {} tokens from RocksDB", token_write.len());
+            }
+        }
+
+        // Load DBC configs
+        if let Ok(Some(data)) = self.db.get(b"dbc_configs") {
+            if let Ok((configs, _)) = bincode::serde::decode_from_slice::<
+                HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>,
+                Configuration,
+            >(&data, bincode::config::standard())
+            {
+                let mut configs_write = self.dbc_configs.write().await;
+                *configs_write = configs;
+                log::info!("Loaded {} DBC configs from RocksDB", configs_write.len());
             }
         }
 
@@ -1574,7 +1673,9 @@ impl PoolStateManager {
     /// Save in-memory data to RocksDB
     pub async fn save_pools(&self) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Saving pools to database...");
-        Self::save_to_db(&self.db, &self.pools, &self.token_cache).await
+        Self::save_to_db(&self.db, &self.pools, &self.token_cache).await?;
+        self.save_dbc_configs_to_db().await?;
+        Ok(())
     }
 
     async fn save_to_db(
@@ -1618,6 +1719,22 @@ impl PoolStateManager {
         let total_size = db.property_int_value("rocksdb.estimate-live-data-size")?;
         log::info!("RocksDB live data size: {} bytes", total_size.unwrap_or(0));
 
+        Ok(())
+    }
+
+    async fn save_dbc_configs_to_db(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let configs = self.dbc_configs.read().await;
+        let config_count = configs.len();
+        
+        if config_count > 0 {
+            let serialized_configs = bincode::serde::encode_to_vec(
+                (*configs).clone(),
+                bincode::config::standard(),
+            )?;
+            self.db.put(b"dbc_configs", serialized_configs)?;
+            log::info!("Saved {} DBC configs to RocksDB", config_count);
+        }
+        
         Ok(())
     }
 

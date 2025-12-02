@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType, common, common::functions},
+    pool_data_types::{GetAmmConfig, PoolUpdateEventType, common::functions},
     utils::tokens_equal,
     
 };

@@ -19,7 +19,7 @@ use solana_streamer_sdk::{
                     BonkTradeEvent,
                 },
                 meteora_dbc::{DbcPoolConfigAccountEvent, DbcVirtualPoolAccountEvent},
-                meteora_dammv2::{MeteoraDAMMv2PoolAccountEvent},
+                meteora_dammv2::{MeteoraDammV2PoolAccountEvent},
                 orca_whirlpools::{
                     self, WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
                     WhirlpoolCollectProtocolFeesEvent, WhirlpoolCollectProtocolFeesV2Event,
@@ -74,7 +74,7 @@ use crate::{
         DbcPoolUpdate, PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
         RaydiumAmmV4PoolUpdate, RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart,
         RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState,
-        TickState, WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate, MeteoraDammv2PoolUpdate,
+        TickState, WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate, MeteoraDammV2PoolUpdate,
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
@@ -1294,6 +1294,7 @@ pub fn handle_dex_event(
                     })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
+                // log::info!("AAA DbcVirtualPoolAccountEvent: {:?}", e);
                 pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
                     DbcPoolUpdate {
                         slot: e.metadata.slot,
@@ -1381,9 +1382,9 @@ pub fn handle_dex_event(
                         last_updated: e.metadata.recv_us as u64,
                     }));
             },
-            MeteoraDAMMv2PoolAccountEvent => |e: MeteoraDAMMv2PoolAccountEvent| {
-                pool_update_events.push(PoolUpdateEvent::MeteoraDammv2(
-                    MeteoraDammv2PoolUpdate {
+            MeteoraDammV2PoolAccountEvent => |e: MeteoraDammV2PoolAccountEvent| {
+                pool_update_events.push(PoolUpdateEvent::MeteoraDammV2(
+                    MeteoraDammV2PoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         address: e.pubkey,

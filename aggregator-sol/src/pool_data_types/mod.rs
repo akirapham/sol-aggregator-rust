@@ -39,5 +39,5 @@ pub enum DexType {
     Bonk,
     RaydiumClmm,
     MeteoraDbc,
-    MeteoraDammv2,
+    MeteoraDammV2,
 }

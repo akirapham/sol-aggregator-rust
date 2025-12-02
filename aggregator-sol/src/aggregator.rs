@@ -158,11 +158,10 @@ impl DexAggregator {
                 .pool_manager
                 .get_pool_state_by_address(pool_address)
                 .await;
-
+            
             if let Some(pool_state) = pool_state {
-                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun) || matches!(pool_state.dex(), DexType::RaydiumCpmm) || matches!(pool_state.dex(), DexType::PumpFunSwap) || matches!(pool_state.dex(), DexType::Raydium) || matches!(pool_state.dex(), DexType::MeteoraDbc);
+                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun) || matches!(pool_state.dex(), DexType::RaydiumCpmm) || matches!(pool_state.dex(), DexType::PumpFunSwap) || matches!(pool_state.dex(), DexType::Raydium) || matches!(pool_state.dex(), DexType::MeteoraDbc) || matches!(pool_state.dex(), DexType::MeteoraDammV2);
                 if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await {
-                    log::debug!("Skipping pool without synced ticks: {}", pool_address);
                     continue;
                 }
                 if pool_state.get_liquidity_usd() < min_liquidity_usd {
@@ -171,7 +170,7 @@ impl DexAggregator {
                 all_pool_state.insert(*pool_address, Arc::new(pool_state));
             }
         }
-
+ 
         // 0. prepare percent distribution for smart routing
         let base_percent = 5; // 5% per base token
                               // generate percent distribution array [0, 5, 10, ..., 100]
@@ -193,7 +192,7 @@ impl DexAggregator {
 
         // with 100% input amount
         let mut all_routes_with_out_amounts: Vec<(Vec<SwapStepInternal>, u64)> = vec![];
-
+        
         for (pool_address, _liquidity) in top_direct_paths.iter() {
             if let Some(pool_state) = all_pool_state.get(pool_address) {
                 let output_amount = pool_state

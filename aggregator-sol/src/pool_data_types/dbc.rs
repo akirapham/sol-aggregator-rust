@@ -2,9 +2,7 @@ use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::parser::DBC_PROGRAM_ID;
-pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::{
-    LiquidityDistributionConfig, PoolConfig, PoolFeesConfig, VolatilityTracker,
-};
+pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::{PoolConfig, VolatilityTracker};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -410,6 +408,12 @@ impl BuildSwapInstruction for DbcPoolState {
             &program_id,
         );
 
+        // Derive event authority PDA (required for #[event_cpi])
+        let (event_authority, _) = Pubkey::find_program_address(
+            &[b"__event_authority"],
+            &program_id,
+        );
+
         // Pool account is stored in self.address
         let pool_pubkey = self.address;
 
@@ -441,7 +445,12 @@ impl BuildSwapInstruction for DbcPoolState {
             AccountMeta::new_readonly(params.user_wallet, true),
             AccountMeta::new_readonly(base_program_address, false),
             AccountMeta::new_readonly(quote_program_address, false),
-            // Note: referral_token_account is optional and not included
+            // referral_token_account (optional) - use program_id as placeholder for None
+            AccountMeta::new(program_id, false),
+            // event_authority (required for #[event_cpi])
+            AccountMeta::new_readonly(event_authority, false),
+            // program (required for #[event_cpi])
+            AccountMeta::new_readonly(program_id, false),
         ];
 
         // Build instruction data
@@ -461,6 +470,27 @@ impl BuildSwapInstruction for DbcPoolState {
             data,
         };
 
-        Ok(vec![swap_ix])
+        // Build instruction list with ATA creation
+        let mut instructions = Vec::new();
+        
+        // Determine output token details
+        let output_token_program_id = if output_mint == base_mint { 
+            base_program_pubkey 
+        } else { 
+            quote_program_pubkey 
+        };
+        let is_output_token_2022 = output_token_program_id == spl_token_2022::id();
+
+        // Create ATA for output token if needed (idempotent)
+        instructions.push(common_functions::create_ata_instruction(
+            params.user_wallet,
+            output_token_account,
+            output_mint,
+            is_output_token_2022,
+        ));
+        
+        instructions.push(swap_ix);
+
+        Ok(instructions)
     }
 }

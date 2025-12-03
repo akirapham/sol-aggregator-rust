@@ -1573,6 +1573,15 @@ impl PoolStateManager {
                         continue;
                     }
                 }
+                PoolState::MeteoraDlmm(_) => {
+                    if !self.config.enable_meteora_dlmm {
+                        log::debug!(
+                            "Skipping Meteora DLMMPool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
                 PoolState::OrcaWhirlpool(_) => {
                     if !self.config.enable_orca_whirlpools {
                         log::debug!(

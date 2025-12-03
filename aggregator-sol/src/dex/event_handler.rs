@@ -20,6 +20,7 @@ use solana_streamer_sdk::{
                 },
                 meteora_dbc::{DbcPoolConfigAccountEvent, DbcVirtualPoolAccountEvent},
                 meteora_dammv2::{MeteoraDammV2PoolAccountEvent},
+                meteora_dlmm::{MeteoraDlmmBinArrayAccountEvent, MeteoraDlmmLbPairAccountEvent},
                 orca_whirlpools::{
                     self, WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
                     WhirlpoolCollectProtocolFeesEvent, WhirlpoolCollectProtocolFeesV2Event,
@@ -75,6 +76,7 @@ use crate::{
         RaydiumAmmV4PoolUpdate, RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart,
         RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState,
         TickState, WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate, MeteoraDammV2PoolUpdate,
+        MeteoraDlmmPoolUpdate,
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
@@ -1422,7 +1424,56 @@ pub fn handle_dex_event(
                         additional_event_type: 0,
                         last_updated: e.metadata.recv_us as u64,
                     }));
-                },      
+                },
+            MeteoraDlmmLbPairAccountEvent => |e: MeteoraDlmmLbPairAccountEvent| {
+                pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                    MeteoraDlmmPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey,
+                        parameters: e.lbpair.parameters,
+                        v_parameters: e.lbpair.v_parameters,
+                        bump_seed: e.lbpair.bump_seed,
+                        bin_step_seed: e.lbpair.bin_step_seed,
+                        pair_type: e.lbpair.pair_type,
+                        active_id: e.lbpair.active_id,
+                        bin_step: e.lbpair.bin_step,
+                        status: e.lbpair.status,
+                        require_base_factor_seed: e.lbpair.require_base_factor_seed,
+                        base_factor_seed: e.lbpair.base_factor_seed,
+                        activation_type: e.lbpair.activation_type,
+                        creator_pool_on_off_control: e.lbpair.creator_pool_on_off_control,
+                        token_x_mint: e.lbpair.token_x_mint,
+                        token_y_mint: e.lbpair.token_y_mint,
+                        reserve_x: e.lbpair.reserve_x,
+                        reserve_y: e.lbpair.reserve_y,
+                        protocol_fee: e.lbpair.protocol_fee,
+                        _padding_1: e.lbpair._padding_1,
+                        reward_infos: e.lbpair.reward_infos,
+                        oracle: e.lbpair.oracle,
+                        bin_array_bitmap: e.lbpair.bin_array_bitmap,
+                        last_updated: e.lbpair.last_updated_at as u64,
+                        _padding_2: e.lbpair._padding_2,
+                        pre_activation_swap_address: e.lbpair.pre_activation_swap_address,
+                        base_key: e.lbpair.base_key,
+                        activation_point: e.lbpair.activation_point,
+                        pre_activation_duration: e.lbpair.pre_activation_duration,
+                        _padding_3: e.lbpair._padding_3,
+                        _padding_4: e.lbpair._padding_4,
+                        creator: e.lbpair.creator,
+                        token_mint_x_program_flag: e.lbpair.token_mint_x_program_flag,
+                        token_mint_y_program_flag: e.lbpair.token_mint_y_program_flag, 
+                        _reserved: e.lbpair._reserved,
+                        bin_arrays: HashMap::new(),
+                        bitmap_extension: None,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::MeteoraDlmmLbPairAccount,
+                        additional_event_type: 0,
+                    }));
+                },
+            MeteoraDlmmBinArrayAccountEvent => |e: MeteoraDlmmBinArrayAccountEvent| {
+                // todo
+                },
         });
     }
 

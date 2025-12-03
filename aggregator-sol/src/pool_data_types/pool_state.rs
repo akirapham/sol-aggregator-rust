@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use crate::pool_data_types::MeteoraDammV2PoolState;
 use crate::types::SwapParams;
 use crate::{
     constants::wsol,
     pool_data_types::{
         BonkPoolState, BuildSwapInstruction, DbcPoolState, DexType, GetAmmConfig,
         PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState, RaydiumClmmPoolState,
-        RaydiumCpmmPoolState, WhirlpoolPoolState,
+        RaydiumCpmmPoolState, WhirlpoolPoolState, MeteoraDlmmPoolState, MeteoraDammV2PoolState,
     },
 };
 use async_trait::async_trait;
@@ -29,6 +28,7 @@ macro_rules! pool_state_delegate {
             PoolState::MeteoraDbc(state) => state.$field,
             PoolState::MeteoraDammV2(state) => state.$field,
             PoolState::OrcaWhirlpool(state) => state.$field,
+            PoolState::MeteoraDlmm(state) => state.$field,
         }
     };
 }
@@ -44,6 +44,7 @@ pub enum PoolState {
     MeteoraDbc(DbcPoolState),
     MeteoraDammV2(MeteoraDammV2PoolState),
     OrcaWhirlpool(WhirlpoolPoolState),
+    MeteoraDlmm(MeteoraDlmmPoolState),
 }
 
 #[allow(dead_code)]
@@ -83,6 +84,8 @@ pub enum PoolUpdateEventType {
     DbcPoolConfigAccount,
     DbcVirtualPoolAccount,
     MeteoraDammV2PoolStateAccount,
+    MeteoraDlmmLbPairAccount,
+    MeteoraDlmmBinArrayAccount,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
     WhirlpoolOracleStateAccount,
@@ -129,6 +132,7 @@ impl PoolState {
             },
             PoolState::OrcaWhirlpool(state) => (state.token_mint_a, state.token_mint_b),
             PoolState::MeteoraDammV2(state) => (state.token_a_mint, state.token_b_mint),
+            PoolState::MeteoraDlmm(state) => (state.token_x_mint, state.token_y_mint),
         }
     }
 
@@ -143,6 +147,7 @@ impl PoolState {
             PoolState::MeteoraDbc(_) => DexType::MeteoraDbc,
             PoolState::OrcaWhirlpool(_) => DexType::Orca,
             PoolState::MeteoraDammV2(_) => DexType::MeteoraDammV2,
+            PoolState::MeteoraDlmm(_) => DexType::MeteoraDlmm,
         }
     }
 
@@ -184,6 +189,10 @@ impl PoolState {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
+            PoolState::MeteoraDlmm(state) => PoolStateMetadata {
+                slot: state.slot,
+                transaction_index: state.transaction_index,
+            },
         }
     }
 
@@ -216,6 +225,9 @@ impl PoolState {
                 };
 
                 (reserve_a, reserve_b)
+            },
+            PoolState::MeteoraDlmm(state) => {
+                (0, 0)
             }
         }
     }
@@ -264,6 +276,9 @@ impl PoolState {
             PoolState::MeteoraDammV2(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
+            PoolState::MeteoraDlmm(state) => {
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+            }
         }
     }
 
@@ -299,6 +314,9 @@ impl PoolState {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
             }
             PoolState::MeteoraDammV2(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::MeteoraDlmm(state) => {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
             }
         }
@@ -352,6 +370,11 @@ impl BuildSwapInstruction for PoolState {
                     .await
             }
             PoolState::MeteoraDammV2(state) => {
+                state
+                    .build_swap_instruction(params, amm_config_fetcher)
+                    .await
+            }
+            PoolState::MeteoraDlmm(state) => {
                 state
                     .build_swap_instruction(params, amm_config_fetcher)
                     .await

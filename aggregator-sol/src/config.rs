@@ -41,6 +41,7 @@ impl ConfigLoader {
             enable_orca_whirlpools: !Self::get_bool("DISABLE_ORCA_WHIRLPOOLS", false)?,
             enable_meteora_dbc: !Self::get_bool("DISABLE_METEORA_DBC", false)?,
             enable_meteora_dammv2: !Self::get_bool("DISABLE_METEORA_DAMMV2", false)?,
+            enable_meteora_dlmm: !Self::get_bool("DISABLE_METEORA_DLMM", false)?,
         })
     }
 

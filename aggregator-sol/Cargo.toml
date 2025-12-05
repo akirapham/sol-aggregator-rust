@@ -99,6 +99,7 @@ dynamic_bonding_curve_sdk = { workspace = true }
 dynamic_bonding_curve = { workspace = true }
 cp-amm = { workspace = true }
 cp-amm-sdk = { workspace = true }
+meteora_dlmm_sdk = { workspace = true }
 arrayref = { version = "0.3.6" }
 spl-memo = "6.0.0"
 dashmap.workspace = true

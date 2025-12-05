@@ -2,11 +2,12 @@ use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
 use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
+use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{
     DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig,
     RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig, WhirlpoolPoolState,
-    WhirlpoolPoolUpdate, dbc,
+    WhirlpoolPoolUpdate, dbc, MeteoraDlmmPoolUpdate,
 };
 use crate::types::Token;
 use crate::types::{AggregatorConfig, ChainStateUpdate, PoolUpdateEvent};
@@ -27,6 +28,7 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig;
+use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::LbPair;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools;
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use std::collections::{HashMap, HashSet};
@@ -404,6 +406,7 @@ impl PoolStateManager {
                 rpc_client.clone(),
                 WhirlpoolPoolState::get_program_id(),
             ));
+            let meteora_dlmm_fetcher = Arc::new(MeteoraDlmmBinArrayFetcher::new(rpc_client.clone()));
             loop {
                 ticker.tick().await;
 
@@ -438,16 +441,15 @@ impl PoolStateManager {
                     let pool_update_tx_clone = pool_update_tx.clone();
                     let raydium_clmm_fetcher_c = raydium_clmm_fetcher.clone();
                     let whirlpool_fetcher_c = whirlpool_fetcher.clone();
+                    let meteora_dlmm_fetcher_c = meteora_dlmm_fetcher.clone();
                     async move {
                         let pool_id = pool_for_fetch.address;
                         let dex_type = pool_for_fetch.dex_type;
 
-                        // fetch tick arrays for this pool
                         // check if pool_id already synced
                         {
                             let tick_synced = tick_synced_pools_c.lock().await;
                             if tick_synced.contains(&pool_id) {
-                                // already synced, skip
                                 return;
                             }
                         }
@@ -570,6 +572,43 @@ impl PoolStateManager {
                                                     let mut tick_synced = tick_synced_pools_c.lock().await;
                                                     tick_synced.insert(pool_id);
                                                 }
+                                            }
+                                        }
+                                    }
+                                }
+                                DexType::MeteoraDlmm => {
+                                    if let PoolState::MeteoraDlmm(ref dlmm_pool_state) = pool_state {
+                                        let bin_arrays_result = meteora_dlmm_fetcher_c.fetch_all_bin_arrays(pool_id, dlmm_pool_state).await;
+                                        let recv_us = get_high_perf_clock();
+                                        match bin_arrays_result {
+                                            Ok(bin_arrays) => {
+                                                // log::info!("Fetched {} bin arrays for Meteora DLMM pool {}", bin_arrays.len(), pool_id);
+                                                {
+                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
+                                                    tick_synced.insert(pool_id);
+                                                }
+                                                
+                                                bin_arrays.iter().for_each(|bin_array| {
+                                                    let mut bin_arrays_map = HashMap::new();
+                                                    bin_arrays_map.insert(bin_array.index as i32, bin_array.clone());
+                                                    
+                                                    let event = PoolUpdateEvent::MeteoraDlmm(MeteoraDlmmPoolUpdate {
+                                                        slot: 0,
+                                                        transaction_index: None,
+                                                        address: pool_id,
+                                                        lbpair: LbPair::default(),
+                                                        bin_arrays: Some(bin_arrays_map),
+                                                        bitmap_extension: None,
+                                                        is_account_state_update: true,
+                                                        pool_update_event_type: PoolUpdateEventType::MeteoraDlmmBinArrayAccount,
+                                                        additional_event_type: bin_array.index as i32,
+                                                        last_updated: recv_us as u64,
+                                                    });
+                                                    let _ = pool_update_tx_clone.send(vec![event]);
+                                                });
+                                            }
+                                            Err(e) => {
+                                                log::error!("Failed to fetch bin arrays for Meteora DLMM pool {:?}: {:?}", dlmm_pool_state.address, e);
                                             }
                                         }
                                     }
@@ -1581,6 +1620,14 @@ impl PoolStateManager {
                         );
                         continue;
                     }
+
+                    // add pool to pending pools to fetch bin arrays
+                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
+                    pending.insert(PoolForTickFetching {
+                        address: *pool_address,
+                        dex_type: DexType::MeteoraDlmm,
+                    });
+                    drop(pending); // release lock early
                 }
                 PoolState::OrcaWhirlpool(_) => {
                     if !self.config.enable_orca_whirlpools {

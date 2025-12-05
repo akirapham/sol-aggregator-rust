@@ -103,12 +103,11 @@ base64 = "0.22"
 ethers = "2.0"
 toml = "0.8"
 orca_whirlpools_core = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools_core"}
-# orca_whirlpools_client = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools_client"}
-# orca_whirlpools = { git = "https://github.com/orca-so/whirlpools", package = "orca_whirlpools"}
 dynamic_bonding_curve_sdk = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve", package = "dynamic-bonding-curve-sdk"}
 dynamic_bonding_curve = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve", package = "dynamic-bonding-curve", features = ["no-entrypoint"] }
 cp-amm = { git = "https://github.com/MeteoraAg/damm-v2.git", package = "cp-amm", features = ["no-entrypoint"] }
 cp-amm-sdk = { git = "https://github.com/MeteoraAg/damm-v2.git", package = "rust-sdk" }
+meteora_dlmm_sdk = { git = "https://github.com/MeteoraAg/dlmm-sdk.git", package = "commons" }
 bytes = "1.5"
 solana-address = "2.0.0"
 spl-associated-token-account = "7.0.0"

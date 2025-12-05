@@ -86,6 +86,7 @@ pub enum PoolUpdateEventType {
     MeteoraDammV2PoolStateAccount,
     MeteoraDlmmLbPairAccount,
     MeteoraDlmmBinArrayAccount,
+    MeteoraDlmmBinArrayBitmapExtensionAccount,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
     WhirlpoolOracleStateAccount,
@@ -132,7 +133,7 @@ impl PoolState {
             },
             PoolState::OrcaWhirlpool(state) => (state.token_mint_a, state.token_mint_b),
             PoolState::MeteoraDammV2(state) => (state.token_a_mint, state.token_b_mint),
-            PoolState::MeteoraDlmm(state) => (state.token_x_mint, state.token_y_mint),
+            PoolState::MeteoraDlmm(state) => (state.lbpair.token_x_mint, state.lbpair.token_y_mint),
         }
     }
 

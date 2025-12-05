@@ -158,7 +158,7 @@ impl DexAggregator {
                 .pool_manager
                 .get_pool_state_by_address(pool_address)
                 .await;
-            
+
             if let Some(pool_state) = pool_state {
                 let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun) || matches!(pool_state.dex(), DexType::RaydiumCpmm) || matches!(pool_state.dex(), DexType::PumpFunSwap) || matches!(pool_state.dex(), DexType::Raydium) || matches!(pool_state.dex(), DexType::MeteoraDbc) || matches!(pool_state.dex(), DexType::MeteoraDammV2);
                 if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await {
@@ -333,7 +333,7 @@ impl DexAggregator {
                 }
             }
         } // End of if !direct_only block
-
+        
         // filter top 2 routes by output amount
         all_routes_with_out_amounts.sort_by(|a, b| b.1.cmp(&a.1));
         all_routes_with_out_amounts.truncate(2);
@@ -608,6 +608,9 @@ impl DexAggregator {
             }
         }
 
+        // Deduplicate instructions to prevent duplicate ATA creation across multiple swap steps
+        let all_instructions = Self::deduplicate_instructions(all_instructions);
+
         // Build unsigned transaction for client-side signing
         let blockhash = rpc_client
             .get_latest_blockhash()
@@ -649,6 +652,9 @@ impl DexAggregator {
             }
         }
 
+        // Deduplicate instructions to prevent duplicate ATA creation across multiple swap steps
+        let all_instructions = Self::deduplicate_instructions(all_instructions);
+
         // Build unsigned transaction for client-side signing
         let blockhash = rpc_client
             .get_latest_blockhash()
@@ -664,6 +670,28 @@ impl DexAggregator {
         let transaction = Transaction::new_unsigned(message);
         
         Ok(transaction)
+    }
+    
+    /// Deduplicate instructions by comparing program_id, accounts, and data
+    /// This prevents duplicate ATA creation instructions in multi-step transactions
+    fn deduplicate_instructions(instructions: Vec<Instruction>) -> Vec<Instruction> {
+        let mut seen = HashSet::new();
+        let mut deduped = Vec::new();
+        
+        for ix in instructions {
+            // Create a unique key for this instruction
+            let key = (
+                ix.program_id,
+                ix.accounts.iter().map(|a| (a.pubkey, a.is_signer, a.is_writable)).collect::<Vec<_>>(),
+                ix.data.clone(),
+            );
+            
+            if seen.insert(key) {
+                deduped.push(ix);
+            }
+        }
+        
+        deduped
     }
     
     /// Build swap instructions for a single step using the pool state (works for all DEX types)

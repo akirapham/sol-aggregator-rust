@@ -2,8 +2,7 @@ use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::parser::DBC_PROGRAM_ID;
-pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::{
-    LiquidityDistributionConfig, PoolConfig, PoolFeesConfig, VolatilityTracker,
+pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::{PoolConfig, VolatilityTracker,
 };
 use std::str::FromStr;
 use std::sync::Arc;

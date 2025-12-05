@@ -8,7 +8,7 @@ use crate::pool_data_types::{
     BonkPoolState, DbcPoolState, MeteoraDammV2PoolState, PumpSwapPoolState, PumpfunPoolState,
     RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState, MeteoraDlmmPoolState,
 };
-use crate::pool_data_types::{PoolState, WhirlpoolPoolState};
+use crate::pool_data_types::{PoolState, WhirlpoolPoolState, PoolUpdateEventType};
 use crate::types::PoolUpdateEvent;
 use crate::utils::{get_sol_mint, tokens_equal};
 
@@ -512,48 +512,18 @@ pub fn pool_update_event_to_pool_state(
             //     meteora_dlmm_pool_update.reserve_y,
             //     sol_price,
             // );
+
             (
                 Some(PoolState::MeteoraDlmm(MeteoraDlmmPoolState {
                     slot: meteora_dlmm_pool_update.slot,
                     transaction_index: meteora_dlmm_pool_update.transaction_index,
                     address: meteora_dlmm_pool_update.address,
-                    parameters: meteora_dlmm_pool_update.parameters,
-                    v_parameters: meteora_dlmm_pool_update.v_parameters,
-                    bump_seed: meteora_dlmm_pool_update.bump_seed,
-                    bin_step_seed: meteora_dlmm_pool_update.bin_step_seed,
-                    pair_type: meteora_dlmm_pool_update.pair_type,
-                    active_id: meteora_dlmm_pool_update.active_id,
-                    bin_step: meteora_dlmm_pool_update.bin_step,
-                    status: meteora_dlmm_pool_update.status,
-                    require_base_factor_seed: meteora_dlmm_pool_update.require_base_factor_seed,
-                    base_factor_seed: meteora_dlmm_pool_update.base_factor_seed,
-                    activation_type: meteora_dlmm_pool_update.activation_type,
-                    creator_pool_on_off_control: meteora_dlmm_pool_update.creator_pool_on_off_control,
-                    token_x_mint: meteora_dlmm_pool_update.token_x_mint,
-                    token_y_mint: meteora_dlmm_pool_update.token_y_mint,
-                    reserve_x: meteora_dlmm_pool_update.reserve_x,
-                    reserve_y: meteora_dlmm_pool_update.reserve_y,
-                    protocol_fee: meteora_dlmm_pool_update.protocol_fee,
-                    _padding_1: meteora_dlmm_pool_update._padding_1,
-                    reward_infos: meteora_dlmm_pool_update.reward_infos,
-                    oracle: meteora_dlmm_pool_update.oracle,
-                    bin_array_bitmap: meteora_dlmm_pool_update.bin_array_bitmap,
-                    last_updated: meteora_dlmm_pool_update.last_updated,
-                    _padding_2: meteora_dlmm_pool_update._padding_2,
-                    pre_activation_swap_address: meteora_dlmm_pool_update.pre_activation_swap_address,
-                    base_key: meteora_dlmm_pool_update.base_key,
-                    activation_point: meteora_dlmm_pool_update.activation_point,
-                    pre_activation_duration: meteora_dlmm_pool_update.pre_activation_duration,
-                    _padding_3: meteora_dlmm_pool_update._padding_3,
-                    _padding_4: meteora_dlmm_pool_update._padding_4,
-                    creator: meteora_dlmm_pool_update.creator,
-                    token_mint_x_program_flag: meteora_dlmm_pool_update.token_mint_x_program_flag,
-                    token_mint_y_program_flag: meteora_dlmm_pool_update.token_mint_y_program_flag, 
-                    _reserved: meteora_dlmm_pool_update._reserved,
-                    bin_arrays: meteora_dlmm_pool_update.bin_arrays.clone(),
+                    lbpair: meteora_dlmm_pool_update.lbpair.clone(),
+                    bin_arrays: meteora_dlmm_pool_update.bin_arrays.clone().unwrap_or_default(),
                     bitmap_extension: meteora_dlmm_pool_update.bitmap_extension.clone(),
                     is_state_keys_initialized: true,
-                    liquidity_usd: 2000.0,
+                    liquidity_usd: 1000.0,
+                    last_updated: meteora_dlmm_pool_update.last_updated,
                 })),
                 false,
             )
@@ -1031,9 +1001,24 @@ pub fn update_pool_state_by_event(
                 );
             }
         }
-        PoolUpdateEvent::MeteoraDlmm(_meteora_dlmm_pool_update) => {
-            // Placeholder for DLMM update logic
-            // Will be implemented when full DLMM support is added
+        PoolUpdateEvent::MeteoraDlmm(meteora_dlmm_pool_update) => {
+            if let PoolState::MeteoraDlmm(state) = &mut **existing_state {
+                is_pool_with_ticks = true;
+                state.slot = meteora_dlmm_pool_update.slot;
+                state.transaction_index = meteora_dlmm_pool_update.transaction_index;
+                state.last_updated = meteora_dlmm_pool_update.last_updated;
+                if meteora_dlmm_pool_update.pool_update_event_type == PoolUpdateEventType::MeteoraDlmmLbPairAccount {
+                    state.lbpair = meteora_dlmm_pool_update.lbpair.clone();
+                } else if meteora_dlmm_pool_update.pool_update_event_type == PoolUpdateEventType::MeteoraDlmmBinArrayAccount {
+                    if let Some(new_bin_arrays) = meteora_dlmm_pool_update.bin_arrays.clone() {
+                        for (index, bin_array) in new_bin_arrays {
+                            state.bin_arrays.insert(index, bin_array);
+                        }
+                    }
+                } else if meteora_dlmm_pool_update.pool_update_event_type == PoolUpdateEventType::MeteoraDlmmBinArrayBitmapExtensionAccount {
+                    state.bitmap_extension = meteora_dlmm_pool_update.bitmap_extension.clone();
+                }
+            }
         }
     }
     is_pool_with_ticks

@@ -1,6 +1,7 @@
 pub mod bonk;
 pub mod clmm;
 pub mod common;
+pub mod dlmm;
 pub mod pumpf;
 pub mod dbc;
 pub mod meteora_dammv2;
@@ -16,7 +17,6 @@ pub mod traits;
 
 pub use bonk::*;
 pub use dbc::*;
-pub use pumpf::*;
 pub use meteora_dammv2::*;
 pub use meteora_dlmm::*;
 pub use orca_whirlpool::*;

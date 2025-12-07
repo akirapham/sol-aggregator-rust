@@ -5,8 +5,8 @@ use crate::{
     constants::wsol,
     pool_data_types::{
         BonkPoolState, BuildSwapInstruction, DbcPoolState, DexType, GetAmmConfig,
-        PumpSwapPoolState, PumpfunPoolState, RaydiumAmmV4PoolState, RaydiumClmmPoolState,
-        RaydiumCpmmPoolState, WhirlpoolPoolState, MeteoraDlmmPoolState, MeteoraDammV2PoolState,
+        MeteoraDammV2PoolState, MeteoraDlmmPoolState, PumpSwapPoolState, PumpfunPoolState,
+        RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState, WhirlpoolPoolState,
     },
 };
 use async_trait::async_trait;
@@ -48,56 +48,74 @@ pub enum PoolState {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum PoolUpdateEventType {
-    PumpFunTrade,
-    PumpFunMigrate,
-    PumpFunCreateToken,
+    // PumpSwap
     PumpSwapBuy,
     PumpSwapSell,
     PumpSwapCreatePool,
     PumpSwapDeposit,
     PumpSwapWithdraw,
+    PumpSwapPoolAccount,
+    // PumpFun
+    PumpFunTrade,
+    PumpFunMigrate,
+    PumpFunBuy,
+    PumpFunSell,
+    PumpFunCreateToken,
+    PumpFunBondingCurveAccount,
+    // Raydium CPMM
     RaydiumCpmmSwap,
     RaydiumCpmmDeposit,
-    RaydiumCpmmInitialize,
     RaydiumCpmmWithdraw,
+    RaydiumCpmmInitialize,
+    RaydiumCpmmPoolStateAccount,
+    // Raydium CLMM
     RaydiumClmmSwap,
     RaydiumClmmSwapV2,
-    RaydiumClmmClosePosition,
-    RaydiumClmmDecreaseLiquidityV2,
+    RaydiumClmmIncreaseLiquidity,
     RaydiumClmmIncreaseLiquidityV2,
-    RaydiumClmmOpenPositionWithToken22Nft,
+    RaydiumClmmDecreaseLiquidity,
+    RaydiumClmmDecreaseLiquidityV2,
+    RaydiumClmmClosePosition,
     RaydiumClmmOpenPositionV2,
-    RaydiumAmmV4Swap,
+    RaydiumClmmOpenPositionWithToken22Nft,
+    RaydiumClmmPoolStateAccount,
+    RaydiumClmmTickArrayStateAccount,
+    RaydiumClmmTickArrayBitmapExtensionAccount,
+    // Raydium AMM V4
+    RaydiumAmmV4Swap, // General swap event
+    RaydiumAmmV4SwapBaseIn,
+    RaydiumAmmV4SwapBaseOut,
     RaydiumAmmV4Deposit,
     RaydiumAmmV4Initialize2,
     RaydiumAmmV4Withdraw,
     RaydiumAmmV4WithdrawPnl,
-    BonkPoolStateAccount,
-    PumpFunBondingCurveAccount,
-    PumpSwapPoolAccount,
-    RaydiumClmmPoolStateAccount,
-    RaydiumClmmTickArrayStateAccount,
-    RaydiumClmmTickArrayBitmapExtensionAccount,
-    RaydiumCpmmPoolStateAccount,
-    DbcPoolConfigAccount,
-    DbcVirtualPoolAccount,
-    MeteoraDammV2PoolStateAccount,
-    MeteoraDlmmLbPairAccount,
-    MeteoraDlmmBinArrayAccount,
-    MeteoraDlmmBinArrayBitmapExtensionAccount,
+    RaydiumAmmV4AmmInfoAccount,
+    // Whirlpool
+    WhirlpoolSwap,
+    WhirlpoolSwapV2,
+    WhirlpoolIncreaseLiquidity,
+    WhirlpoolIncreaseLiquidityV2,
+    WhirlpoolDecreaseLiquidity,
+    WhirlpoolDecreaseLiquidityV2,
+    WhirlpoolTwoHopSwap,
+    WhirlpoolTwoHopSwapV2,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
     WhirlpoolOracleStateAccount,
-    WhirlpoolSwap,
-    WhirlpoolSwapV2,
-    WhirlpoolDecreaseLiquidity,
-    WhirlpoolDecreaseLiquidityV2,
-    WhirlpoolIncreaseLiquidity,
-    WhirlpoolIncreaseLiquidityV2,
-    WhirlpoolTwoHopSwap,
-    WhirlpoolTwoHopSwapV2,
+    // Meteora DLMM
+    MeteoraDlmmSwap,
+    MeteoraDlmmLbPairAccount,
+    MeteoraDlmmBinArrayAccount,
+    MeteoraDlmmBinArrayBitmapExtensionAccount,
+    // Meteora DBC
+    DbcVirtualPoolAccount,
+    DbcPoolConfigAccount,
+    // Meteora DAMM V2
+    MeteoraDammV2PoolStateAccount,
+    // Bonk
+    BonkPoolStateAccount,
 }
 
 #[derive(Debug, Clone)]
@@ -125,12 +143,13 @@ impl PoolState {
             PoolState::Bonk(state) => (state.base_mint, state.quote_mint),
             PoolState::RadyiumClmm(state) => (state.token_mint0, state.token_mint1),
             PoolState::MeteoraDbc(state) => {
-                let quote_mint = state.pool_config
+                let quote_mint = state
+                    .pool_config
                     .as_ref()
                     .map(|config| config.quote_mint)
                     .unwrap_or_default();
                 (state.base_mint, quote_mint)
-            },
+            }
             PoolState::OrcaWhirlpool(state) => (state.token_mint_a, state.token_mint_b),
             PoolState::MeteoraDammV2(state) => (state.token_a_mint, state.token_b_mint),
             PoolState::MeteoraDlmm(state) => (state.lbpair.token_x_mint, state.lbpair.token_y_mint),
@@ -217,8 +236,10 @@ impl PoolState {
                     0
                 };
 
-                let numerator = (state.liquidity as u128).saturating_mul(state.sqrt_max_price.saturating_sub(state.sqrt_price));
-                let denominator = (state.sqrt_max_price as u128).saturating_mul(state.sqrt_price as u128);
+                let numerator = (state.liquidity as u128)
+                    .saturating_mul(state.sqrt_max_price.saturating_sub(state.sqrt_price));
+                let denominator =
+                    (state.sqrt_max_price as u128).saturating_mul(state.sqrt_price as u128);
                 let reserve_a = if denominator > 0 {
                     (numerator / denominator) as u64
                 } else {
@@ -226,10 +247,8 @@ impl PoolState {
                 };
 
                 (reserve_a, reserve_b)
-            },
-            PoolState::MeteoraDlmm(state) => {
-                (0, 0)
             }
+            PoolState::MeteoraDlmm(state) => (state.reserve_x.unwrap(), state.reserve_y.unwrap()),
         }
     }
 

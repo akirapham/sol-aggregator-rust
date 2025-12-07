@@ -5,10 +5,10 @@ use tokio::sync::MutexGuard;
 
 use crate::constants::is_base_token;
 use crate::pool_data_types::{
-    BonkPoolState, DbcPoolState, MeteoraDammV2PoolState, PumpSwapPoolState, PumpfunPoolState,
-    RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState, MeteoraDlmmPoolState,
+    BonkPoolState, DbcPoolState, MeteoraDammV2PoolState, MeteoraDlmmPoolState, PumpSwapPoolState,
+    PumpfunPoolState, RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState,
 };
-use crate::pool_data_types::{PoolState, WhirlpoolPoolState, PoolUpdateEventType};
+use crate::pool_data_types::{PoolState, PoolUpdateEventType, WhirlpoolPoolState};
 use crate::types::PoolUpdateEvent;
 use crate::utils::{get_sol_mint, tokens_equal};
 
@@ -58,7 +58,7 @@ fn calculate_damm_v2_reserves(
     // Calculate reserve_b: L * (√P - √P_min) / 2^128
     let delta_sqrt_price_b = sqrt_price_256.saturating_sub(sqrt_min_price_256);
     let product_b = liquidity_256.saturating_mul(delta_sqrt_price_b);
-    
+
     // Divide by 2^128 (shift right by 128 bits)
     let reserve_b = (product_b >> 128).as_u64();
 
@@ -78,7 +78,12 @@ fn calculate_damm_v2_reserves(
 pub fn pool_update_event_to_pool_state(
     event: &PoolUpdateEvent,
     sol_price: f64,
-    dbc_configs: Option<&std::collections::HashMap<solana_sdk::pubkey::Pubkey, crate::pool_data_types::dbc::PoolConfig>>,
+    dbc_configs: Option<
+        &std::collections::HashMap<
+            solana_sdk::pubkey::Pubkey,
+            crate::pool_data_types::dbc::PoolConfig,
+        >,
+    >,
 ) -> (Option<PoolState>, bool) {
     match event {
         PoolUpdateEvent::Pumpfun(pumpfun_pool_update) => (
@@ -377,10 +382,10 @@ pub fn pool_update_event_to_pool_state(
         }
         PoolUpdateEvent::MeteoraDbc(dbc_pool_update) => {
             // Get pool config from update or from dbc_configs parameter
-            let pool_config = dbc_pool_update.pool_config.as_ref()
-                .or_else(|| {
-                    dbc_configs.and_then(|configs| configs.get(&dbc_pool_update.config))
-                });
+            let pool_config = dbc_pool_update
+                .pool_config
+                .as_ref()
+                .or_else(|| dbc_configs.and_then(|configs| configs.get(&dbc_pool_update.config)));
 
             let liquidity_usd = if let Some(config) = pool_config {
                 if dbc_pool_update.is_account_state_update && !dbc_pool_update.is_config_update {
@@ -441,16 +446,17 @@ pub fn pool_update_event_to_pool_state(
         }
         PoolUpdateEvent::MeteoraDammV2(meteora_dammv2_pool_update) => {
             // Calculate reserves from pool state using DAMM V2 formulas
-            let (token_a_reserve, token_b_reserve) = if !meteora_dammv2_pool_update.is_account_state_update {
-                calculate_damm_v2_reserves(
-                    meteora_dammv2_pool_update.liquidity,
-                    meteora_dammv2_pool_update.sqrt_price,
-                    meteora_dammv2_pool_update.sqrt_min_price,
-                    meteora_dammv2_pool_update.sqrt_max_price,
-                )
-            } else {
-                (0, 0)
-            };
+            let (token_a_reserve, token_b_reserve) =
+                if !meteora_dammv2_pool_update.is_account_state_update {
+                    calculate_damm_v2_reserves(
+                        meteora_dammv2_pool_update.liquidity,
+                        meteora_dammv2_pool_update.sqrt_price,
+                        meteora_dammv2_pool_update.sqrt_min_price,
+                        meteora_dammv2_pool_update.sqrt_max_price,
+                    )
+                } else {
+                    (0, 0)
+                };
 
             let liquidity_usd = if !meteora_dammv2_pool_update.is_account_state_update {
                 compute_pool_liquidity_usd(
@@ -463,7 +469,7 @@ pub fn pool_update_event_to_pool_state(
             } else {
                 0.0
             };
-            
+
             (
                 Some(PoolState::MeteoraDammV2(MeteoraDammV2PoolState {
                     slot: meteora_dammv2_pool_update.slot,
@@ -505,13 +511,20 @@ pub fn pool_update_event_to_pool_state(
             )
         }
         PoolUpdateEvent::MeteoraDlmm(meteora_dlmm_pool_update) => {
-            // let liquidity_usd = compute_pool_liquidity_usd(
-            //     &meteora_dlmm_pool_update.token_x_mint,
-            //     &meteora_dlmm_pool_update.token_y_mint,
-            //     meteora_dlmm_pool_update.reserve_x,
-            //     meteora_dlmm_pool_update.reserve_y,
-            //     sol_price,
-            // );
+            let liquidity_usd = if let (Some(reserve_x), Some(reserve_y)) = (
+                meteora_dlmm_pool_update.reserve_x,
+                meteora_dlmm_pool_update.reserve_y,
+            ) {
+                compute_pool_liquidity_usd(
+                    &meteora_dlmm_pool_update.lbpair.token_x_mint,
+                    &meteora_dlmm_pool_update.lbpair.token_y_mint,
+                    reserve_x,
+                    reserve_y,
+                    sol_price,
+                )
+            } else {
+                0.0
+            };
 
             (
                 Some(PoolState::MeteoraDlmm(MeteoraDlmmPoolState {
@@ -519,10 +532,15 @@ pub fn pool_update_event_to_pool_state(
                     transaction_index: meteora_dlmm_pool_update.transaction_index,
                     address: meteora_dlmm_pool_update.address,
                     lbpair: meteora_dlmm_pool_update.lbpair.clone(),
-                    bin_arrays: meteora_dlmm_pool_update.bin_arrays.clone().unwrap_or_default(),
+                    bin_arrays: meteora_dlmm_pool_update
+                        .bin_arrays
+                        .clone()
+                        .unwrap_or_default(),
                     bitmap_extension: meteora_dlmm_pool_update.bitmap_extension.clone(),
                     is_state_keys_initialized: true,
-                    liquidity_usd: 1000.0,
+                    reserve_x: meteora_dlmm_pool_update.reserve_x,
+                    reserve_y: meteora_dlmm_pool_update.reserve_y,
+                    liquidity_usd,
                     last_updated: meteora_dlmm_pool_update.last_updated,
                 })),
                 false,
@@ -981,7 +999,8 @@ pub fn update_pool_state_by_event(
                 state.version = meteora_dammv2_pool_update.version;
                 state.fee_a_per_liquidity = meteora_dammv2_pool_update.fee_a_per_liquidity;
                 state.fee_b_per_liquidity = meteora_dammv2_pool_update.fee_b_per_liquidity;
-                state.permanent_lock_liquidity = meteora_dammv2_pool_update.permanent_lock_liquidity;
+                state.permanent_lock_liquidity =
+                    meteora_dammv2_pool_update.permanent_lock_liquidity;
                 state.metrics = meteora_dammv2_pool_update.metrics.clone();
                 state.reward_infos = meteora_dammv2_pool_update.reward_infos.clone();
 
@@ -1004,19 +1023,42 @@ pub fn update_pool_state_by_event(
         PoolUpdateEvent::MeteoraDlmm(meteora_dlmm_pool_update) => {
             if let PoolState::MeteoraDlmm(state) = &mut **existing_state {
                 is_pool_with_ticks = true;
+
                 state.slot = meteora_dlmm_pool_update.slot;
                 state.transaction_index = meteora_dlmm_pool_update.transaction_index;
                 state.last_updated = meteora_dlmm_pool_update.last_updated;
-                if meteora_dlmm_pool_update.pool_update_event_type == PoolUpdateEventType::MeteoraDlmmLbPairAccount {
+
+                if let (Some(reserve_x), Some(reserve_y)) = (
+                    meteora_dlmm_pool_update.reserve_x,
+                    meteora_dlmm_pool_update.reserve_y,
+                ) {
+                    state.liquidity_usd = compute_pool_liquidity_usd(
+                        &state.lbpair.token_x_mint,
+                        &state.lbpair.token_y_mint,
+                        reserve_x,
+                        reserve_y,
+                        sol_price,
+                    );
+                }
+
+                if meteora_dlmm_pool_update.pool_update_event_type
+                    == PoolUpdateEventType::MeteoraDlmmLbPairAccount
+                {
                     state.lbpair = meteora_dlmm_pool_update.lbpair.clone();
-                } else if meteora_dlmm_pool_update.pool_update_event_type == PoolUpdateEventType::MeteoraDlmmBinArrayAccount {
-                    if let Some(new_bin_arrays) = meteora_dlmm_pool_update.bin_arrays.clone() {
-                        for (index, bin_array) in new_bin_arrays {
-                            state.bin_arrays.insert(index, bin_array);
+                } else if meteora_dlmm_pool_update.pool_update_event_type
+                    == PoolUpdateEventType::MeteoraDlmmBinArrayAccount
+                {
+                    if let Some(ref bin_arrays) = meteora_dlmm_pool_update.bin_arrays {
+                        for (index, bin_array) in bin_arrays {
+                            state.bin_arrays.insert(*index, bin_array.clone());
                         }
                     }
-                } else if meteora_dlmm_pool_update.pool_update_event_type == PoolUpdateEventType::MeteoraDlmmBinArrayBitmapExtensionAccount {
-                    state.bitmap_extension = meteora_dlmm_pool_update.bitmap_extension.clone();
+                } else if meteora_dlmm_pool_update.pool_update_event_type
+                    == PoolUpdateEventType::MeteoraDlmmBinArrayBitmapExtensionAccount
+                {
+                    if let Some(ref bitmap_ext) = meteora_dlmm_pool_update.bitmap_extension {
+                        state.bitmap_extension = Some(bitmap_ext.clone());
+                    }
                 }
             }
         }

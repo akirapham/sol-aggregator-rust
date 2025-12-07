@@ -8,15 +8,24 @@ use solana_streamer_sdk::{
     match_event,
     streaming::{
         event_parser::{
-            UnifiedEvent, core::{
+            core::{
                 account_event_parser::{NonceAccountEvent, TokenAccountEvent, TokenInfoEvent},
                 event_parser::{PubkeyData, SimplifiedTokenBalance},
-            }, protocols::{
-                BlockMetaEvent, bonk::{
+            },
+            protocols::{
+                bonk::{
                     BonkGlobalConfigAccountEvent, BonkMigrateToAmmEvent, BonkMigrateToCpswapEvent,
                     BonkPlatformConfigAccountEvent, BonkPoolCreateEvent, BonkPoolStateAccountEvent,
                     BonkTradeEvent,
-                }, meteora_dammv2::MeteoraDammV2PoolAccountEvent, meteora_dbc::{DbcPoolConfigAccountEvent, DbcVirtualPoolAccountEvent}, meteora_dlmm::{MeteoraDlmmBinArrayBitmapExtensionAccountEvent, MeteoraDlmmBinArrayAccountEvent, MeteoraDlmmLbPairAccountEvent, types::LbPair}, orca_whirlpools::{
+                },
+                meteora_dammv2::MeteoraDammV2PoolAccountEvent,
+                meteora_dbc::{DbcPoolConfigAccountEvent, DbcVirtualPoolAccountEvent},
+                meteora_dlmm::{
+                    types::LbPair, MeteoraDlmmBinArrayAccountEvent,
+                    MeteoraDlmmBinArrayBitmapExtensionAccountEvent, MeteoraDlmmLbPairAccountEvent,
+                    MeteoraDlmmSwapEvent,
+                },
+                orca_whirlpools::{
                     self, WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
                     WhirlpoolCollectProtocolFeesEvent, WhirlpoolCollectProtocolFeesV2Event,
                     WhirlpoolConfigAccountEvent, WhirlpoolDecreaseLiquidityEvent,
@@ -26,18 +35,22 @@ use solana_streamer_sdk::{
                     WhirlpoolPoolStateAccountEvent, WhirlpoolSwapEvent, WhirlpoolSwapV2Event,
                     WhirlpoolTickArrayStateAccountEvent, WhirlpoolTwoHopSwapEvent,
                     WhirlpoolTwoHopSwapV2Event,
-                }, pumpfun::{
+                },
+                pumpfun::{
                     PumpFunBondingCurveAccountEvent, PumpFunCreateTokenEvent,
                     PumpFunGlobalAccountEvent, PumpFunMigrateEvent, PumpFunTradeEvent,
-                }, pumpswap::{
+                },
+                pumpswap::{
                     PumpSwapBuyEvent, PumpSwapCreatePoolEvent, PumpSwapDepositEvent,
                     PumpSwapGlobalConfigAccountEvent, PumpSwapPoolAccountEvent, PumpSwapSellEvent,
                     PumpSwapWithdrawEvent,
-                }, raydium_amm_v4::{
+                },
+                raydium_amm_v4::{
                     RaydiumAmmV4AmmInfoAccountEvent, RaydiumAmmV4DepositEvent,
                     RaydiumAmmV4Initialize2Event, RaydiumAmmV4SwapEvent, RaydiumAmmV4WithdrawEvent,
                     RaydiumAmmV4WithdrawPnlEvent,
-                }, raydium_clmm::{
+                },
+                raydium_clmm::{
                     RaydiumClmmAmmConfigAccountEvent, RaydiumClmmClosePositionEvent,
                     RaydiumClmmCreatePoolEvent, RaydiumClmmDecreaseLiquidityV2Event,
                     RaydiumClmmIncreaseLiquidityV2Event, RaydiumClmmOpenPositionV2Event,
@@ -45,12 +58,15 @@ use solana_streamer_sdk::{
                     RaydiumClmmSwapEvent, RaydiumClmmSwapV2Event,
                     RaydiumClmmTickArrayBitmapExtensionAccountEvent,
                     RaydiumClmmTickArrayStateAccountEvent,
-                }, raydium_cpmm::{
+                },
+                raydium_cpmm::{
                     RaydiumCpmmAmmConfigAccountEvent, RaydiumCpmmDepositEvent,
                     RaydiumCpmmInitializeEvent, RaydiumCpmmPoolStateAccountEvent,
                     RaydiumCpmmSwapEvent, RaydiumCpmmWithdrawEvent,
-                }
-            }
+                },
+                BlockMetaEvent,
+            },
+            UnifiedEvent,
         },
         grpc::pool,
     },
@@ -60,11 +76,11 @@ use tokio::sync::mpsc;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        DbcPoolUpdate, PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate,
-        RaydiumAmmV4PoolUpdate, RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart,
-        RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState,
-        TickState, WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate, MeteoraDammV2PoolUpdate,
-        MeteoraDlmmPoolUpdate,
+        DbcPoolUpdate, MeteoraDammV2PoolUpdate, MeteoraDlmmPoolUpdate, PoolUpdateEventType,
+        PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolReservePart,
+        RaydiumClmmPoolStatePart, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
+        TickArrayBitmapExtension, TickArrayState, TickState, WhirlpoolPoolReservePart,
+        WhirlpoolPoolStatePart, WhirlpoolPoolUpdate,
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
@@ -1413,6 +1429,29 @@ pub fn handle_dex_event(
                         last_updated: e.metadata.recv_us as u64,
                     }));
                 },
+            MeteoraDlmmSwapEvent => |e: MeteoraDlmmSwapEvent| {
+                let reserve_x_balance = post_token_balances.get(e.reserve_x.to_string().as_str());
+                let reserve_y_balance = post_token_balances.get(e.reserve_y.to_string().as_str());
+
+                if let (Some(rx_b), Some(ry_b)) = (reserve_x_balance, reserve_y_balance) {
+                    pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                        MeteoraDlmmPoolUpdate {
+                            slot: e.metadata.slot,
+                            transaction_index: e.metadata.transaction_index,
+                            address: e.lb_pair,
+                            lbpair: LbPair::default(),
+                            bin_arrays: None,
+                            bitmap_extension: None,
+                            is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::MeteoraDlmmSwap,
+                            additional_event_type: 0,
+                            last_updated: e.metadata.recv_us as u64,
+                            reserve_x: Some(rx_b.amount),
+                            reserve_y: Some(ry_b.amount),
+                        }
+                    ));
+                }
+            },
             MeteoraDlmmLbPairAccountEvent => |e: MeteoraDlmmLbPairAccountEvent| {
                 pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
                     MeteoraDlmmPoolUpdate {
@@ -1426,6 +1465,8 @@ pub fn handle_dex_event(
                         pool_update_event_type: PoolUpdateEventType::MeteoraDlmmLbPairAccount,
                         additional_event_type: 0,
                         last_updated: e.metadata.recv_us as u64,
+                        reserve_x: None,
+                        reserve_y: None,
                     }));
             },
             MeteoraDlmmBinArrayAccountEvent => |e: MeteoraDlmmBinArrayAccountEvent| {
@@ -1444,6 +1485,8 @@ pub fn handle_dex_event(
                         pool_update_event_type: PoolUpdateEventType::MeteoraDlmmBinArrayAccount,
                         additional_event_type: 0,
                         last_updated: e.metadata.recv_us as u64,
+                        reserve_x: None,
+                        reserve_y: None,
                     }));
             },
             MeteoraDlmmBinArrayBitmapExtensionAccountEvent => |e: MeteoraDlmmBinArrayBitmapExtensionAccountEvent| {
@@ -1459,6 +1502,8 @@ pub fn handle_dex_event(
                         pool_update_event_type: PoolUpdateEventType::MeteoraDlmmBinArrayBitmapExtensionAccount,
                         additional_event_type: 0,
                         last_updated: e.metadata.recv_us as u64,
+                        reserve_x: None,
+                        reserve_y: None,
                     }));
             },
         });

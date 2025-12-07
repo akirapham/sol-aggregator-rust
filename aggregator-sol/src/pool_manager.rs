@@ -603,6 +603,8 @@ impl PoolStateManager {
                                                         pool_update_event_type: PoolUpdateEventType::MeteoraDlmmBinArrayAccount,
                                                         additional_event_type: bin_array.index as i32,
                                                         last_updated: recv_us as u64,
+                                                        reserve_x: None,
+                                                        reserve_y: None,
                                                     });
                                                     let _ = pool_update_tx_clone.send(vec![event]);
                                                 });

@@ -1,18 +1,15 @@
-use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
-use std::sync::Arc;
 use crate::constants::BASE_TOKENS;
-use crate::pool_data_types::{DexType, GetAmmConfig, PoolState, traits::BuildSwapInstruction};
+use crate::pool_data_types::{traits::BuildSwapInstruction, DexType, GetAmmConfig, PoolState};
 use crate::pool_manager::PoolStateManager;
-use crate::types::{AggregatorConfig, SwapParams, ExecutionPriority};
+use crate::types::{AggregatorConfig, ExecutionPriority, SwapParams};
 use crate::utils::{calculate_min_output_amount, tokens_equal};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
-    instruction::Instruction,
-    pubkey::Pubkey,
-    transaction::Transaction,
-    message::Message,
+    instruction::Instruction, message::Message, pubkey::Pubkey, transaction::Transaction,
 };
+use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
+use std::sync::Arc;
 
 #[allow(unused)]
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
@@ -160,8 +157,14 @@ impl DexAggregator {
                 .await;
 
             if let Some(pool_state) = pool_state {
-                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun) || matches!(pool_state.dex(), DexType::RaydiumCpmm) || matches!(pool_state.dex(), DexType::PumpFunSwap) || matches!(pool_state.dex(), DexType::Raydium) || matches!(pool_state.dex(), DexType::MeteoraDbc) || matches!(pool_state.dex(), DexType::MeteoraDammV2);
-                if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await {
+                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun)
+                    || matches!(pool_state.dex(), DexType::RaydiumCpmm)
+                    || matches!(pool_state.dex(), DexType::PumpFunSwap)
+                    || matches!(pool_state.dex(), DexType::Raydium)
+                    || matches!(pool_state.dex(), DexType::MeteoraDbc)
+                    || matches!(pool_state.dex(), DexType::MeteoraDammV2);
+                if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await
+                {
                     continue;
                 }
                 if pool_state.get_liquidity_usd() < min_liquidity_usd {
@@ -170,7 +173,7 @@ impl DexAggregator {
                 all_pool_state.insert(*pool_address, Arc::new(pool_state));
             }
         }
- 
+
         // 0. prepare percent distribution for smart routing
         let base_percent = 5; // 5% per base token
                               // generate percent distribution array [0, 5, 10, ..., 100]
@@ -192,7 +195,7 @@ impl DexAggregator {
 
         // with 100% input amount
         let mut all_routes_with_out_amounts: Vec<(Vec<SwapStepInternal>, u64)> = vec![];
-        
+
         for (pool_address, _liquidity) in top_direct_paths.iter() {
             if let Some(pool_state) = all_pool_state.get(pool_address) {
                 let output_amount = pool_state
@@ -333,7 +336,7 @@ impl DexAggregator {
                 }
             }
         } // End of if !direct_only block
-        
+
         // filter top 2 routes by output amount
         all_routes_with_out_amounts.sort_by(|a, b| b.1.cmp(&a.1));
         all_routes_with_out_amounts.truncate(2);
@@ -602,8 +605,9 @@ impl DexAggregator {
 
         for path in &route.paths {
             for step in &path.steps {
-                let instructions =
-                    self.build_step_instructions(step, route.slippage_bps, priority, payer).await?;
+                let instructions = self
+                    .build_step_instructions(step, route.slippage_bps, priority, payer)
+                    .await?;
                 all_instructions.extend(instructions);
             }
         }
@@ -617,11 +621,7 @@ impl DexAggregator {
             .await
             .map_err(|e| format!("Failed to get blockhash: {}", e))?;
 
-        let message = Message::new_with_blockhash(
-            &all_instructions,
-            Some(&payer),
-            &blockhash,
-        );
+        let message = Message::new_with_blockhash(&all_instructions, Some(&payer), &blockhash);
         let transaction = Transaction::new_unsigned(message);
         Ok(transaction)
     }
@@ -638,16 +638,18 @@ impl DexAggregator {
 
         for path in &forward_route.paths {
             for step in &path.steps {
-                let instructions =
-                    self.build_step_instructions(step, forward_route.slippage_bps, priority, payer).await?;
+                let instructions = self
+                    .build_step_instructions(step, forward_route.slippage_bps, priority, payer)
+                    .await?;
                 all_instructions.extend(instructions);
             }
         }
 
         for path in &reverse_route.paths {
             for step in &path.steps {
-                let instructions =
-                    self.build_step_instructions(step, reverse_route.slippage_bps, priority, payer).await?;
+                let instructions = self
+                    .build_step_instructions(step, reverse_route.slippage_bps, priority, payer)
+                    .await?;
                 all_instructions.extend(instructions);
             }
         }
@@ -662,38 +664,37 @@ impl DexAggregator {
             .map_err(|e| format!("Failed to get blockhash: {}", e))?;
 
         use solana_sdk::message::Message;
-        let message = Message::new_with_blockhash(
-            &all_instructions,
-            Some(&payer),
-            &blockhash,
-        );
+        let message = Message::new_with_blockhash(&all_instructions, Some(&payer), &blockhash);
         let transaction = Transaction::new_unsigned(message);
-        
+
         Ok(transaction)
     }
-    
+
     /// Deduplicate instructions by comparing program_id, accounts, and data
     /// This prevents duplicate ATA creation instructions in multi-step transactions
     fn deduplicate_instructions(instructions: Vec<Instruction>) -> Vec<Instruction> {
         let mut seen = HashSet::new();
         let mut deduped = Vec::new();
-        
+
         for ix in instructions {
             // Create a unique key for this instruction
             let key = (
                 ix.program_id,
-                ix.accounts.iter().map(|a| (a.pubkey, a.is_signer, a.is_writable)).collect::<Vec<_>>(),
+                ix.accounts
+                    .iter()
+                    .map(|a| (a.pubkey, a.is_signer, a.is_writable))
+                    .collect::<Vec<_>>(),
                 ix.data.clone(),
             );
-            
+
             if seen.insert(key) {
                 deduped.push(ix);
             }
         }
-        
+
         deduped
     }
-    
+
     /// Build swap instructions for a single step using the pool state (works for all DEX types)
     async fn build_step_instructions(
         &self,
@@ -715,9 +716,11 @@ impl DexAggregator {
             priority,
         };
 
-        step.pool_state.build_swap_instruction(&params, self_arc).await
+        step.pool_state
+            .build_swap_instruction(&params, self_arc)
+            .await
     }
-    
+
     #[allow(unused)]
     /// Get configuration
     pub fn get_config(&self) -> &AggregatorConfig {

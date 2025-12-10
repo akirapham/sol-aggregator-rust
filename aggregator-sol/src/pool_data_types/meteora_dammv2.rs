@@ -13,62 +13,34 @@ pub struct MeteoraDammV2PoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
-    /// Pool fee
     pub pool_fees: PoolFeesStruct,
-    /// token a mint
     pub token_a_mint: Pubkey,
-    /// token b mint
     pub token_b_mint: Pubkey,
-    /// token a vault
     pub token_a_vault: Pubkey,
-    /// token b vault
     pub token_b_vault: Pubkey,
-    /// Whitelisted vault to be able to buy pool before activation_point
     pub whitelisted_vault: Pubkey,
-    /// partner
     pub partner: Pubkey,
-    /// liquidity share
     pub liquidity: u128,
-    /// protocol a fee
     pub protocol_a_fee: u64,
-    /// protocol b fee
     pub protocol_b_fee: u64,
-    /// partner a fee
     pub partner_a_fee: u64,
-    /// partner b fee
     pub partner_b_fee: u64,
-    /// min price
     pub sqrt_min_price: u128,
-    /// max price
     pub sqrt_max_price: u128,
-    /// current price
     pub sqrt_price: u128,
-    /// Activation point, can be slot or timestamp
     pub activation_point: u64,
-    /// Activation type, 0 means by slot, 1 means by timestamp
     pub activation_type: u8,
-    /// pool status, 0: enable, 1 disable
     pub pool_status: u8,
-    /// token a flag
     pub token_a_flag: u8,
-    /// token b flag
     pub token_b_flag: u8,
-    /// 0 is collect fee in both token, 1 only collect fee in token a, 2 only collect fee in token b
     pub collect_fee_mode: u8,
-    /// pool type
     pub pool_type: u8,
-    /// pool version, 0: max_fee is still capped at 50%, 1: max_fee is capped at 99%
     pub version: u8,
-    /// cumulative fees
     pub fee_a_per_liquidity: [u8; 32],
     pub fee_b_per_liquidity: [u8; 32],
-    /// permanent lock liquidity
     pub permanent_lock_liquidity: u128,
-    /// metrics
     pub metrics: PoolMetrics,
-    /// pool creator
     pub creator: Pubkey,
-    /// Farming reward information
     pub reward_infos: [RewardInfo; 2],
     pub liquidity_usd: f64,
     pub last_updated: u64,
@@ -80,62 +52,34 @@ pub struct MeteoraDammV2PoolUpdate {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
-    /// Pool fee
     pub pool_fees: PoolFeesStruct,
-    /// token a mint
     pub token_a_mint: Pubkey,
-    /// token b mint
     pub token_b_mint: Pubkey,
-    /// token a vault
     pub token_a_vault: Pubkey,
-    /// token b vault
     pub token_b_vault: Pubkey,
-    /// Whitelisted vault
     pub whitelisted_vault: Pubkey,
-    /// partner
     pub partner: Pubkey,
-    /// liquidity share
     pub liquidity: u128,
-    /// protocol a fee
     pub protocol_a_fee: u64,
-    /// protocol b fee
     pub protocol_b_fee: u64,
-    /// partner a fee
     pub partner_a_fee: u64,
-    /// partner b fee
     pub partner_b_fee: u64,
-    /// min price
     pub sqrt_min_price: u128,
-    /// max price
     pub sqrt_max_price: u128,
-    /// current price
     pub sqrt_price: u128,
-    /// Activation point
     pub activation_point: u64,
-    /// Activation type
     pub activation_type: u8,
-    /// pool status
     pub pool_status: u8,
-    /// token a flag
     pub token_a_flag: u8,
-    /// token b flag
     pub token_b_flag: u8,
-    /// collect fee mode
     pub collect_fee_mode: u8,
-    /// pool type
     pub pool_type: u8,
-    /// pool version
     pub version: u8,
-    /// cumulative fees
     pub fee_a_per_liquidity: [u8; 32],
     pub fee_b_per_liquidity: [u8; 32],
-    /// permanent lock liquidity
     pub permanent_lock_liquidity: u128,
-    /// metrics
     pub metrics: PoolMetrics,
-    /// pool creator
     pub creator: Pubkey,
-    /// reward infos
     pub reward_infos: [RewardInfo; 2],
     pub is_account_state_update: bool,
     pub pool_update_event_type: PoolUpdateEventType,
@@ -146,7 +90,8 @@ pub struct MeteoraDammV2PoolUpdate {
 #[allow(dead_code)]
 impl MeteoraDammV2PoolState {
     pub fn get_program_id() -> Pubkey {
-        Pubkey::from_str(&METEORA_DAMM_V2_PROGRAM_ID.to_string()).unwrap_or_else(|_| Pubkey::default())
+        Pubkey::from_str(&METEORA_DAMM_V2_PROGRAM_ID.to_string())
+            .unwrap_or_else(|_| Pubkey::default())
     }
 
     /// Calculate output amount for Meteora Damm V2 pool using cp-amm SDK
@@ -156,10 +101,8 @@ impl MeteoraDammV2PoolState {
         input_amount: u64,
         _: Arc<dyn GetAmmConfig>,
     ) -> u64 {
-        // Helper to convert solana_sdk::pubkey::Pubkey to anchor_lang::prelude::Pubkey
         let to_anchor_pubkey = |p: Pubkey| anchor_lang::prelude::Pubkey::from(p.to_bytes());
 
-        // Construct Pool using cp-amm types
         let pool = cp_amm::state::Pool {
             pool_fees: cp_amm::state::fee::PoolFeesStruct {
                 base_fee: cp_amm::state::fee::BaseFeeStruct {
@@ -178,7 +121,10 @@ impl MeteoraDammV2PoolState {
                 dynamic_fee: cp_amm::state::fee::DynamicFeeStruct {
                     initialized: self.pool_fees.dynamic_fee.initialized,
                     padding: self.pool_fees.dynamic_fee.padding,
-                    max_volatility_accumulator: self.pool_fees.dynamic_fee.max_volatility_accumulator,
+                    max_volatility_accumulator: self
+                        .pool_fees
+                        .dynamic_fee
+                        .max_volatility_accumulator,
                     variable_fee_control: self.pool_fees.dynamic_fee.variable_fee_control,
                     bin_step: self.pool_fees.dynamic_fee.bin_step,
                     filter_period: self.pool_fees.dynamic_fee.filter_period,
@@ -246,7 +192,8 @@ impl MeteoraDammV2PoolState {
                     reward_rate: ri.reward_rate,
                     reward_per_token_stored: ri.reward_per_token_stored,
                     last_update_time: ri.last_update_time,
-                    cumulative_seconds_with_empty_liquidity_reward: ri.cumulative_seconds_with_empty_liquidity_reward,
+                    cumulative_seconds_with_empty_liquidity_reward: ri
+                        .cumulative_seconds_with_empty_liquidity_reward,
                 }
             }),
         };
@@ -261,13 +208,13 @@ impl MeteoraDammV2PoolState {
             current_slot,
             input_amount,
             a_to_b,
-            false, // has_referral
+            false,
         );
 
         match result {
             Ok(swap_result) => swap_result.output_amount,
             Err(e) => {
-                log::warn!("Meteora Damm V2 quote calculation failed: {}", e);
+                log::debug!("Meteora Damm V2 quote calculation failed: {}", e);
                 0
             }
         }
@@ -279,9 +226,6 @@ impl MeteoraDammV2PoolState {
         token_a_decimals: u8,
         token_b_decimals: u8,
     ) -> (f64, f64) {
-        // sqrt_price is in Q64.64 format (price of token A in terms of token B)
-        // price = (sqrt_price / 2^64)^2
-        
         if self.sqrt_price == 0 {
             return (0.0, 0.0);
         }
@@ -304,14 +248,14 @@ impl MeteoraDammV2PoolState {
     }
 }
 
+use crate::pool_data_types::common::functions as common_functions;
+use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
 use async_trait::async_trait;
-use crate::pool_data_types::traits::BuildSwapInstruction;
-use crate::pool_data_types::common::functions as common_functions;
-use solana_program::instruction::{AccountMeta, Instruction};
-use spl_associated_token_account::get_associated_token_address_with_program_id;
 use borsh::BorshSerialize;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
+use solana_program::instruction::{AccountMeta, Instruction};
+use spl_associated_token_account::get_associated_token_address_with_program_id;
 
 #[derive(BorshSerialize)]
 struct SwapParameters2 {
@@ -374,16 +318,11 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
 
         // Derive pool authority PDA
         let program_id = Self::get_program_id();
-        let (pool_authority, _) = Pubkey::find_program_address(
-            &[b"pool_authority"],
-            &program_id,
-        );
+        let (pool_authority, _) = Pubkey::find_program_address(&[b"pool_authority"], &program_id);
 
         // Derive event authority PDA (required for #[event_cpi])
-        let (event_authority, _) = Pubkey::find_program_address(
-            &[b"__event_authority"],
-            &program_id,
-        );
+        let (event_authority, _) =
+            Pubkey::find_program_address(&[b"__event_authority"], &program_id);
 
         // Calculate minimum output based on slippage
         let estimated_output = self.calculate_output_amount(
@@ -391,33 +330,32 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
             params.input_amount,
             _amm_config_fetcher.clone(),
         );
-        
-        let minimum_amount_out = estimated_output
-            .saturating_mul(10000 - params.slippage_bps as u64)
-            / 10000;
+
+        let minimum_amount_out =
+            estimated_output.saturating_mul(10000 - params.slippage_bps as u64) / 10000;
 
         let accounts = vec![
-            AccountMeta::new_readonly(pool_authority, false),                              // pool_authority
-            AccountMeta::new(self.address, false),                                         // pool
-            AccountMeta::new(common_functions::to_address(&input_token_account), false),   // input_token_account
-            AccountMeta::new(common_functions::to_address(&output_token_account), false),  // output_token_account
-            AccountMeta::new(self.token_a_vault, false),                                   // token_a_vault
-            AccountMeta::new(self.token_b_vault, false),                                   // token_b_vault
-            AccountMeta::new_readonly(self.token_a_mint, false),                           // token_a_mint
-            AccountMeta::new_readonly(self.token_b_mint, false),                           // token_b_mint
-            AccountMeta::new_readonly(params.user_wallet, true),                           // payer (signer)
-            AccountMeta::new_readonly(common_functions::to_address(&token_a_program), false), // token_a_program
-            AccountMeta::new_readonly(common_functions::to_address(&token_b_program), false), // token_b_program
-            AccountMeta::new_readonly(program_id, false),                                  // referral_token_account (None)
-            AccountMeta::new_readonly(event_authority, false),                             // event_authority
-            AccountMeta::new_readonly(program_id, false),                                  // program
+            AccountMeta::new_readonly(pool_authority, false),
+            AccountMeta::new(self.address, false),
+            AccountMeta::new(common_functions::to_address(&input_token_account), false),
+            AccountMeta::new(common_functions::to_address(&output_token_account), false),
+            AccountMeta::new(self.token_a_vault, false),
+            AccountMeta::new(self.token_b_vault, false),
+            AccountMeta::new_readonly(self.token_a_mint, false),
+            AccountMeta::new_readonly(self.token_b_mint, false),
+            AccountMeta::new_readonly(params.user_wallet, true),
+            AccountMeta::new_readonly(common_functions::to_address(&token_a_program), false),
+            AccountMeta::new_readonly(common_functions::to_address(&token_b_program), false),
+            AccountMeta::new_readonly(program_id, false),
+            AccountMeta::new_readonly(event_authority, false),
+            AccountMeta::new_readonly(program_id, false),
         ];
 
         // Build instruction data for swap2
         // Discriminator for swap2: sha256("global:swap2")[:8]
         let discriminator: [u8; 8] = [0x41, 0x4b, 0x3f, 0x4c, 0xeb, 0x5b, 0x5b, 0x88];
         let swap_mode_exact_in: u8 = 0; // SwapMode::ExactIn
-        
+
         let args = SwapParameters2 {
             amount_0: params.input_amount,
             amount_1: minimum_amount_out,
@@ -435,15 +373,23 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
         };
 
         // Build instruction list with compute budget and ATA creation
-        let mut instructions = vec![
-            ComputeBudgetInstruction::set_compute_unit_limit(600_000),
-        ];
+        let mut instructions = vec![ComputeBudgetInstruction::set_compute_unit_limit(600_000)];
 
         // Determine which token program to use for input and output
         let (input_token_program_id, output_token_program_id, input_mint, output_mint) = if a_to_b {
-            (token_a_program, token_b_program, self.token_a_mint, self.token_b_mint)
+            (
+                token_a_program,
+                token_b_program,
+                self.token_a_mint,
+                self.token_b_mint,
+            )
         } else {
-            (token_b_program, token_a_program, self.token_b_mint, self.token_a_mint)
+            (
+                token_b_program,
+                token_a_program,
+                self.token_b_mint,
+                self.token_a_mint,
+            )
         };
 
         // Create ATA for input token if needed (idempotent)

@@ -45,14 +45,36 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                     0.0
                 };
 
+                // Format status badge
+                let status_html = match opp.execution_status {
+                    crate::arbitrage_monitor::ExecutionStatus::NotYet => {
+                        "<span class='status-badge status-pending'>⏳ Pending</span>".to_string()
+                    }
+                    crate::arbitrage_monitor::ExecutionStatus::Success => {
+                        "<span class='status-badge status-success'>✅ Success</span>".to_string()
+                    }
+                    crate::arbitrage_monitor::ExecutionStatus::Fail => {
+                        let error_text = opp.error_message.as_deref().unwrap_or("Unknown error");
+                        let escaped_error = error_text.replace("'", "\\'");
+                        format!(
+                            "<div class='tooltip' onclick=\"copyToClipboard('{}')\" title='Click to copy error'>\
+                                <span class='status-badge status-fail'>❌ Failed</span>\
+                                <span class='tooltiptext'>{}</span>\
+                            </div>",
+                            escaped_error, error_text
+                        )
+                    }
+                };
+
                 opp_html.push_str(&format!(
-                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td></tr>",
+                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
                     datetime,
                     &opp.pair_name,
                     opp.token_a.chars().take(6).collect::<String>(),
                     opp.token_b.chars().take(6).collect::<String>(),
                     opp.profit_amount as f64 / 1_000_000.0,
                     profit_pct,
+                    status_html,
                 ));
             }
 
@@ -68,7 +90,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 0,
                 0.0,
                 0.0,
-                "<tr><td colspan='5' class='no-data'>Arbitrage monitor not available</td></tr>"
+                "<tr><td colspan='6' class='no-data'>Arbitrage monitor not available</td></tr>"
                     .to_string(),
             )
         };
@@ -195,6 +217,73 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             color: #999;
         }}
 
+        .status-badge {{
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-block;
+        }}
+
+        .status-pending {{
+            background: #fff3cd;
+            color: #856404;
+        }}
+
+        .status-success {{
+            background: #d4edda;
+            color: #155724;
+        }}
+
+        .status-fail {{
+            background: #f8d7da;
+            color: #721c24;
+        }}
+
+        .tooltip {{
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+        }}
+
+        .tooltip .tooltiptext {{
+            visibility: hidden;
+            width: 250px;
+            background-color: #333;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 8px 12px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%; /* Position above */
+            left: 50%;
+            margin-left: -125px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 11px;
+            line-height: 1.4;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            white-space: normal;
+        }}
+
+        .tooltip .tooltiptext::after {{
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }}
+
+        .tooltip:hover .tooltiptext {{
+            visibility: visible;
+            opacity: 0.95;
+        }}
+
+
         .footer {{
             text-align: center;
             color: white;
@@ -257,6 +346,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                         <th>Route</th>
                         <th>Profit</th>
                         <th>Profit %</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -290,6 +380,15 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         function logout() {{
             sessionStorage.removeItem('dashboard_auth');
             window.location.href = '/dashboard';
+        }}
+
+        function copyToClipboard(text) {{
+            navigator.clipboard.writeText(text).then(function() {{
+                // Optional: visual feedback
+                console.log('Copied to clipboard');
+            }}, function(err) {{
+                console.error('Could not copy text: ', err);
+            }});
         }}
 
         document.getElementById('update-time').textContent = new Date().toLocaleTimeString();

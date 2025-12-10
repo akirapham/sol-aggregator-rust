@@ -1,4 +1,4 @@
-use crate::aggregator::DexAggregator;
+use crate::aggregator::{DexAggregator, SwapRoute};
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
@@ -9,8 +9,17 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::keypair::Keypair;
 use solana_sdk::signer::Signer;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+
+/// Execution status for arbitrage opportunities
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ExecutionStatus {
+    NotYet,
+    Success,
+    Fail,
+}
 
 /// Detected arbitrage opportunity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +33,8 @@ pub struct ArbitrageOpportunity {
     pub forward_output: u64,
     pub reverse_output: u64,
     pub detected_at: u64,
+    pub execution_status: ExecutionStatus,
+    pub error_message: Option<String>,
 }
 
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
@@ -194,6 +205,8 @@ impl ArbitrageMonitor {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs(),
+                        execution_status: ExecutionStatus::NotYet,
+                        error_message: None,
                     };
 
                     // Save opportunity with Pending status
@@ -208,9 +221,18 @@ impl ArbitrageMonitor {
                         profit_percent,
                         profit
                     );
-
-                    // // Execute the transaction (await directly, no spawn needed)
-                    // self.execute_opportunity(opportunity, forward_route, reverse_route).await;
+                    let payer =
+                        Pubkey::from_str("7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu").unwrap();
+                    // Execute an arbitrage opportunity
+                    self.execute_arbitrade_opportunity(
+                        opportunity,
+                        forward_route,
+                        reverse_route,
+                        ExecutionPriority::Medium,
+                        Some(payer),
+                        &self.rpc_client,
+                    )
+                    .await;
                 }
             }
             None => {
@@ -219,123 +241,6 @@ impl ArbitrageMonitor {
             }
         }
     }
-
-    // /// Execute an arbitrage opportunity
-    // async fn execute_opportunity(
-    //     &self,
-    //     mut opportunity: ArbitrageOpportunity,
-    //     forward_route: SwapRoute,
-    //     reverse_route: SwapRoute,
-    // ) {
-    //     let opp_key = format!("{}:{}", opportunity.detected_at, opportunity.pair_name);
-
-    //     // Check if this opportunity is already being executed
-    //     {
-    //         let executing = self.executing_opportunities.read().await;
-    //         if executing.contains(&opp_key) {
-    //             log::warn!(
-    //                 "Opportunity {} is already executing, skipping duplicate execution",
-    //                 opp_key
-    //             );
-    //             return;
-    //         }
-    //     }
-
-    //     // Mark as executing
-    //     {
-    //         let mut executing = self.executing_opportunities.write().await;
-    //         executing.insert(opp_key.clone());
-    //     }
-
-    //     // Update status to Executing and save
-    //     opportunity.status = OpportunityStatus::Executing;
-    //     if let Err(e) = self.save_opportunity(&opportunity) {
-    //         log::error!("Failed to save opportunity with Executing status: {}", e);
-    //         // Remove from executing set
-    //         let mut executing = self.executing_opportunities.write().await;
-    //         executing.remove(&opp_key);
-    //         return;
-    //     }
-
-    //     log::info!(
-    //         "🚀 Executing arbitrage opportunity: {} -> {}",
-    //         opportunity.token_a,
-    //         opportunity.token_b
-    //     );
-
-    //     // Execute real arbitrage on mainnet
-    //     let execution_result = self
-    //         .execute_arbitrage(&opportunity, forward_route, reverse_route)
-    //         .await;
-
-    //     // Update status based on execution result
-    //     match execution_result {
-    //         Ok(_execution_result) => {
-    //             opportunity.status = OpportunityStatus::Completed;
-    //             log::info!("✅ Arbitrage executed successfully: {}", opp_key);
-    //         }
-    //         Err(e) => {
-    //             opportunity.status = OpportunityStatus::Failed;
-    //             opportunity.error_message = Some(e.clone());
-    //             log::error!("❌ Arbitrage execution failed: {} - {}", opp_key, e);
-    //         }
-    //     }
-
-    //     // Save opportunity with updated status
-    //     if let Err(e) = self.save_opportunity(&opportunity) {
-    //         log::error!("Failed to save opportunity with final status: {}", e);
-    //     }
-
-    //     // Remove from executing set
-    //     {
-    //         let mut executing = self.executing_opportunities.write().await;
-    //         executing.remove(&opp_key);
-    //     }
-    // }
-
-    // /// Execute arbitrage transaction on mainnet
-    // async fn execute_arbitrage(
-    //     &self,
-    //     opportunity: &ArbitrageOpportunity,
-    //     forward_route: SwapRoute,
-    //     reverse_route: SwapRoute,
-    // ) -> Result<(String, String), String> {
-    //     // Get latest blockhash for transaction
-    //     let recent_blockhash = self
-    //         .rpc_client
-    //         .get_latest_blockhash()
-    //         .await
-    //         .map_err(|e| format!("Failed to get blockhash: {}", e))?;
-
-    //     log::debug!("Latest blockhash: {}", recent_blockhash);
-
-    //     let arbitrage_execution = ArbitrageExecution {
-    //         forward_route: forward_route,
-    //         reverse_route: reverse_route,
-    //         pair_name: opportunity.pair_name.clone(),
-    //         slippage_tolerance_bps: self.config.settings.slippage_bps,
-    //         token_a: Pubkey::from_str(&opportunity.token_a)
-    //             .map_err(|e| format!("Invalid token A pubkey: {}", e))?,
-    //         token_b: Pubkey::from_str(&opportunity.token_b)
-    //             .map_err(|e| format!("Invalid token B pubkey: {}", e))?,
-    //         input_amount: opportunity.input_amount,
-    //         detected_at: opportunity.detected_at,
-    //     };
-
-    //     let execution_result = ArbitrageTransactionHandler::execute_arbitrade_transaction(
-    //         &arbitrage_execution,
-    //         &self.keypair,
-    //         &self.rpc_client,
-    //         self.aggregator.get_pool_manager().clone(),
-    //     )
-    //     .await
-    //     .map_err(|e| format!("Arbitrage execution failed: {}", e))?;
-
-    //     Ok((
-    //         execution_result.forward_tx_signature.unwrap_or_default(),
-    //         execution_result.reverse_tx_signature.unwrap_or_default(),
-    //     ))
-    // }
 
     /// Save an opportunity to RocksDB
     fn save_opportunity(&self, opportunity: &ArbitrageOpportunity) -> Result<(), String> {
@@ -413,5 +318,79 @@ impl ArbitrageMonitor {
         }
 
         Ok(deleted_count)
+    }
+
+    // Execute an arbitrage opportunity (simulation only)
+    async fn execute_arbitrade_opportunity(
+        &self,
+        mut opportunity: ArbitrageOpportunity,
+        forward_route: SwapRoute,
+        reverse_route: SwapRoute,
+        priority: ExecutionPriority,
+        payer: Option<Pubkey>,
+        rpc_client: &RpcClient,
+    ) {
+        let payer = payer.unwrap_or_else(|| {
+            Pubkey::from_str("7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu").unwrap()
+        });
+
+        log::info!(
+            "🔄 Executing arbitrage opportunity: {} ({:.4}% profit)",
+            opportunity.pair_name,
+            opportunity.profit_percent
+        );
+
+        // Build arbitrage transaction
+        match self
+            .aggregator
+            .build_arbitrage_transaction(
+                &forward_route,
+                &reverse_route,
+                priority,
+                payer,
+                rpc_client,
+            )
+            .await
+        {
+            Ok(transaction) => {
+                // Simulate the transaction
+                match rpc_client.simulate_transaction(&transaction).await {
+                    Ok(simulation) => {
+                        if let Some(err) = simulation.value.err {
+                            // Simulation failed
+                            let error_msg = format!("Simulation failed: {:?}", err);
+                            log::error!("❌ {}", error_msg);
+                            opportunity.execution_status = ExecutionStatus::Fail;
+                            opportunity.error_message = Some(error_msg);
+                        } else {
+                            // Simulation succeeded
+                            log::info!(
+                                "✅ Simulation successful - compute units: {:?}",
+                                simulation.value.units_consumed
+                            );
+                            opportunity.execution_status = ExecutionStatus::Success;
+                            opportunity.error_message = None;
+                        }
+                    }
+                    Err(e) => {
+                        let error_msg = format!("RPC error during simulation: {}", e);
+                        log::error!("❌ {}", error_msg);
+                        opportunity.execution_status = ExecutionStatus::Fail;
+                        opportunity.error_message = Some(error_msg);
+                    }
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to build transaction: {}", e);
+                log::error!("❌ {}", error_msg);
+                opportunity.execution_status = ExecutionStatus::Fail;
+                opportunity.error_message = Some(error_msg);
+            }
+        }
+
+        // Save updated opportunity with execution status
+        if let Err(e) = self.save_opportunity(&opportunity) {
+            log::error!("Failed to save opportunity status: {}", e);
+        }
     }
 }

@@ -16,13 +16,13 @@ use axum::{
 };
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use solana_sdk::pubkey::Pubkey;
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::pubkey::Pubkey;
+use solana_sdk::transaction::Transaction;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 use validator::Validate;
-use solana_sdk::transaction::Transaction;
 
 /// Helper function to serialize, validate, and simulate a transaction
 /// Returns the base64-encoded transaction if validation passes
@@ -52,18 +52,18 @@ async fn validate_and_serialize_transaction(
     })?;
 
     // Deserialize transaction using bincode 2.x serde compatibility mode
-    let (deserialized_tx, _len): (Transaction, usize) = bincode::serde::decode_from_slice(
-        &decoded_bytes,
-        bincode::config::standard()
-    ).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to deserialize transaction".to_string(),
-                details: vec![format!("Deserialization error: {}", e)],
-            }),
-        )
-    })?;
+    let (deserialized_tx, _len): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&decoded_bytes, bincode::config::standard()).map_err(
+            |e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to deserialize transaction".to_string(),
+                        details: vec![format!("Deserialization error: {}", e)],
+                    }),
+                )
+            },
+        )?;
 
     // Simulate the deserialized transaction to validate it will succeed
     let simulation = rpc_client
@@ -217,24 +217,34 @@ pub async fn get_quote(
             });
 
             let time_taken_ms = start_time.elapsed().as_millis() as u64;
-            let transaction = state.aggregator.build_route_transaction(
-                &best_route, 
-                ExecutionPriority::Medium, 
-                user_wallet, 
-                state.arbitrage_monitor.as_ref().unwrap().get_rpc_client().as_ref()
-            ).await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to build transaction".to_string(),
-                        details: vec![e],
-                    }),
+            let transaction = state
+                .aggregator
+                .build_route_transaction(
+                    &best_route,
+                    ExecutionPriority::Medium,
+                    user_wallet,
+                    state
+                        .arbitrage_monitor
+                        .as_ref()
+                        .unwrap()
+                        .get_rpc_client()
+                        .as_ref(),
                 )
-            })?;
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "Failed to build transaction".to_string(),
+                            details: vec![e],
+                        }),
+                    )
+                })?;
 
             // Validate and serialize transaction
             let rpc_client = state.arbitrage_monitor.as_ref().unwrap().get_rpc_client();
-            let base64_tx = validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
+            let base64_tx =
+                validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
 
             let response = QuoteResponse {
                 routes: swap_routes,
@@ -361,10 +371,12 @@ pub async fn check_arbitrage(
     let token_a =
         get_token_with_error(&state.aggregator, &token_a_key, &request.token_a, "Token A").await?;
 
+    let token_b =
+        get_token_with_error(&state.aggregator, &token_b_key, &request.token_b, "Token B").await?;
     // Create swap params for tokenA -> tokenB
     let swap_params = SwapParams {
         input_token: token_a.clone(),
-        output_token: token_a.clone(), // placeholder, will be replaced
+        output_token: token_b.clone(),
         input_amount: request.input_amount,
         slippage_bps: request.slippage_bps,
         user_wallet,
@@ -413,24 +425,29 @@ pub async fn check_arbitrage(
 
             // Build arbitrage transaction (forward + reverse swaps in one atomic transaction)
             let rpc_client = state.arbitrage_monitor.as_ref().unwrap().get_rpc_client();
-            let transaction = state.aggregator.build_arbitrage_transaction(
-                &forward_route,
-                &reverse_route,
-                ExecutionPriority::Medium,
-                user_wallet,
-                rpc_client.as_ref()
-            ).await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to build arbitrage transaction".to_string(),
-                        details: vec![e],
-                    }),
+            let transaction = state
+                .aggregator
+                .build_arbitrage_transaction(
+                    &forward_route,
+                    &reverse_route,
+                    ExecutionPriority::Medium,
+                    user_wallet,
+                    rpc_client.as_ref(),
                 )
-            })?;
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "Failed to build arbitrage transaction".to_string(),
+                            details: vec![e],
+                        }),
+                    )
+                })?;
 
             // Validate and serialize arbitrage transaction
-            let base64_tx = validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
+            let base64_tx =
+                validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
 
             let response = ArbitrageResponse {
                 profitable: true,

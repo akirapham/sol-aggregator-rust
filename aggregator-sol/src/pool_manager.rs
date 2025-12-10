@@ -351,7 +351,6 @@ impl PoolStateManager {
         let db_clone = Arc::clone(&self.db);
         let pools_clone = Arc::clone(&self.pools);
         let token_cache_clone = Arc::clone(&self.token_cache);
-        let dbc_configs_clone = Arc::clone(&self.dbc_configs);
 
         tokio::spawn(async move {
             let mut save_ticker = interval(Duration::from_secs(6 * 60 * 60)); // 6h
@@ -365,22 +364,6 @@ impl PoolStateManager {
                 } else {
                     let save_ns = save_start.elapsed();
                     log::info!("Saved pool state to RocksDB in {:?}", save_ns);
-                }
-                
-                // Save DBC configs
-                let configs = dbc_configs_clone.read().await;
-                let config_count = configs.len();
-                if config_count > 0 {
-                    if let Ok(serialized_configs) = bincode::serde::encode_to_vec(
-                        (*configs).clone(),
-                        bincode::config::standard(),
-                    ) {
-                        if let Err(e) = db_clone.put(b"dbc_configs", serialized_configs) {
-                            log::error!("Failed to save DBC configs to RocksDB: {:?}", e);
-                        } else {
-                            log::info!("Saved {} DBC configs to RocksDB", config_count);
-                        }
-                    }
                 }
             }
         });
@@ -1732,7 +1715,6 @@ impl PoolStateManager {
     pub async fn save_pools(&self) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Saving pools to database...");
         Self::save_to_db(&self.db, &self.pools, &self.token_cache).await?;
-        self.save_dbc_configs_to_db().await?;
         Ok(())
     }
 
@@ -1777,22 +1759,6 @@ impl PoolStateManager {
         let total_size = db.property_int_value("rocksdb.estimate-live-data-size")?;
         log::info!("RocksDB live data size: {} bytes", total_size.unwrap_or(0));
 
-        Ok(())
-    }
-
-    async fn save_dbc_configs_to_db(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let configs = self.dbc_configs.read().await;
-        let config_count = configs.len();
-        
-        if config_count > 0 {
-            let serialized_configs = bincode::serde::encode_to_vec(
-                (*configs).clone(),
-                bincode::config::standard(),
-            )?;
-            self.db.put(b"dbc_configs", serialized_configs)?;
-            log::info!("Saved {} DBC configs to RocksDB", config_count);
-        }
-        
         Ok(())
     }
 

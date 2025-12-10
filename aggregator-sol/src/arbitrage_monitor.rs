@@ -24,23 +24,6 @@ pub struct ArbitrageOpportunity {
     pub forward_output: u64,
     pub reverse_output: u64,
     pub detected_at: u64,
-    #[serde(default)]
-    pub status: OpportunityStatus,
-    pub error_message: Option<String>,
-}
-
-/// Status of an arbitrage opportunity
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub enum OpportunityStatus {
-    #[default]
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "executing")]
-    Executing,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(rename = "failed")]
-    Failed,
 }
 
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
@@ -211,8 +194,6 @@ impl ArbitrageMonitor {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs(),
-                        status: OpportunityStatus::Pending,
-                        error_message: None,
                     };
 
                     // Save opportunity with Pending status

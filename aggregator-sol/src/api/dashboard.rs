@@ -34,8 +34,9 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             let top_20 = all_opportunities.iter().take(20);
             let mut opp_html = String::new();
             for opp in top_20 {
-                 // Format timestamp as human readable (already in seconds)
-                let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+                // Format timestamp as human readable (already in seconds)
+                let timestamp =
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
                 let datetime = format!("{:?}", timestamp);
 
                 let profit_pct = if opp.input_amount > 0 {
@@ -44,34 +45,14 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                     0.0
                 };
 
-                // Format status based on OpportunityStatus
-                let status_html = match &opp.status {
-                    crate::arbitrage_monitor::OpportunityStatus::Completed => {
-                        "<span class='status-badge completed'>✅ Completed</span>".to_string()
-                    }
-                    crate::arbitrage_monitor::OpportunityStatus::Executing => {
-                        "<span class='status-badge executing'>🔄 Executing</span>".to_string()
-                    }
-                    crate::arbitrage_monitor::OpportunityStatus::Failed => {
-                        if let Some(err) = &opp.error_message {
-                            format!("<span class='status-badge failed' title='{}'>❌ Failed</span>", err)
-                        } else {
-                            "<span class='status-badge failed'>❌ Failed</span>".to_string()
-                        }
-                    }
-                    crate::arbitrage_monitor::OpportunityStatus::Pending => {
-                        "<span class='status-badge pending'>⏳ Pending</span>".to_string()
-                    }
-                };
                 opp_html.push_str(&format!(
-                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
+                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td></tr>",
                     datetime,
                     &opp.pair_name,
                     opp.token_a.chars().take(6).collect::<String>(),
                     opp.token_b.chars().take(6).collect::<String>(),
                     opp.profit_amount as f64 / 1_000_000.0,
                     profit_pct,
-                    status_html
                 ));
             }
 
@@ -214,31 +195,6 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             color: #999;
         }}
 
-        .status-badge {{
-            display: inline-block;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
-        }}
-
-        .status-badge.pending {{
-            background: #fff3cd;
-            color: #856404;
-        }}
-
-        .status-badge.swapped {{
-            background: #d4edda;
-            color: #155724;
-        }}
-
-        .status-badge small {{
-            display: block;
-            font-size: 10px;
-            margin-top: 2px;
-            font-weight: 400;
-        }}
-
         .footer {{
             text-align: center;
             color: white;
@@ -301,7 +257,6 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                         <th>Route</th>
                         <th>Profit</th>
                         <th>Profit %</th>
-                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -317,7 +272,6 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                     <tr>
                         <th>Token</th>
                         <th>Address</th>
-                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody id="tokens-tbody">

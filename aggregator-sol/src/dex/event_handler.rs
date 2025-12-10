@@ -1300,7 +1300,6 @@ pub fn handle_dex_event(
                     })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
-                // log::info!("AAA DbcVirtualPoolAccountEvent: {:?}", e);
                 pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
                     DbcPoolUpdate {
                         slot: e.metadata.slot,
@@ -1348,8 +1347,8 @@ pub fn handle_dex_event(
                     DbcPoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
-                        address: e.pubkey, // For config update, address is the config pubkey
-                        config: e.pubkey,  // Config key is the account key itself
+                        address: e.pubkey,
+                        config: e.pubkey,
 
                         // Config fields
                         is_config_update: true,

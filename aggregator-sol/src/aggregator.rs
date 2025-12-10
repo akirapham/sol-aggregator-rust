@@ -110,7 +110,6 @@ impl DexAggregator {
         // Loop over BASE_TOKENS to find hop routes
         for base_token in BASE_TOKENS.iter() {
             let base_token_key = Pubkey::from_str(base_token).unwrap();
-
             // Skip if base token is same as input or output
             if tokens_equal(&base_token_key, &swap_param.input_token.address)
                 || tokens_equal(&base_token_key, &swap_param.output_token.address)
@@ -205,6 +204,7 @@ impl DexAggregator {
                         self_arc.clone(),
                     )
                     .await;
+
                 if output_amount > 0 {
                     all_routes_with_out_amounts.push((
                         vec![SwapStepInternal {
@@ -579,12 +579,7 @@ impl DexAggregator {
             .await?;
 
         let final_token_a_amount = reverse_route.output_amount;
-        log::info!(
-            "AAAAAAA Arbitrage check: tokenA input {} -> tokenB {} -> tokenA final {}",
-            token_a.input_amount,
-            token_b_amount,
-            final_token_a_amount
-        );
+
         // Step 5: Calculate profit
         if final_token_a_amount > token_a.input_amount {
             let profit = final_token_a_amount - token_a.input_amount;

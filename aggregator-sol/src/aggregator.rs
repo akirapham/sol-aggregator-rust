@@ -536,7 +536,7 @@ impl DexAggregator {
         token_a: &SwapParams,
         token_b_address: &Pubkey,
         slippage_bps: u16,
-    ) -> Option<(u64, SwapRoute, SwapRoute)> {
+    ) -> Option<(i64, SwapRoute, SwapRoute)> {
         let exclude_pools: HashSet<Pubkey> = HashSet::new();
 
         // Step 1: Get best forward route from tokenA -> tokenB
@@ -558,7 +558,7 @@ impl DexAggregator {
             }
         }
 
-        let token_b_amount = forward_route.output_amount;
+        let token_b_amount = forward_route.other_output_amount;
 
         // Step 2: Get the tokenB info from pool manager
         let token_b = self.pool_manager.get_token(token_b_address).await?;
@@ -578,11 +578,23 @@ impl DexAggregator {
             .get_swap_route_with_exclude(&reverse_params, &exclude_pools, false)
             .await?;
 
-        let final_token_a_amount = reverse_route.output_amount;
+        let final_token_a_amount = reverse_route.other_output_amount;
+        let profit = final_token_a_amount as i64 - token_a.input_amount as i64;
+        let profit_percent = (profit as f64 / token_a.input_amount as f64) * 100.0;
 
-        // Step 5: Calculate profit
-        if final_token_a_amount > token_a.input_amount {
-            let profit = final_token_a_amount - token_a.input_amount;
+        log::info!(
+            "final_token_a_amount: {} input_amount: {} forward_route min output amount: {} profit: {} input token: {} output token: {} forward_route paths: {:?} reverse_route paths: {:?}",
+            final_token_a_amount,
+            token_a.input_amount,
+            forward_route.other_output_amount,
+            profit,
+            token_a.input_token.address,
+            token_a.output_token.address,
+            forward_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            reverse_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>()
+        );
+        // Step 5: Check conditions: Profit > 0 OR Abnormal profit/loss (> 5% or < -5%)
+        if profit > 0 || profit_percent.abs() > 5.0 {
             Some((profit, forward_route, reverse_route))
         } else {
             None

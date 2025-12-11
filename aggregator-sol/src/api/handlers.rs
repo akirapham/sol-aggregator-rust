@@ -390,6 +390,25 @@ pub async fn check_arbitrage(
         .await
     {
         Some((profit, forward_route, reverse_route)) => {
+            // Only consider it a strict "success" for the API if profit is positive
+            // The aggregator might return negative profit if it matched an "Abnormal" case (loss)
+            if profit <= 0 {
+                let time_taken_ms = start_time.elapsed().as_millis() as u64;
+                let response = ArbitrageResponse {
+                    profitable: false,
+                    profit_amount: profit as u64, // Return actual PnL even if negative/zero
+                    profit_percent: (profit as f64 / request.input_amount as f64) * 100.0,
+                    forward_route: vec![],
+                    reverse_route: vec![],
+                    forward_output: 0,
+                    reverse_output: 0,
+                    time_taken_ms,
+                    context_slot: 0,
+                    transaction: String::new(),
+                };
+                return Ok(Json(response));
+            }
+
             let profit_percent = (profit as f64 / request.input_amount as f64) * 100.0;
             // Extract swap steps from forward route
             let mut forward_steps: Vec<SwapStep> = vec![];
@@ -451,7 +470,7 @@ pub async fn check_arbitrage(
 
             let response = ArbitrageResponse {
                 profitable: true,
-                profit_amount: profit,
+                profit_amount: profit as u64,
                 profit_percent,
                 forward_route: forward_steps,
                 reverse_route: reverse_steps,

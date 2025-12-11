@@ -21,13 +21,13 @@ pub enum ExecutionStatus {
     Fail,
 }
 
-/// Detected arbitrage opportunity
+/// Detected arbitrage opportunity (Profitable only)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArbitrageOpportunity {
     pub pair_name: String,
     pub token_a: String,
     pub token_b: String,
-    pub profit_amount: u64,
+    pub profit_amount: i64,
     pub profit_percent: f64,
     pub input_amount: u64,
     pub forward_output: u64,
@@ -37,6 +37,22 @@ pub struct ArbitrageOpportunity {
     pub error_message: Option<String>,
 }
 
+/// Abnormal arbitrage opportunity (Profit > 5% or < -5%)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbnormalArbitrageOpportunity {
+    pub pair_name: String,
+    pub token_a: String,
+    pub token_b: String,
+    pub profit_amount: i64,
+    pub profit_percent: f64,
+    pub input_amount: u64,
+    pub forward_output: u64,
+    pub reverse_output: u64,
+    pub detected_at: u64,
+    pub forward_dexes: Vec<String>,
+    pub reverse_dexes: Vec<String>,
+}
+
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
 #[derive(Clone)]
 pub struct ArbitrageMonitor {
@@ -44,6 +60,7 @@ pub struct ArbitrageMonitor {
     config: ArbitrageConfig,
     db: Arc<DB>,
     rpc_client: Arc<RpcClient>,
+    payer_pubkey: Pubkey,
 }
 
 impl ArbitrageMonitor {
@@ -53,7 +70,7 @@ impl ArbitrageMonitor {
         config: ArbitrageConfig,
         db_path: impl AsRef<Path>,
         rpc_url: &str,
-        keypair: Arc<Keypair>,
+        payer_pubkey: Pubkey,
     ) -> Result<Self, rocksdb::Error> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -61,13 +78,14 @@ impl ArbitrageMonitor {
         let rpc_client = Arc::new(RpcClient::new(rpc_url.to_string()));
 
         log::info!("🌐 Arbitrage Monitor initialized for mainnet: {}", rpc_url);
-        log::info!("📍 Signer pubkey: {}", keypair.pubkey());
+        log::info!("📍 Signer pubkey: {}", payer_pubkey);
 
         Ok(Self {
             aggregator,
             config,
             db: Arc::new(db),
             rpc_client,
+            payer_pubkey,
         })
     }
 
@@ -188,11 +206,11 @@ impl ArbitrageMonitor {
             Some((profit, forward_route, reverse_route)) => {
                 let profit_percent =
                     (profit as f64 / self.config.settings.base_amount as f64) * 100.0;
-                // Check if profit meets minimum threshold
-                let profit_bps = (profit_percent * 100.0) as u64;
-                if profit_bps >= self.config.settings.min_profit_bps {
-                    let opportunity;
-                    opportunity = ArbitrageOpportunity {
+
+                // Case 1: Profitable Arbitrage (Profit > 0 AND meets min_profit_bps)
+                let profit_bps = (profit_percent * 100.0) as i64;
+                if profit > 0 && profit_bps >= self.config.settings.min_profit_bps as i64 {
+                    let opportunity = ArbitrageOpportunity {
                         pair_name: format!("{}-{}", token_a, token_b),
                         token_a: token_a.to_string(),
                         token_b: token_b.to_string(),
@@ -221,18 +239,61 @@ impl ArbitrageMonitor {
                         profit_percent,
                         profit
                     );
-                    let payer =
-                        Pubkey::from_str("7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu").unwrap();
+
                     // Execute an arbitrage opportunity
                     self.execute_arbitrade_opportunity(
                         opportunity,
-                        forward_route,
-                        reverse_route,
+                        forward_route.clone(),
+                        reverse_route.clone(),
                         ExecutionPriority::Medium,
-                        Some(payer),
                         &self.rpc_client,
                     )
                     .await;
+                }
+
+                // Case 2: Abnormal Arbitrage (Profit > 5% or < -5%)
+                if profit_percent.abs() > 5.0 {
+                    let forward_dexes: Vec<String> = forward_route
+                        .paths
+                        .iter()
+                        .flat_map(|p| p.steps.iter().map(|s| s.dex.to_string()))
+                        .collect();
+
+                    let reverse_dexes: Vec<String> = reverse_route
+                        .paths
+                        .iter()
+                        .flat_map(|p| p.steps.iter().map(|s| s.dex.to_string()))
+                        .collect();
+
+                    let abnormal_opp = AbnormalArbitrageOpportunity {
+                        pair_name: format!("{}-{}", token_a, token_b),
+                        token_a: token_a.to_string(),
+                        token_b: token_b.to_string(),
+                        profit_amount: profit,
+                        profit_percent,
+                        input_amount: self.config.settings.base_amount,
+                        forward_output: forward_route.output_amount,
+                        reverse_output: reverse_route.output_amount,
+                        detected_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                        forward_dexes: forward_dexes.clone(),
+                        reverse_dexes: reverse_dexes.clone(),
+                    };
+
+                    if let Err(e) = self.save_abnormal_opportunity(&abnormal_opp) {
+                        log::error!("Failed to save abnormal opportunity: {}", e);
+                    }
+
+                    log::warn!(
+                        "⚠️ ABNORMAL ARBITRAGE: {} <-> {} | Profit: {:.4}% | Fwd: {:?} | Rev: {:?}",
+                        token_a,
+                        token_b,
+                        profit_percent,
+                        forward_dexes,
+                        reverse_dexes
+                    );
                 }
             }
             None => {
@@ -247,6 +308,20 @@ impl ArbitrageMonitor {
         let key = format!("opp:{}:{}", opportunity.detected_at, opportunity.pair_name);
         let value = serde_json::to_vec(opportunity)
             .map_err(|e| format!("Failed to serialize opportunity: {}", e))?;
+        self.db
+            .put(key.as_bytes(), value)
+            .map_err(|e| format!("Failed to save to DB: {}", e))?;
+        Ok(())
+    }
+
+    /// Save an abnormal opportunity to RocksDB (prefix "abn:")
+    fn save_abnormal_opportunity(
+        &self,
+        opportunity: &AbnormalArbitrageOpportunity,
+    ) -> Result<(), String> {
+        let key = format!("abn:{}:{}", opportunity.detected_at, opportunity.pair_name);
+        let value = serde_json::to_vec(opportunity)
+            .map_err(|e| format!("Failed to serialize abnormal opportunity: {}", e))?;
         self.db
             .put(key.as_bytes(), value)
             .map_err(|e| format!("Failed to save to DB: {}", e))?;
@@ -275,6 +350,68 @@ impl ArbitrageMonitor {
                         }
                     } else {
                         break; // No more opportunities
+                    }
+                }
+            }
+            iter.prev();
+        }
+
+        opportunities
+    }
+
+    /// Get recent abnormal opportunities (last N)
+    pub fn get_recent_abnormal_opportunities(
+        &self,
+        limit: usize,
+    ) -> Vec<AbnormalArbitrageOpportunity> {
+        let mut opportunities = Vec::new();
+        let mut iter = self.db.raw_iterator();
+
+        // Strategy to get recent (last added) "abn:" keys:
+        // 1. Seek to "abo" (which is lexicographically > "abn").
+        //    seek() positions at the first key >= target.
+        // 2. If valid (found a key >= "abo", e.g. "opp:..."), call prev() to jump to the last "abn:..." key (assuming no keys between abn:zzz and abo).
+        // 3. If invalid (no keys >= "abo"), it means all keys are smaller, so seek_to_last() should place us at the end of the DB (hopefully "abn:..." if they exist and are the last ones, but safer to assume they might be last).
+        // Actually, if seek("abo") is invalid, it means everything is < "abo".
+        // The last key in DB could be "abn:..." if no "opp:..." exists.
+
+        iter.seek("abo");
+
+        if iter.valid() {
+            iter.prev();
+        } else {
+            iter.seek_to_last();
+        }
+
+        while iter.valid() {
+            if let Some(key) = iter.key() {
+                if let Ok(key_str) = std::str::from_utf8(key) {
+                    if key_str.starts_with("abn:") {
+                        if let Some(value) = iter.value() {
+                            if let Ok(opp) =
+                                serde_json::from_slice::<AbnormalArbitrageOpportunity>(value)
+                            {
+                                opportunities.push(opp);
+                                if opportunities.len() >= limit {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // Check strictly if we went past "abn" into smaller prefixes (e.g. "abc")
+                        // But since we are iterating backwards from "abo" (approx), if we hit something not "abn", it must be smaller.
+                        // Unless we started at "opp" because seek failed? No, seek finds >=.
+                        // If we are at "opp", prev would go to "abn" (if exists).
+                        // So if we see "abn", good. If not "abn", it means either:
+                        // 1. We are still at "opp" (logic error above?) -> Nope, we did prev().
+                        // 2. We went past "abn" to "abc". -> Break.
+                        // 3. We were at "abc" to begin with because no "abn" exists. -> Break.
+
+                        // One edge case: what if key is > "abn:" (e.g. we didn't seek correctly)?
+                        // "abo" > "abn". iter.seek("abo") -> >= "abo". iter.prev() -> < "abo".
+                        // So key is guaranteed < "abo" (so <= "abn:zzz").
+                        // If it doesn't start with "abn:", then it must be < "abn:".
+                        break;
                     }
                 }
             }
@@ -327,12 +464,9 @@ impl ArbitrageMonitor {
         forward_route: SwapRoute,
         reverse_route: SwapRoute,
         priority: ExecutionPriority,
-        payer: Option<Pubkey>,
         rpc_client: &RpcClient,
     ) {
-        let payer = payer.unwrap_or_else(|| {
-            Pubkey::from_str("7dGrdJRYtsNR8UYxZ3TnifXGjGc9eRYLq9sELwYpuuUu").unwrap()
-        });
+        let payer = self.payer_pubkey;
 
         log::info!(
             "🔄 Executing arbitrage opportunity: {} ({:.4}% profit)",

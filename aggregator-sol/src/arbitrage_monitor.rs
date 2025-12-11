@@ -5,11 +5,9 @@ use crate::types::{ExecutionPriority, SwapParams};
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_client::rpc_config::RpcSimulateTransactionConfig;
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signer::keypair::Keypair;
-use solana_sdk::signer::Signer;
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -35,6 +33,8 @@ pub struct ArbitrageOpportunity {
     pub detected_at: u64,
     pub execution_status: ExecutionStatus,
     pub error_message: Option<String>,
+    pub forward_dexes: Vec<String>,
+    pub reverse_dexes: Vec<String>,
 }
 
 /// Abnormal arbitrage opportunity (Profit > 5% or < -5%)
@@ -210,6 +210,18 @@ impl ArbitrageMonitor {
                 // Case 1: Profitable Arbitrage (Profit > 0 AND meets min_profit_bps)
                 let profit_bps = (profit_percent * 100.0) as i64;
                 if profit > 0 && profit_bps >= self.config.settings.min_profit_bps as i64 {
+                    let forward_dexes: Vec<String> = forward_route
+                        .paths
+                        .iter()
+                        .flat_map(|p| p.steps.iter().map(|s| s.dex.to_string()))
+                        .collect();
+
+                    let reverse_dexes: Vec<String> = reverse_route
+                        .paths
+                        .iter()
+                        .flat_map(|p| p.steps.iter().map(|s| s.dex.to_string()))
+                        .collect();
+
                     let opportunity = ArbitrageOpportunity {
                         pair_name: format!("{}-{}", token_a, token_b),
                         token_a: token_a.to_string(),
@@ -225,6 +237,8 @@ impl ArbitrageMonitor {
                             .as_secs(),
                         execution_status: ExecutionStatus::NotYet,
                         error_message: None,
+                        forward_dexes: forward_dexes.clone(),
+                        reverse_dexes: reverse_dexes.clone(),
                     };
 
                     // Save opportunity with Pending status
@@ -487,8 +501,14 @@ impl ArbitrageMonitor {
             .await
         {
             Ok(transaction) => {
-                // Simulate the transaction
-                match rpc_client.simulate_transaction(&transaction).await {
+                // Simulate the transaction with sig_verify=false since we don't have the private key here
+                let sim_config = RpcSimulateTransactionConfig {
+                    sig_verify: false,
+                    replace_recent_blockhash: true,
+                    ..Default::default()
+                };
+
+                match rpc_client.simulate_transaction_with_config(&transaction, sim_config).await {
                     Ok(simulation) => {
                         if let Some(err) = simulation.value.err {
                             // Simulation failed

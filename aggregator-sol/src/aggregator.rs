@@ -578,7 +578,47 @@ impl DexAggregator {
             .get_swap_route_with_exclude(&reverse_params, &exclude_pools, false)
             .await?;
 
-        let final_token_a_amount = reverse_route.other_output_amount;
+        // Step 5: Check transaction size and fallback if needed
+        let mut final_reverse_route = reverse_route;
+        
+        // Check if the combined transaction is too large
+        let is_too_large = self.estimate_transaction_size(
+            &forward_route,
+            &final_reverse_route,
+            token_a.user_wallet
+        ).await.unwrap_or(true); // Treat error as too large to be safe
+
+        if is_too_large {
+            log::debug!("⚠️ Transaction too large with complex route, falling back to direct route...");
+            
+            // Try to get a DIRECT reverse route instead
+             let direct_reverse_route = self
+                .get_swap_route_with_exclude(&reverse_params, &exclude_pools, true) // direct_only = true
+                .await;
+
+            if let Some(direct_route) = direct_reverse_route {
+                // Verify the direct route is actually smaller/valid
+                 let direct_is_too_large = self.estimate_transaction_size(
+                    &forward_route,
+                    &direct_route,
+                    token_a.user_wallet
+                ).await.unwrap_or(true);
+
+                if !direct_is_too_large {
+                     log::debug!("✅ Fallback to direct route successful");
+                     final_reverse_route = direct_route;
+                } else {
+                    log::debug!("❌ Direct route also too large or check failed");
+                    return None;
+                }
+            } else {
+                 log::debug!("❌ No direct fallback route available");
+                 return None;
+            }
+        }
+
+        // Recalculate profit with the final route
+        let final_token_a_amount = final_reverse_route.other_output_amount;
         let profit = final_token_a_amount as i64 - token_a.input_amount as i64;
         let profit_percent = (profit as f64 / token_a.input_amount as f64) * 100.0;
 
@@ -591,14 +631,79 @@ impl DexAggregator {
             token_a.input_token.address,
             token_a.output_token.address,
             forward_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>(),
-            reverse_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>()
+            final_reverse_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>()
         );
-        // Step 5: Check conditions: Profit > 0 OR Abnormal profit/loss (> 5% or < -5%)
+        
+        // Step 6: Check conditions: Profit > 0 OR Abnormal profit/loss (> 5% or < -5%)
         if profit > 0 || profit_percent.abs() > 5.0 {
-            Some((profit, forward_route, reverse_route))
+            Some((profit, forward_route, final_reverse_route))
         } else {
             None
         }
+    }
+
+    /// Estimate if the transaction size is within limits (1232 bytes)
+    async fn estimate_transaction_size(
+        &self,
+        forward_route: &SwapRoute,
+        reverse_route: &SwapRoute,
+        payer: Pubkey,
+    ) -> Result<bool, String> {
+        // We use a dummy execution priority here as it doesn't affect instructions size significantly for this check
+        // or we can just use the one from config if available, but Medium is safe default.
+        let priority = ExecutionPriority::Medium;
+        
+        // We don't have the rpc_client here readily available in `calculate_arbitrage_profit`
+        // BUT we need it to build the transaction (get blockhash).
+        // However, `build_arbitrage_transaction` requires `rpc_client`.
+        // Wait, `calculate_arbitrage_profit` does NOT have rpc_client. 
+        // We can't easily build the FULL transaction with blockhash without RPC.
+        // BUT we can build the instructions and estimate size.
+        
+        let mut all_instructions = Vec::new();
+
+        for path in &forward_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, forward_route.slippage_bps, priority, payer)
+                    .await?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        for path in &reverse_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, reverse_route.slippage_bps, priority, payer)
+                    .await?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        let all_instructions = Self::deduplicate_instructions(all_instructions);
+        
+        // Estimate size based on instructions
+        // A simple transaction has header (approx 100 bytes) + instructions
+        // We can construct a Transaction with a default blockhash/payer to check size
+        let message = Message::new(
+            &all_instructions,
+            Some(&payer),
+        );
+        
+        let serialized = message.serialize();
+        let size = serialized.len();
+        
+        // Legacy transaction limit is 1232 bytes
+        // We add some buffer (signatures take 64 bytes per signer)
+        // Message size + 1 signature (64) < 1232
+        const MAX_TX_SIZE: usize = 1232;
+        const SIGNATURE_SIZE: usize = 64;
+        
+        let total_size = size + SIGNATURE_SIZE;
+        
+        log::debug!("📏 Estimated transaction size: {} bytes (Limit: {})", total_size, MAX_TX_SIZE);
+        
+        Ok(total_size > MAX_TX_SIZE)
     }
 
     pub async fn build_route_transaction(

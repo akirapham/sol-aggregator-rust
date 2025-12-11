@@ -17,7 +17,6 @@ use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parse
 use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
 use async_trait::async_trait;
-use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_program::instruction::{AccountMeta, Instruction};
 use spl_associated_token_account;
 
@@ -435,11 +434,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
             data,
         };
 
-        // Compute Budget Instruction
-        let compute_budget_instruction =
-            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
-
-        let mut instructions = vec![compute_budget_instruction];
+        let mut instructions = Vec::new();
 
         // Create input token ATA instruction (idempotent - creates if doesn't exist)
         instructions.push(functions::create_ata_instruction(

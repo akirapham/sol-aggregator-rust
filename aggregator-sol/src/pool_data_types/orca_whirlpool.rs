@@ -21,7 +21,6 @@ use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
 use async_trait::async_trait;
 use solana_program::instruction::{AccountMeta, Instruction};
-use solana_compute_budget_interface::ComputeBudgetInstruction;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct WhirlpoolPoolState {
@@ -475,9 +474,7 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         };
 
         // 9. Build instruction list
-        let mut instructions = vec![
-            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
-        ];
+        let mut instructions = Vec::new();
 
         // Create ATA for token A if needed
         instructions.push(functions::create_ata_instruction(

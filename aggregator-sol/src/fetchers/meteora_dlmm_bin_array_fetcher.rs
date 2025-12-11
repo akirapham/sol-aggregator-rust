@@ -1,4 +1,4 @@
-use crate::pool_data_types::{MeteoraDlmmPoolState, dlmm::functions};
+use crate::pool_data_types::{dlmm::functions, MeteoraDlmmPoolState};
 use anyhow::Result;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
@@ -15,9 +15,7 @@ pub struct MeteoraDlmmBinArrayFetcher {
 
 impl MeteoraDlmmBinArrayFetcher {
     pub fn new(rpc_client: Arc<RpcClient>) -> Self {
-        Self {
-            rpc_client,
-        }
+        Self { rpc_client }
     }
 
     pub async fn fetch_all_bin_arrays(
@@ -27,20 +25,21 @@ impl MeteoraDlmmBinArrayFetcher {
     ) -> Result<Vec<BinArray>> {
         let pool_id_anchor = anchor_lang::prelude::Pubkey::from(pool_id.to_bytes());
         let commons_lbpair = functions::to_commons_lb_pair(pool_state);
-        let commons_bitmap_extension = pool_state.bitmap_extension.as_ref().map(|ext| {
-            functions::to_commons_bitmap_extension(pool_state, ext)
-        });
-        
+        let commons_bitmap_extension = pool_state
+            .bitmap_extension
+            .as_ref()
+            .map(|ext| functions::to_commons_bitmap_extension(pool_state, ext));
+
         let mut all_bin_array_pubkeys = std::collections::HashSet::new();
-        
-        const TAKE_COUNT: u8 = 3;
+
+        const TAKE_COUNT: u8 = 10;
 
         // Swap for Y (X -> Y)
         if let Ok(pubkeys_for_y) = meteora_dlmm_sdk::quote::get_bin_array_pubkeys_for_swap(
             pool_id_anchor,
             &commons_lbpair,
             commons_bitmap_extension.as_ref(),
-            true,  // swap_for_y
+            true, // swap_for_y
             TAKE_COUNT,
         ) {
             for pubkey in pubkeys_for_y {
@@ -49,13 +48,13 @@ impl MeteoraDlmmBinArrayFetcher {
         } else {
             log::debug!("DLMM Fetcher: Failed to get pubkeys for Y swap");
         }
-        
+
         // Swap for X (Y -> X)
         if let Ok(pubkeys_for_x) = meteora_dlmm_sdk::quote::get_bin_array_pubkeys_for_swap(
             pool_id_anchor,
             &commons_lbpair,
             commons_bitmap_extension.as_ref(),
-            false,  // swap_for_y
+            false, // swap_for_y
             TAKE_COUNT,
         ) {
             for pubkey in pubkeys_for_x {
@@ -64,22 +63,22 @@ impl MeteoraDlmmBinArrayFetcher {
         } else {
             log::debug!("DLMM Fetcher: Failed to get pubkeys for X swap");
         }
-        
+
         if all_bin_array_pubkeys.is_empty() {
             log::debug!("DLMM Fetcher: No bin arrays found for pool {}", pool_id);
             return Ok(Vec::new());
         }
-        
+
         // Create BinArrayInfo structs
         let mut bin_arrays: Vec<BinArrayInfo> = all_bin_array_pubkeys
             .into_iter()
             .map(|address| BinArrayInfo {
-                index: 0,  // Will be set after fetching
+                index: 0, // Will be set after fetching
                 address,
                 account_data: None,
             })
             .collect();
-        
+
         // Fetch account data in batches
         self.fetch_bin_array_accounts_batch(&mut bin_arrays).await?;
 

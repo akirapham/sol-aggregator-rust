@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
-use axum::{http::StatusCode, Json};
-use validator::Validate;
 use crate::{
     aggregator::DexAggregator,
     types::{SwapStep, Token},
 };
+use axum::{http::StatusCode, Json};
+use serde::{Deserialize, Serialize};
+use solana_sdk::pubkey::Pubkey;
+use std::sync::Arc;
+use validator::Validate;
 
 #[derive(Serialize)] // Required for Json response
 pub struct PoolInfoResponse {

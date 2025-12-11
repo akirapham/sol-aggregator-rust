@@ -15,58 +15,62 @@ async fn generate_dashboard_html(state: &AppState) -> String {
     let monitored_count = arb_config.monitored_tokens.len();
 
     // Get arbitrage stats
-    let (total_opportunities, recent_profit_usdc, all_time_profit_usdc, top_opportunities_html) =
-        if let Some(monitor) = &state.arbitrage_monitor {
-            let all_opportunities = monitor.get_recent_opportunities(1000);
-            let total = all_opportunities.len();
-            let recent_profit: u64 = all_opportunities
-                .iter()
-                .take(10)
-                .map(|o| o.profit_amount)
-                .sum();
-            let profit_usdc = recent_profit as f64 / 1_000_000.0;
+    let (
+        total_opportunities,
+        recent_profit_usdc,
+        all_time_profit_usdc,
+        top_opportunities_html,
+        abnormal_html,
+    ) = if let Some(monitor) = &state.arbitrage_monitor {
+        let all_opportunities = monitor.get_recent_opportunities(1000);
+        let total = all_opportunities.len();
+        let recent_profit: i64 = all_opportunities
+            .iter()
+            .take(10)
+            .map(|o| o.profit_amount)
+            .sum();
+        let profit_usdc = recent_profit as f64 / 1_000_000.0;
 
-            // Calculate all-time profit
-            let all_time_profit: u64 = all_opportunities.iter().map(|o| o.profit_amount).sum();
-            let all_time_profit_usdc = all_time_profit as f64 / 1_000_000.0;
+        // Calculate all-time profit
+        let all_time_profit: i64 = all_opportunities.iter().map(|o| o.profit_amount).sum();
+        let all_time_profit_usdc = all_time_profit as f64 / 1_000_000.0;
 
-            // Generate opportunities table
-            let top_20 = all_opportunities.iter().take(20);
-            let mut opp_html = String::new();
-            for opp in top_20 {
-                // Format timestamp as human readable (already in seconds)
-                let timestamp =
-                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
-                let datetime = format!("{:?}", timestamp);
+        // Generate opportunities table
+        let top_20 = all_opportunities.iter().take(20);
+        let mut opp_html = String::new();
+        for opp in top_20 {
+            // Format timestamp as human readable (already in seconds)
+            let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let datetime = format!("{:?}", timestamp);
 
-                let profit_pct = if opp.input_amount > 0 {
-                    (opp.profit_amount as f64 / opp.input_amount as f64) * 100.0
-                } else {
-                    0.0
-                };
+            let profit_pct = if opp.input_amount > 0 {
+                (opp.profit_amount as f64 / opp.input_amount as f64) * 100.0
+            } else {
+                0.0
+            };
 
-                // Format status badge
-                let status_html = match opp.execution_status {
-                    crate::arbitrage_monitor::ExecutionStatus::NotYet => {
-                        "<span class='status-badge status-pending'>⏳ Pending</span>".to_string()
-                    }
-                    crate::arbitrage_monitor::ExecutionStatus::Success => {
-                        "<span class='status-badge status-success'>✅ Success</span>".to_string()
-                    }
-                    crate::arbitrage_monitor::ExecutionStatus::Fail => {
-                        let error_text = opp.error_message.as_deref().unwrap_or("Unknown error");
-                        let escaped_error = error_text.replace("'", "\\'");
-                        format!(
+            // Format status badge
+            let status_html = match opp.execution_status {
+                crate::arbitrage_monitor::ExecutionStatus::NotYet => {
+                    "<span class='status-badge status-pending'>⏳ Pending</span>".to_string()
+                }
+                crate::arbitrage_monitor::ExecutionStatus::Success => {
+                    "<span class='status-badge status-success'>✅ Success</span>".to_string()
+                }
+                crate::arbitrage_monitor::ExecutionStatus::Fail => {
+                    let error_text = opp.error_message.as_deref().unwrap_or("Unknown error");
+                    let escaped_error = error_text.replace("'", "\\'");
+                    format!(
                             "<div class='tooltip' onclick=\"copyToClipboard('{}')\" title='Click to copy error'>\
                                 <span class='status-badge status-fail'>❌ Failed</span>\
                                 <span class='tooltiptext'>{}</span>\
                             </div>",
                             escaped_error, error_text
                         )
-                    }
-                };
+                }
+            };
 
-                opp_html.push_str(&format!(
+            opp_html.push_str(&format!(
                     "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
                     datetime,
                     &opp.pair_name,
@@ -76,24 +80,61 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                     profit_pct,
                     status_html,
                 ));
-            }
+        }
 
-            if opp_html.is_empty() {
-                opp_html =
-                    "<tr><td colspan='6' class='no-data'>No opportunities found yet</td></tr>"
-                        .to_string();
-            }
+        if opp_html.is_empty() {
+            opp_html = "<tr><td colspan='6' class='no-data'>No opportunities found yet</td></tr>"
+                .to_string();
+        }
 
-            (total, profit_usdc, all_time_profit_usdc, opp_html)
-        } else {
-            (
-                0,
-                0.0,
-                0.0,
-                "<tr><td colspan='6' class='no-data'>Arbitrage monitor not available</td></tr>"
-                    .to_string(),
-            )
-        };
+        // Generate Abnormal Cases Table
+        let abnormal_opportunities = monitor.get_recent_abnormal_opportunities(50);
+        let mut abn_html = String::new();
+        for opp in abnormal_opportunities {
+            let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let datetime = format!("{:?}", timestamp);
+
+            let profit_pct = opp.profit_percent;
+            let profit_class = if profit_pct > 0.0 {
+                "status-success"
+            } else {
+                "status-fail"
+            };
+
+            // Format dexes string
+            let fwd_dex = opp.forward_dexes.join(", ");
+            let rev_dex = opp.reverse_dexes.join(", ");
+            let route_display = format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex);
+
+            abn_html.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>${:.4}</td><td class='{}'>{:.2}%</td><td>{}→{}</td></tr>",
+                    datetime,
+                    &opp.pair_name,
+                    route_display,
+                    opp.profit_amount as f64 / 1_000_000.0,
+                    profit_class,
+                    profit_pct,
+                    opp.token_a.chars().take(4).collect::<String>(),
+                    opp.token_b.chars().take(4).collect::<String>(),
+                ));
+        }
+        if abn_html.is_empty() {
+            abn_html = "<tr><td colspan='6' class='no-data'>No abnormal cases found yet</td></tr>"
+                .to_string();
+        }
+
+        (total, profit_usdc, all_time_profit_usdc, opp_html, abn_html)
+    } else {
+        (
+            0,
+            0.0,
+            0.0,
+            "<tr><td colspan='6' class='no-data'>Arbitrage monitor not available</td></tr>"
+                .to_string(),
+            "<tr><td colspan='6' class='no-data'>Arbitrage monitor not available</td></tr>"
+                .to_string(),
+        )
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -356,6 +397,25 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         </div>
 
         <div class="section">
+            <h2>🚨 Abnormal Cases (> 5% | < -5%)</h2>
+            <table>
+                 <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Pair</th>
+                        <th>Dex Route</th>
+                        <th>Profit</th>
+                        <th>Profit %</th>
+                        <th>Direction</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
             <h2>📋 Monitored Tokens</h2>
             <table>
                 <thead>
@@ -403,5 +463,6 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         recent_profit_usdc,
         all_time_profit_usdc,
         top_opportunities_html,
+        abnormal_html,
     )
 }

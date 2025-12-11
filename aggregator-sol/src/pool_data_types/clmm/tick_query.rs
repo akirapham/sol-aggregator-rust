@@ -29,7 +29,7 @@ impl TickQuery {
         tick_spacing: u16,
         zero_for_one: bool,
         tick_array_bitmap: &[u64; 16],
-        tick_array_bitmap_extension: &TickArrayBitmapExtension,
+        tick_array_bitmap_extension: Option<&TickArrayBitmapExtension>,
     ) -> Option<i32> {
         let current_offset =
             (tick_index as f32 / TickQuery::tick_count(tick_spacing) as f32).floor() as i32;

@@ -287,7 +287,6 @@ use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
 use async_trait::async_trait;
 use borsh::BorshSerialize;
-use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_program::instruction::{AccountMeta, Instruction};
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 
@@ -454,7 +453,7 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         };
 
         // Build instruction list
-        let mut instructions = vec![ComputeBudgetInstruction::set_compute_unit_limit(1_400_000)];
+        let mut instructions = Vec::new();
 
         // Determine token programs for ATAs
         let is_x_token_2022 = params.input_token.is_token_2022;

@@ -2,7 +2,6 @@ mod aggregator;
 mod api;
 mod arbitrage_config;
 mod arbitrage_monitor;
-mod arbitrage_transaction_handler;
 mod config;
 mod constants;
 mod dex;

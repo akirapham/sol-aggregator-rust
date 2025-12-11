@@ -201,20 +201,20 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         // Build the swap instruction (SwapBaseIn - tag 9)
         // 17 accounts as per Raydium AMM V4 spec
         let accounts: Vec<AccountMeta> = vec![
-            constants::TOKEN_PROGRAM_META,             // 0. Token Program
+            constants::TOKEN_PROGRAM_META,                                 // 0. Token Program
             AccountMeta::new(self.address, false),                         // 1. AMM
-            AccountMeta::new(self.amm_authority, false),          // 2. AMM Authority
+            AccountMeta::new(self.amm_authority, false),                   // 2. AMM Authority
             AccountMeta::new(self.amm_open_orders, false),                 // 3. AMM Open Orders
             AccountMeta::new(self.pool_coin_token_account, false),         // 4. Pool Coin Token Account
             AccountMeta::new(self.pool_pc_token_account, false),           // 5. Pool PC Token Account
-            AccountMeta::new(self.serum_program, false),          // 6. Serum Program
+            AccountMeta::new_readonly(self.serum_program, false),          // 6. Serum Program (ReadOnly)
             AccountMeta::new(self.serum_market, false),                    // 7. Serum Market
             AccountMeta::new(self.serum_bids, false),                      // 8. Serum Bids
             AccountMeta::new(self.serum_asks, false),                      // 9. Serum Asks
             AccountMeta::new(self.serum_event_queue, false),               // 10. Serum Event Queue
             AccountMeta::new(self.serum_coin_vault_account, false),        // 11. Serum Coin Vault
             AccountMeta::new(self.serum_pc_vault_account, false),          // 12. Serum PC Vault
-            AccountMeta::new(self.serum_vault_signer, false),     // 13. Serum Vault Signer
+            AccountMeta::new(self.serum_vault_signer, false),              // 13. Serum Vault Signer
             AccountMeta::new(user_source_token_account, false),            // 14. User Source Token Account
             AccountMeta::new(user_destination_token_account, false),       // 15. User Destination Token Account
             AccountMeta::new(params.user_wallet, true),                    // 16. User wallet (signer)

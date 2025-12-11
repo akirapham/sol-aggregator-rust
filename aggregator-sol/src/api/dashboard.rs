@@ -13,6 +13,41 @@ async fn generate_dashboard_html(state: &AppState) -> String {
     let pool_stats = state.aggregator.get_pool_manager().get_stats().await;
     let arb_config = state.arbitrage_config.read().unwrap();
     let monitored_count = arb_config.monitored_tokens.len();
+    
+    // Generate Monitored Tokens HTML
+    let mut tokens_html = String::new();
+    for token in &arb_config.monitored_tokens {
+        tokens_html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td></tr>",
+            token.symbol,
+            token.address
+        ));
+    }
+    
+    if tokens_html.is_empty() {
+         tokens_html = "<tr><td colspan='2' class='no-data'>No monitored tokens found</td></tr>".to_string();
+    }
+    
+    // Generate Settings HTML
+    let settings = &arb_config.settings;
+    let settings_html = format!(
+        r#"
+        <table>
+            <tbody>
+                <tr><td><strong>Base Token</strong></td><td>{}</td></tr>
+                <tr><td><strong>Base Amount</strong></td><td>{}</td></tr>
+                <tr><td><strong>Slippage</strong></td><td>{} bps</td></tr>
+                <tr><td><strong>Min Profit</strong></td><td>{} bps</td></tr>
+                <tr><td><strong>Max Concurrent Checks</strong></td><td>{}</td></tr>
+            </tbody>
+        </table>
+        "#,
+        settings.base_token,
+        settings.base_amount,
+        settings.slippage_bps,
+        settings.min_profit_bps,
+        settings.max_concurrent_checks
+    );
 
     // Get arbitrage stats
     let (
@@ -21,6 +56,8 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         all_time_profit_usdc,
         top_opportunities_html,
         abnormal_html,
+        settings_html,
+        monitored_tokens_html,
     ) = if let Some(monitor) = &state.arbitrage_monitor {
         let all_opportunities = monitor.get_recent_opportunities(1000);
         let total = all_opportunities.len();
@@ -39,9 +76,10 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         let top_20 = all_opportunities.iter().take(20);
         let mut opp_html = String::new();
         for opp in top_20 {
-            // Format timestamp as human readable (already in seconds)
-            let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
-            let datetime = format!("{:?}", timestamp);
+            use chrono::{DateTime, Utc};
+            let start_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let datetime_utc: DateTime<Utc> = start_time.into();
+            let datetime = datetime_utc.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
             let profit_pct = if opp.input_amount > 0 {
                 (opp.profit_amount as f64 / opp.input_amount as f64) * 100.0
@@ -69,11 +107,21 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                         )
                 }
             };
+            
+            // Format dexes string
+            let fwd_dex = opp.forward_dexes.join(", ");
+            let rev_dex = opp.reverse_dexes.join(", ");
+            let route_display = if fwd_dex.is_empty() && rev_dex.is_empty() {
+                 "-".to_string()
+            } else {
+                 format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex)
+            };
 
             opp_html.push_str(&format!(
-                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
                     datetime,
                     &opp.pair_name,
+                    route_display,
                     opp.token_a.chars().take(6).collect::<String>(),
                     opp.token_b.chars().take(6).collect::<String>(),
                     opp.profit_amount as f64 / 1_000_000.0,
@@ -91,8 +139,10 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         let abnormal_opportunities = monitor.get_recent_abnormal_opportunities(50);
         let mut abn_html = String::new();
         for opp in abnormal_opportunities {
-            let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
-            let datetime = format!("{:?}", timestamp);
+            use chrono::{DateTime, Utc};
+            let start_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let datetime_utc: DateTime<Utc> = start_time.into();
+            let datetime = datetime_utc.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
             let profit_pct = opp.profit_percent;
             let profit_class = if profit_pct > 0.0 {
@@ -107,15 +157,15 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             let route_display = format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex);
 
             abn_html.push_str(&format!(
-                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>${:.4}</td><td class='{}'>{:.2}%</td><td>{}→{}</td></tr>",
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.4}</td><td class='{}'>{:.2}%</td></tr>",
                     datetime,
                     &opp.pair_name,
                     route_display,
+                    opp.token_a.chars().take(4).collect::<String>(),
+                    opp.token_b.chars().take(4).collect::<String>(),
                     opp.profit_amount as f64 / 1_000_000.0,
                     profit_class,
                     profit_pct,
-                    opp.token_a.chars().take(4).collect::<String>(),
-                    opp.token_b.chars().take(4).collect::<String>(),
                 ));
         }
         if abn_html.is_empty() {
@@ -123,16 +173,18 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 .to_string();
         }
 
-        (total, profit_usdc, all_time_profit_usdc, opp_html, abn_html)
+        (total, profit_usdc, all_time_profit_usdc, opp_html, abn_html, settings_html, tokens_html)
     } else {
         (
             0,
             0.0,
             0.0,
-            "<tr><td colspan='6' class='no-data'>Arbitrage monitor not available</td></tr>"
+            "<tr><td colspan='7' class='no-data'>Arbitrage monitor not available</td></tr>"
                 .to_string(),
             "<tr><td colspan='6' class='no-data'>Arbitrage monitor not available</td></tr>"
                 .to_string(),
+            String::new(), // settings
+            tokens_html,
         )
     };
 
@@ -384,6 +436,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                     <tr>
                         <th>Time</th>
                         <th>Pair</th>
+                        <th>Dex Route</th>
                         <th>Route</th>
                         <th>Profit</th>
                         <th>Profit %</th>
@@ -399,20 +452,25 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         <div class="section">
             <h2>🚨 Abnormal Cases (> 5% | < -5%)</h2>
             <table>
-                 <thead>
+                <thead>
                     <tr>
                         <th>Time</th>
                         <th>Pair</th>
                         <th>Dex Route</th>
+                        <th>Route</th>
                         <th>Profit</th>
                         <th>Profit %</th>
-                        <th>Direction</th>
                     </tr>
                 </thead>
                 <tbody>
                     {}
                 </tbody>
             </table>
+        </div>
+
+        <div class="section">
+            <h2>⚙️ Configuration Settings</h2>
+            {}
         </div>
 
         <div class="section">
@@ -425,6 +483,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                     </tr>
                 </thead>
                 <tbody id="tokens-tbody">
+                    {}
                 </tbody>
             </table>
             <div id="no-tokens" class="no-data" style="display:none;">No monitored tokens found</div>
@@ -464,5 +523,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         all_time_profit_usdc,
         top_opportunities_html,
         abnormal_html,
+        settings_html,
+        monitored_tokens_html
     )
 }

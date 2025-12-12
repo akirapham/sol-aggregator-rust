@@ -350,55 +350,86 @@ impl BuildSwapInstruction for PoolState {
         params: &SwapParams,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> std::result::Result<Vec<Instruction>, String> {
+        // Validation
+        if params.input_amount == 0 {
+            return Err("Input amount is zero".to_string());
+        }
+        if params.input_token.address == params.output_token.address {
+            return Err("Input and output tokens are the same".to_string());
+        }
+        if params.slippage_bps > 500 {
+            return Err("Slippage tolerance exceeds maximum allowed (5%)".to_string());
+        }
+
         match self {
-            PoolState::Pumpfun(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
-            PoolState::PumpSwap(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
-            PoolState::RaydiumAmmV4(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
-            PoolState::RaydiumCpmm(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
+            PoolState::Pumpfun(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("Pumpfun build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::PumpSwap(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("PumpSwap build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::RaydiumAmmV4(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("RaydiumAmmV4 build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::RaydiumCpmm(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("RaydiumCpmm build_swap_instruction error: {}", e);
+                    e
+                }),
             PoolState::Bonk(_state) => {
-                Err("Bonk BuildSwapInstruction not yet implemented".to_string())
+                let e = "Bonk BuildSwapInstruction not yet implemented".to_string();
+                log::error!("{}", e);
+                Err(e)
             }
-            PoolState::RadyiumClmm(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
-            PoolState::MeteoraDbc(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
-            PoolState::OrcaWhirlpool(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
-            PoolState::MeteoraDammV2(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
-            PoolState::MeteoraDlmm(state) => {
-                state
-                    .build_swap_instruction(params, amm_config_fetcher)
-                    .await
-            }
+            PoolState::RadyiumClmm(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("RadyiumClmm build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::MeteoraDbc(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("MeteoraDbc build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::OrcaWhirlpool(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("OrcaWhirlpool build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::MeteoraDammV2(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("MeteoraDammV2 build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::MeteoraDlmm(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("MeteoraDlmm build_swap_instruction error: {}", e);
+                    e
+                }),
         }
     }
 }

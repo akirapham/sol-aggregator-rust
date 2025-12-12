@@ -1,26 +1,29 @@
 use crate::{
     constants::is_base_token,
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType, common::{constants, functions}},
+    pool_data_types::{
+        common::{constants, functions},
+        GetAmmConfig, PoolUpdateEventType,
+    },
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 
+use crate::pool_data_types::traits::BuildSwapInstruction;
+use crate::types::SwapParams;
+use crate::utils::tokens_equal;
+use async_trait::async_trait;
 use orca_whirlpools_core::{
     compute_swap, AdaptiveFeeConstantsFacade, AdaptiveFeeInfo, AdaptiveFeeVariablesFacade,
     TickArrayFacade, TickArraySequence, TickFacade, WhirlpoolFacade, WhirlpoolRewardInfoFacade,
     NUM_REWARDS, TICK_ARRAY_SIZE,
 };
 use serde::{Deserialize, Serialize};
+use solana_program::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
     parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::OracleState, types::TickArrayState,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::utils::tokens_equal;
-use crate::pool_data_types::traits::BuildSwapInstruction;
-use crate::types::SwapParams;
-use async_trait::async_trait;
-use solana_program::instruction::{AccountMeta, Instruction};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct WhirlpoolPoolState {
@@ -343,7 +346,8 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         }
 
         // 3. Calculate slippage
-        let other_amount_threshold = functions::calculate_slippage(expected_amount_out, params.slippage_bps);
+        let other_amount_threshold =
+            functions::calculate_slippage(expected_amount_out, params.slippage_bps)?;
 
         // 4. Get tick array addresses
         let start_tick_index = orca_whirlpools_core::get_tick_array_start_tick_index(
@@ -368,7 +372,7 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
             get_tick_array_pda(&self.address, tick_array_indexes[3], &program_id),
             get_tick_array_pda(&self.address, tick_array_indexes[4], &program_id),
         ];
-        
+
         // 5. Get oracle address
         let oracle_seeds = &[b"oracle", self.address.as_ref()];
         let (oracle_address, _) = Pubkey::find_program_address(oracle_seeds, &program_id);
@@ -430,7 +434,7 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         let args = SwapV2InstructionArgs {
             amount: params.input_amount,
             other_amount_threshold,
-            sqrt_price_limit: 0, // 0 means default min/max
+            sqrt_price_limit: 0,             // 0 means default min/max
             amount_specified_is_input: true, // ExactIn
             a_to_b,
             remaining_accounts_info: Some(RemainingAccountsInfo {
@@ -446,21 +450,21 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         args.serialize(&mut data).map_err(|e| e.to_string())?;
 
         let mut accounts = vec![
-            AccountMeta::new_readonly(token_program_a, false),         // token_program_a
-            AccountMeta::new_readonly(token_program_b, false),         // token_program_b
+            AccountMeta::new_readonly(token_program_a, false), // token_program_a
+            AccountMeta::new_readonly(token_program_b, false), // token_program_b
             AccountMeta::new_readonly(constants::SPL_MEMO_PROGRAM, false), // memo_program
-            AccountMeta::new_readonly(params.user_wallet, true),       // token_authority (signer)
-            AccountMeta::new(self.address, false),                     // whirlpool
-            AccountMeta::new_readonly(self.token_mint_a, false),       // token_mint_a
-            AccountMeta::new_readonly(self.token_mint_b, false),       // token_mint_b
-            AccountMeta::new(token_owner_account_a, false),        // token_owner_account_a
-            AccountMeta::new(self.token_vault_a, false),               // token_vault_a
-            AccountMeta::new(token_owner_account_b, false),        // token_owner_account_b
-            AccountMeta::new(self.token_vault_b, false),               // token_vault_b
-            AccountMeta::new(tick_array_addresses[0], false),          // tick_array_0
-            AccountMeta::new(tick_array_addresses[1], false),          // tick_array_1
-            AccountMeta::new(tick_array_addresses[2], false),          // tick_array_2
-            AccountMeta::new(oracle_address, false),                   // oracle
+            AccountMeta::new_readonly(params.user_wallet, true), // token_authority (signer)
+            AccountMeta::new(self.address, false),             // whirlpool
+            AccountMeta::new_readonly(self.token_mint_a, false), // token_mint_a
+            AccountMeta::new_readonly(self.token_mint_b, false), // token_mint_b
+            AccountMeta::new(token_owner_account_a, false),    // token_owner_account_a
+            AccountMeta::new(self.token_vault_a, false),       // token_vault_a
+            AccountMeta::new(token_owner_account_b, false),    // token_owner_account_b
+            AccountMeta::new(self.token_vault_b, false),       // token_vault_b
+            AccountMeta::new(tick_array_addresses[0], false),  // tick_array_0
+            AccountMeta::new(tick_array_addresses[1], false),  // tick_array_1
+            AccountMeta::new(tick_array_addresses[2], false),  // tick_array_2
+            AccountMeta::new(oracle_address, false),           // oracle
         ];
 
         // Add supplemental tick arrays as remaining accounts

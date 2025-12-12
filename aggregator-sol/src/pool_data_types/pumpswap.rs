@@ -3,12 +3,12 @@ use std::sync::Arc;
 use crate::{
     pool_data_types::{
         common,
+        common::functions,
         pumpf::{
             constants,
             functions::{self as pumpf_functions, *},
         },
         GetAmmConfig, PoolUpdateEventType,
-        common::functions,
     },
     utils::{get_sol_mint, tokens_equal},
 };
@@ -128,21 +128,19 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         let creator = self.coin_creator;
         let coin_creator_vault_ata = pumpf_functions::coin_creator_vault_ata(creator, quote_mint);
         let coin_creator_vault_authority = pumpf_functions::coin_creator_vault_authority(creator);
-        let base_token_program = functions::get_token_program(
-            if params.input_token.address == base_mint {
+        let base_token_program =
+            functions::get_token_program(if params.input_token.address == base_mint {
                 params.input_token.is_token_2022
             } else {
                 params.output_token.is_token_2022
-            }
-        );
+            });
 
-        let quote_token_program = functions::get_token_program(
-            if params.input_token.address == quote_mint {
+        let quote_token_program =
+            functions::get_token_program(if params.input_token.address == quote_mint {
                 params.input_token.is_token_2022
             } else {
                 params.output_token.is_token_2022
-            }
-        );
+            });
 
         let is_wsol = (base_mint == common::constants::WSOL_TOKEN_ACCOUNT
             && quote_mint != common::constants::USDC_TOKEN_ACCOUNT)
@@ -173,7 +171,7 @@ impl BuildSwapInstruction for PumpSwapPoolState {
                     self.quote_reserve,
                     &creator,
                 )
-                .unwrap();
+                .map_err(|e| format!("PumpSwap calculation failed: {}", e))?;
                 (result.base, result.max_quote)
             } else {
                 let result = sell_base_input_internal(
@@ -183,7 +181,7 @@ impl BuildSwapInstruction for PumpSwapPoolState {
                     self.quote_reserve,
                     &creator,
                 )
-                .unwrap();
+                .map_err(|e| format!("PumpSwap calculation failed: {}", e))?;
                 (result.min_quote, params.input_amount)
             };
         } else {
@@ -195,7 +193,7 @@ impl BuildSwapInstruction for PumpSwapPoolState {
                     self.quote_reserve,
                     &creator,
                 )
-                .unwrap();
+                .map_err(|e| format!("PumpSwap calculation failed: {}", e))?;
                 (params.input_amount, result.min_quote)
             } else {
                 let result = buy_quote_input_internal(
@@ -205,9 +203,13 @@ impl BuildSwapInstruction for PumpSwapPoolState {
                     self.quote_reserve,
                     &creator,
                 )
-                .unwrap();
+                .map_err(|e| format!("PumpSwap calculation failed: {}", e))?;
                 (result.max_quote, result.base)
             };
+        }
+
+        if token_amount == 0 || sol_amount == 0 {
+            return Err("PumpSwap calculated amounts must be greater than zero".to_string());
         }
 
         // Convert Address types to anchor_lang Pubkey for compatibility
@@ -233,7 +235,6 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         // Convert back to Address for AccountMeta
         let user_base_token_account = functions::to_address(&user_base_token_account_old);
         let user_quote_token_account = functions::to_address(&user_quote_token_account_old);
-
 
         // Determine fee recipient based on pool's protocol_fee_recipient
         let fee_recipient = if self.protocol_fee_recipient == constants::MAYHEM_FEE_RECIPIENT {
@@ -277,12 +278,16 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         // Create output token ATA instruction (idempotent - creates if doesn't exist)
         // Only if output is NOT WSOL
         if params.output_token.address != common::constants::WSOL_TOKEN_ACCOUNT {
-            let user_output_token_account_anchor = spl_associated_token_account::get_associated_token_address_with_program_id(
-                &user_wallet_anchor,
-                &functions::to_pubkey(&params.output_token.address),
-                &functions::to_pubkey(&functions::get_token_program(params.output_token.is_token_2022)),
-            );
-            let user_output_token_account = functions::to_address(&user_output_token_account_anchor);
+            let user_output_token_account_anchor =
+                spl_associated_token_account::get_associated_token_address_with_program_id(
+                    &user_wallet_anchor,
+                    &functions::to_pubkey(&params.output_token.address),
+                    &functions::to_pubkey(&functions::get_token_program(
+                        params.output_token.is_token_2022,
+                    )),
+                );
+            let user_output_token_account =
+                functions::to_address(&user_output_token_account_anchor);
 
             instructions.push(functions::create_ata_instruction(
                 params.user_wallet,
@@ -297,7 +302,7 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         accounts.extend([
             AccountMeta::new(pool, false),                         // pool_id
             AccountMeta::new(params.user_wallet, true),            // user (signer)
-            constants::PUMPSWAP_GLOBAL_ACCOUNT_META,                        // global (readonly)
+            constants::PUMPSWAP_GLOBAL_ACCOUNT_META,               // global (readonly)
             AccountMeta::new_readonly(base_mint, false),           // base_mint (readonly)
             AccountMeta::new_readonly(quote_mint, false),          // quote_mint (readonly)
             AccountMeta::new(user_base_token_account, false),      // user_base_token_account
@@ -310,9 +315,9 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             AccountMeta::new_readonly(quote_token_program, false), // TOKEN_PROGRAM_ID (readonly, duplicated as in JS)
             common::constants::SYSTEM_PROGRAM_META,                // System Program (readonly)
             AccountMeta::new(spl_associated_token_account_program_id, false), // ASSOCIATED_TOKEN_PROGRAM_ID (readonly)
-            constants::PUMPSWAP_EVENT_AUTHORITY_META,                  // event_authority (readonly)
-            constants::PUMPSWAP_AMM_PROGRAM_META,                      // PUMP_AMM_PROGRAM_ID (readonly)
-            AccountMeta::new(coin_creator_vault_ata, false),  // coin_creator_vault_ata
+            constants::PUMPSWAP_EVENT_AUTHORITY_META, // event_authority (readonly)
+            constants::PUMPSWAP_AMM_PROGRAM_META,     // PUMP_AMM_PROGRAM_ID (readonly)
+            AccountMeta::new(coin_creator_vault_ata, false), // coin_creator_vault_ata
             AccountMeta::new_readonly(coin_creator_vault_authority, false), // coin_creator_vault_authority (readonly)
         ]);
         if is_buy && quote_is_wsol_or_usdc {
@@ -377,4 +382,3 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         Ok(instructions)
     }
 }
-

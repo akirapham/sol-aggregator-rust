@@ -232,6 +232,7 @@ pub async fn get_quote(
                 )
                 .await
                 .map_err(|e| {
+                    log::error!("Failed to build route transaction: {}", e);
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -455,6 +456,7 @@ pub async fn check_arbitrage(
                 )
                 .await
                 .map_err(|e| {
+                    log::error!("Failed to build arbitrage transaction: {}", e);
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {

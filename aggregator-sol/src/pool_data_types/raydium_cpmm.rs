@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType, common::functions},
+    pool_data_types::{common::functions, GetAmmConfig, PoolUpdateEventType},
     utils::tokens_equal,
-    
 };
 use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
@@ -146,7 +145,7 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         );
 
         // 3. Calculate minimum output amount (slippage)
-        let minimum_amount_out = functions::calculate_slippage(amount_out, params.slippage_bps);
+        let minimum_amount_out = functions::calculate_slippage(amount_out, params.slippage_bps)?;
 
         // 4. Prepare accounts
         let (
@@ -256,4 +255,3 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         Ok(instructions)
     }
 }
-

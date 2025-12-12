@@ -580,40 +580,46 @@ impl DexAggregator {
 
         // Step 5: Check transaction size and fallback if needed
         let mut final_reverse_route = reverse_route;
-        
+
         // Check if the combined transaction is too large
-        let is_too_large = self.estimate_transaction_size(
-            &forward_route,
-            &final_reverse_route,
-            token_a.user_wallet
-        ).await.unwrap_or(true); // Treat error as too large to be safe
+        let is_too_large = self
+            .estimate_transaction_size(&forward_route, &final_reverse_route, token_a.user_wallet)
+            .await
+            .unwrap_or_else(|e| {
+                log::error!("estimate_transaction_size failed: {}", e);
+                true
+            }); // Treat error as too large to be safe
 
         if is_too_large {
-            log::debug!("⚠️ Transaction too large with complex route, falling back to direct route...");
-            
+            log::debug!(
+                "⚠️ Transaction too large with complex route, falling back to direct route..."
+            );
+
             // Try to get a DIRECT reverse route instead
-             let direct_reverse_route = self
+            let direct_reverse_route = self
                 .get_swap_route_with_exclude(&reverse_params, &exclude_pools, true) // direct_only = true
                 .await;
 
             if let Some(direct_route) = direct_reverse_route {
                 // Verify the direct route is actually smaller/valid
-                 let direct_is_too_large = self.estimate_transaction_size(
-                    &forward_route,
-                    &direct_route,
-                    token_a.user_wallet
-                ).await.unwrap_or(true);
+                let direct_is_too_large = self
+                    .estimate_transaction_size(&forward_route, &direct_route, token_a.user_wallet)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::error!("estimate_transaction_size failed for direct route: {}", e);
+                        true
+                    });
 
                 if !direct_is_too_large {
-                     log::debug!("✅ Fallback to direct route successful");
-                     final_reverse_route = direct_route;
+                    log::debug!("✅ Fallback to direct route successful");
+                    final_reverse_route = direct_route;
                 } else {
                     log::debug!("❌ Direct route also too large or check failed");
                     return None;
                 }
             } else {
-                 log::debug!("❌ No direct fallback route available");
-                 return None;
+                log::debug!("❌ No direct fallback route available");
+                return None;
             }
         }
 
@@ -633,7 +639,7 @@ impl DexAggregator {
             forward_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>(),
             final_reverse_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>()
         );
-        
+
         // Step 6: Check conditions: Profit > 0 OR Abnormal profit/loss (> 5% or < -5%)
         if profit > 0 || profit_percent.abs() > 5.0 {
             Some((profit, forward_route, final_reverse_route))
@@ -652,21 +658,25 @@ impl DexAggregator {
         // We use a dummy execution priority here as it doesn't affect instructions size significantly for this check
         // or we can just use the one from config if available, but Medium is safe default.
         let priority = ExecutionPriority::Medium;
-        
+
         // We don't have the rpc_client here readily available in `calculate_arbitrage_profit`
         // BUT we need it to build the transaction (get blockhash).
         // However, `build_arbitrage_transaction` requires `rpc_client`.
-        // Wait, `calculate_arbitrage_profit` does NOT have rpc_client. 
+        // Wait, `calculate_arbitrage_profit` does NOT have rpc_client.
         // We can't easily build the FULL transaction with blockhash without RPC.
         // BUT we can build the instructions and estimate size.
-        
+
         let mut all_instructions = Vec::new();
 
         for path in &forward_route.paths {
             for step in &path.steps {
                 let instructions = self
                     .build_step_instructions(step, forward_route.slippage_bps, priority, payer)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        log::error!("estimate_transaction_size forward_route error: {}", e);
+                        e
+                    })?;
                 all_instructions.extend(instructions);
             }
         }
@@ -675,34 +685,39 @@ impl DexAggregator {
             for step in &path.steps {
                 let instructions = self
                     .build_step_instructions(step, reverse_route.slippage_bps, priority, payer)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        log::error!("estimate_transaction_size reverse_route error: {}", e);
+                        e
+                    })?;
                 all_instructions.extend(instructions);
             }
         }
 
         let all_instructions = Self::deduplicate_instructions(all_instructions);
-        
+
         // Estimate size based on instructions
         // A simple transaction has header (approx 100 bytes) + instructions
         // We can construct a Transaction with a default blockhash/payer to check size
-        let message = Message::new(
-            &all_instructions,
-            Some(&payer),
-        );
-        
+        let message = Message::new(&all_instructions, Some(&payer));
+
         let serialized = message.serialize();
         let size = serialized.len();
-        
+
         // Legacy transaction limit is 1232 bytes
         // We add some buffer (signatures take 64 bytes per signer)
         // Message size + 1 signature (64) < 1232
         const MAX_TX_SIZE: usize = 1232;
         const SIGNATURE_SIZE: usize = 64;
-        
+
         let total_size = size + SIGNATURE_SIZE;
-        
-        log::debug!("📏 Estimated transaction size: {} bytes (Limit: {})", total_size, MAX_TX_SIZE);
-        
+
+        log::debug!(
+            "📏 Estimated transaction size: {} bytes (Limit: {})",
+            total_size,
+            MAX_TX_SIZE
+        );
+
         Ok(total_size > MAX_TX_SIZE)
     }
 
@@ -719,7 +734,11 @@ impl DexAggregator {
             for step in &path.steps {
                 let instructions = self
                     .build_step_instructions(step, route.slippage_bps, priority, payer)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_route_transaction error: {}", e);
+                        e
+                    })?;
                 all_instructions.extend(instructions);
             }
         }
@@ -752,7 +771,11 @@ impl DexAggregator {
             for step in &path.steps {
                 let instructions = self
                     .build_step_instructions(step, forward_route.slippage_bps, priority, payer)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_arbitrage_transaction forward_route error: {}", e);
+                        e
+                    })?;
                 all_instructions.extend(instructions);
             }
         }
@@ -761,7 +784,11 @@ impl DexAggregator {
             for step in &path.steps {
                 let instructions = self
                     .build_step_instructions(step, reverse_route.slippage_bps, priority, payer)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_arbitrage_transaction reverse_route error: {}", e);
+                        e
+                    })?;
                 all_instructions.extend(instructions);
             }
         }
@@ -831,6 +858,15 @@ impl DexAggregator {
         step.pool_state
             .build_swap_instruction(&params, self_arc)
             .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to build swap instruction for DEX {:?} Pool {}: {}",
+                    step.pool_state.dex(),
+                    step.pool_address,
+                    e
+                );
+                e
+            })
     }
 
     #[allow(unused)]

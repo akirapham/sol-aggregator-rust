@@ -4,7 +4,8 @@ use crate::{
     constants::is_base_token,
     pool_data_types::{
         clmm::{pool::PoolUtils, tpe::ComputeClmmPoolInfo},
-        common::{self, functions}, GetAmmConfig, PoolUpdateEventType,
+        common::{self, functions},
+        GetAmmConfig, PoolUpdateEventType,
     },
     utils::tokens_equal,
 };
@@ -323,7 +324,8 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         let all_tick_arrays = calculation_result.remaining_accounts;
 
         // Calculate slippage
-        let other_amount_threshold = functions::calculate_slippage(expected_amount_out, params.slippage_bps);
+        let other_amount_threshold =
+            functions::calculate_slippage(expected_amount_out, params.slippage_bps)?;
 
         // Sqrt price limit
         let sqrt_price_limit_x64 = if zero_for_one {

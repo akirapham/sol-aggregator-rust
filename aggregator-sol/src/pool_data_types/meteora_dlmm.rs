@@ -346,7 +346,7 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         );
 
         let min_amount_out =
-            estimated_output.saturating_mul(10000 - params.slippage_bps as u64) / 10000;
+            common_functions::calculate_slippage(estimated_output, params.slippage_bps)?;
 
         // Memo program address
         let memo_program = solana_sdk::pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");

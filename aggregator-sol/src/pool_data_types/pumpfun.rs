@@ -5,9 +5,12 @@ use crate::types::SwapParams;
 use crate::{
     pool_data_types::{
         common,
-        pumpf::{constants, functions::{self as pumpf_functions, *}},
-        GetAmmConfig, PoolUpdateEventType,
         common::functions,
+        pumpf::{
+            constants,
+            functions::{self as pumpf_functions, *},
+        },
+        GetAmmConfig, PoolUpdateEventType,
     },
     utils::{get_sol_mint, tokens_equal},
 };
@@ -190,8 +193,9 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 is_mayhem_mode,
             ));
 
-            let user_volume_accumulator = pumpf_functions::get_user_volume_accumulator_pda(&params.user_wallet)
-                .ok_or("Failed to get user volume accumulator".to_string())?;
+            let user_volume_accumulator =
+                pumpf_functions::get_user_volume_accumulator_pda(&params.user_wallet)
+                    .ok_or("Failed to get user volume accumulator".to_string())?;
 
             // Build instruction data (8 byte discriminator + 8 byte amount + 8 byte max cost)
             let mut buy_data = [0u8; 24];
@@ -236,11 +240,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 params.input_amount,
             );
             // Calculate minimum SOL output with slippage
-            let min_sol_output = if sol_amount <= params.slippage_bps as u64 {
-                1
-            } else {
-                sol_amount - (sol_amount * params.slippage_bps as u64) / 10000
-            };
+            let min_sol_output = functions::calculate_slippage(sol_amount, params.slippage_bps)?;
             // Get bonding curve PDA
             let bonding_curve_addr = if self.address == Pubkey::default() {
                 pumpf_functions::get_bonding_curve_pda(&params.input_token.address)

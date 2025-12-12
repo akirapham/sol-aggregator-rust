@@ -26,12 +26,12 @@ pub fn create_ata_instruction(
     };
 
     let accounts = vec![
-        AccountMeta::new(user_wallet, true),                  // funding
-        AccountMeta::new(token_account, false),               // associated_token
-        AccountMeta::new_readonly(user_wallet, false),        // wallet
-        AccountMeta::new_readonly(mint, false),               // mint
-        constants::SYSTEM_PROGRAM_META,                       // system_program
-        token_program_meta,                                   // token_program
+        AccountMeta::new(user_wallet, true),           // funding
+        AccountMeta::new(token_account, false),        // associated_token
+        AccountMeta::new_readonly(user_wallet, false), // wallet
+        AccountMeta::new_readonly(mint, false),        // mint
+        constants::SYSTEM_PROGRAM_META,                // system_program
+        token_program_meta,                            // token_program
     ];
 
     let spl_associated_token_account_program_id =
@@ -85,9 +85,15 @@ pub fn get_token_program_meta(is_token_2022: bool) -> AccountMeta {
 /// # Returns
 /// The minimum acceptable output amount after applying slippage
 #[inline]
-pub fn calculate_slippage(amount_out: u64, slippage_bps: u16) -> u64 {
+pub fn calculate_slippage(amount_out: u64, slippage_bps: u16) -> Result<u64, String> {
     let slippage_factor = 10000 - slippage_bps as u64;
-    (amount_out as u128 * slippage_factor as u128 / 10000) as u64
+    let min_out = (amount_out as u128 * slippage_factor as u128 / 10000) as u64;
+
+    if min_out == 0 {
+        return Err("Minimum output amount is zero after slippage".to_string());
+    }
+
+    Ok(min_out)
 }
 
 /// Calculate token prices for constant product AMM pools
@@ -135,8 +141,7 @@ pub fn calculate_amm_token_prices(
             1.0 // Assume USDC/USDT are ~$1
         };
 
-        let base_price =
-            (quote_reserve as f64 / base_reserve as f64) * decimal_scale * quote_price;
+        let base_price = (quote_reserve as f64 / base_reserve as f64) * decimal_scale * quote_price;
         (base_price, quote_price)
     } else if is_base_a_base_token {
         // If base is a base token, use its price

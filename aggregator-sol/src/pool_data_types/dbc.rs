@@ -2,7 +2,8 @@ use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::parser::DBC_PROGRAM_ID;
-pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::{PoolConfig, VolatilityTracker,
+pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::{
+    PoolConfig, VolatilityTracker,
 };
 use std::str::FromStr;
 use std::sync::Arc;
@@ -334,13 +335,13 @@ impl DbcPoolState {
         (base_price, sol_price)
     }
 }
+use crate::pool_data_types::common::functions as common_functions;
+use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
 use async_trait::async_trait;
-use crate::pool_data_types::traits::BuildSwapInstruction;
-use crate::pool_data_types::common::functions as common_functions;
+use borsh::BorshSerialize;
 use solana_program::instruction::{AccountMeta, Instruction};
 use spl_associated_token_account::get_associated_token_address_with_program_id;
-use borsh::BorshSerialize;
 
 #[derive(BorshSerialize)]
 struct SwapParameters {
@@ -357,7 +358,9 @@ impl BuildSwapInstruction for DbcPoolState {
     ) -> Result<Vec<Instruction>, String> {
         // Determine input/output mints based on trade direction
         let base_mint = self.base_mint;
-        let quote_mint = self.pool_config.as_ref()
+        let quote_mint = self
+            .pool_config
+            .as_ref()
             .ok_or_else(|| "Missing pool config".to_string())?
             .quote_mint;
 
@@ -368,14 +371,30 @@ impl BuildSwapInstruction for DbcPoolState {
         let (base_program_pubkey, quote_program_pubkey) = if input_mint == base_mint {
             // Base -> Quote swap
             (
-                if params.input_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() },
-                if params.output_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() }
+                if params.input_token.is_token_2022 {
+                    spl_token_2022::id()
+                } else {
+                    spl_token::id()
+                },
+                if params.output_token.is_token_2022 {
+                    spl_token_2022::id()
+                } else {
+                    spl_token::id()
+                },
             )
         } else {
             // Quote -> Base swap
             (
-                if params.output_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() },
-                if params.input_token.is_token_2022 { spl_token_2022::id() } else { spl_token::id() }
+                if params.output_token.is_token_2022 {
+                    spl_token_2022::id()
+                } else {
+                    spl_token::id()
+                },
+                if params.input_token.is_token_2022 {
+                    spl_token_2022::id()
+                } else {
+                    spl_token::id()
+                },
             )
         };
 
@@ -390,12 +409,20 @@ impl BuildSwapInstruction for DbcPoolState {
         let input_token_account_pubkey = get_associated_token_address_with_program_id(
             &user_wallet_anchor,
             &input_mint_anchor,
-            &if input_mint == base_mint { base_program_pubkey } else { quote_program_pubkey },
+            &if input_mint == base_mint {
+                base_program_pubkey
+            } else {
+                quote_program_pubkey
+            },
         );
         let output_token_account_pubkey = get_associated_token_address_with_program_id(
             &user_wallet_anchor,
             &output_mint_anchor,
-            &if output_mint == base_mint { base_program_pubkey } else { quote_program_pubkey },
+            &if output_mint == base_mint {
+                base_program_pubkey
+            } else {
+                quote_program_pubkey
+            },
         );
 
         // Convert back to solana_sdk Pubkey
@@ -404,16 +431,11 @@ impl BuildSwapInstruction for DbcPoolState {
 
         // Derive pool authority PDA
         let program_id = Self::get_program_id();
-        let (pool_authority, _) = Pubkey::find_program_address(
-            &[b"pool_authority"],
-            &program_id,
-        );
+        let (pool_authority, _) = Pubkey::find_program_address(&[b"pool_authority"], &program_id);
 
         // Derive event authority PDA (required for #[event_cpi])
-        let (event_authority, _) = Pubkey::find_program_address(
-            &[b"__event_authority"],
-            &program_id,
-        );
+        let (event_authority, _) =
+            Pubkey::find_program_address(&[b"__event_authority"], &program_id);
 
         // Pool account is stored in self.address
         let pool_pubkey = self.address;
@@ -427,10 +449,9 @@ impl BuildSwapInstruction for DbcPoolState {
             params.input_amount,
             _amm_config_fetcher.clone(),
         );
-        
-        let minimum_amount_out = estimated_output
-            .saturating_mul(10000 - params.slippage_bps as u64)
-            / 10000;
+
+        let minimum_amount_out =
+            common_functions::calculate_slippage(estimated_output, params.slippage_bps)?;
 
         // Build accounts list
         let accounts = vec![
@@ -473,12 +494,12 @@ impl BuildSwapInstruction for DbcPoolState {
 
         // Build instruction list with ATA creation
         let mut instructions = Vec::new();
-        
+
         // Determine output token details
-        let output_token_program_id = if output_mint == base_mint { 
-            base_program_pubkey 
-        } else { 
-            quote_program_pubkey 
+        let output_token_program_id = if output_mint == base_mint {
+            base_program_pubkey
+        } else {
+            quote_program_pubkey
         };
         let is_output_token_2022 = output_token_program_id == spl_token_2022::id();
 
@@ -489,7 +510,7 @@ impl BuildSwapInstruction for DbcPoolState {
             output_mint,
             is_output_token_2022,
         ));
-        
+
         instructions.push(swap_ix);
 
         Ok(instructions)

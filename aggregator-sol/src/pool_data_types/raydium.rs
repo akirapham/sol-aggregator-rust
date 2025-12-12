@@ -1,13 +1,20 @@
-use std::sync::Arc;
+use crate::types::SwapParams;
 use crate::{
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType, traits::BuildSwapInstruction, common::{constants, functions}},
+    pool_data_types::{
+        common::{constants, functions},
+        traits::BuildSwapInstruction,
+        GetAmmConfig, PoolUpdateEventType,
+    },
     utils::tokens_equal,
 };
-use serde::{Deserialize, Serialize};
-use solana_sdk::{pubkey::Pubkey, instruction::{Instruction, AccountMeta}};
-use solana_streamer_sdk::streaming::event_parser::protocols::raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID;
-use crate::types::SwapParams;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+};
+use solana_streamer_sdk::streaming::event_parser::protocols::raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaydiumAmmV4PoolState {
@@ -138,18 +145,26 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         );
 
         // Apply slippage tolerance
-        let minimum_amount_out = functions::calculate_slippage(output_amount, params.slippage_bps);
+        let minimum_amount_out = functions::calculate_slippage(output_amount, params.slippage_bps)?;
 
         // Determine source and destination token accounts
         let (source_mint, dest_mint) = if is_buy {
             (
-                if is_wsol { constants::WSOL_TOKEN_ACCOUNT } else { constants::USDC_TOKEN_ACCOUNT },
-                params.output_token.address
+                if is_wsol {
+                    constants::WSOL_TOKEN_ACCOUNT
+                } else {
+                    constants::USDC_TOKEN_ACCOUNT
+                },
+                params.output_token.address,
             )
         } else {
             (
                 params.input_token.address,
-                if is_wsol { constants::WSOL_TOKEN_ACCOUNT } else { constants::USDC_TOKEN_ACCOUNT }
+                if is_wsol {
+                    constants::WSOL_TOKEN_ACCOUNT
+                } else {
+                    constants::USDC_TOKEN_ACCOUNT
+                },
             )
         };
 
@@ -159,18 +174,21 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         let dest_mint_anchor = functions::to_pubkey(&dest_mint);
 
         // Derive ATAs using anchor_lang types
-        let user_source_token_account_anchor = spl_associated_token_account::get_associated_token_address(
-            &user_wallet_anchor,
-            &source_mint_anchor,
-        );
-        let user_destination_token_account_anchor = spl_associated_token_account::get_associated_token_address(
-            &user_wallet_anchor,
-            &dest_mint_anchor,
-        );
+        let user_source_token_account_anchor =
+            spl_associated_token_account::get_associated_token_address(
+                &user_wallet_anchor,
+                &source_mint_anchor,
+            );
+        let user_destination_token_account_anchor =
+            spl_associated_token_account::get_associated_token_address(
+                &user_wallet_anchor,
+                &dest_mint_anchor,
+            );
 
         // Convert back to solana_sdk Pubkey for AccountMeta
         let user_source_token_account = functions::to_address(&user_source_token_account_anchor);
-        let user_destination_token_account = functions::to_address(&user_destination_token_account_anchor);
+        let user_destination_token_account =
+            functions::to_address(&user_destination_token_account_anchor);
 
         // Build instructions
         let mut instructions = Vec::with_capacity(6);
@@ -190,34 +208,35 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         }
 
         // Create output ATA if needed (for buying tokens)
-        let user_output_token_account = functions::to_address(&user_destination_token_account_anchor);
+        let user_output_token_account =
+            functions::to_address(&user_destination_token_account_anchor);
         instructions.push(functions::create_ata_instruction(
             params.user_wallet,
             user_output_token_account,
             params.output_token.address,
             false, // Raydium V4 only supports SPL Token
         ));
-        
+
         // Build the swap instruction (SwapBaseIn - tag 9)
         // 17 accounts as per Raydium AMM V4 spec
         let accounts: Vec<AccountMeta> = vec![
-            constants::TOKEN_PROGRAM_META,                                 // 0. Token Program
-            AccountMeta::new(self.address, false),                         // 1. AMM
-            AccountMeta::new(self.amm_authority, false),                   // 2. AMM Authority
-            AccountMeta::new(self.amm_open_orders, false),                 // 3. AMM Open Orders
-            AccountMeta::new(self.pool_coin_token_account, false),         // 4. Pool Coin Token Account
-            AccountMeta::new(self.pool_pc_token_account, false),           // 5. Pool PC Token Account
-            AccountMeta::new_readonly(self.serum_program, false),          // 6. Serum Program (ReadOnly)
-            AccountMeta::new(self.serum_market, false),                    // 7. Serum Market
-            AccountMeta::new(self.serum_bids, false),                      // 8. Serum Bids
-            AccountMeta::new(self.serum_asks, false),                      // 9. Serum Asks
-            AccountMeta::new(self.serum_event_queue, false),               // 10. Serum Event Queue
-            AccountMeta::new(self.serum_coin_vault_account, false),        // 11. Serum Coin Vault
-            AccountMeta::new(self.serum_pc_vault_account, false),          // 12. Serum PC Vault
-            AccountMeta::new(self.serum_vault_signer, false),              // 13. Serum Vault Signer
-            AccountMeta::new(user_source_token_account, false),            // 14. User Source Token Account
-            AccountMeta::new(user_destination_token_account, false),       // 15. User Destination Token Account
-            AccountMeta::new(params.user_wallet, true),                    // 16. User wallet (signer)
+            constants::TOKEN_PROGRAM_META,                 // 0. Token Program
+            AccountMeta::new(self.address, false),         // 1. AMM
+            AccountMeta::new(self.amm_authority, false),   // 2. AMM Authority
+            AccountMeta::new(self.amm_open_orders, false), // 3. AMM Open Orders
+            AccountMeta::new(self.pool_coin_token_account, false), // 4. Pool Coin Token Account
+            AccountMeta::new(self.pool_pc_token_account, false), // 5. Pool PC Token Account
+            AccountMeta::new_readonly(self.serum_program, false), // 6. Serum Program (ReadOnly)
+            AccountMeta::new(self.serum_market, false),    // 7. Serum Market
+            AccountMeta::new(self.serum_bids, false),      // 8. Serum Bids
+            AccountMeta::new(self.serum_asks, false),      // 9. Serum Asks
+            AccountMeta::new(self.serum_event_queue, false), // 10. Serum Event Queue
+            AccountMeta::new(self.serum_coin_vault_account, false), // 11. Serum Coin Vault
+            AccountMeta::new(self.serum_pc_vault_account, false), // 12. Serum PC Vault
+            AccountMeta::new(self.serum_vault_signer, false), // 13. Serum Vault Signer
+            AccountMeta::new(user_source_token_account, false), // 14. User Source Token Account
+            AccountMeta::new(user_destination_token_account, false), // 15. User Destination Token Account
+            AccountMeta::new(params.user_wallet, true),              // 16. User wallet (signer)
         ];
 
         // Create instruction data: [discriminator(1 byte) | amount_in(8 bytes) | minimum_amount_out(8 bytes)]
@@ -234,7 +253,9 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
 
         // Close WSOL ATA after swap if selling tokens
         if !is_buy {
-            instructions.extend(sol_trade_sdk::trading::common::close_wsol(&params.user_wallet));
+            instructions.extend(sol_trade_sdk::trading::common::close_wsol(
+                &params.user_wallet,
+            ));
         }
 
         Ok(instructions)

@@ -4,7 +4,7 @@ services:
   amm-eth:
     build:
       context: .
-      dockerfile: docker/Dockerfile.amm-eth
+      dockerfile: docker/Dockerfile.eth
     container_name: amm-eth-listener
     restart: unless-stopped
     environment:
@@ -19,12 +19,13 @@ services:
       - eth-network
     ports:
       - "${ETH_PRICE_WS_PORT:-8080}:${ETH_PRICE_WS_PORT:-8080}"
+    command: /usr/local/bin/amm-eth
 
   # Ethereum Arbitrage Service
   arbitrade-eth:
     build:
       context: .
-      dockerfile: docker/Dockerfile.arbitrade-eth
+      dockerfile: docker/Dockerfile.eth
     tty: true
     stdin_open: true
     container_name: arbitrade-eth-service
@@ -44,6 +45,7 @@ services:
     depends_on:
       amm-eth:
         condition: service_started
+    command: /usr/local/bin/arbitrade-eth
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -f http://localhost:$${ARBITRADE_PORT:-3001}/health"]
       interval: 30s

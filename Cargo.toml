@@ -1,18 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/solana-streamer",
-  "crates/mexc-proto",
-  "crates/eth-dex-quote",
-  "aggregator-sol",
-  "arbitrade",
-  "amm-eth",
-  "crates/binance-price-stream",
-  "arbitrade-eth",
-  "arbitrade-dex-eth",
-  "crates/cex-price-provider"
+  "crates/*",
+  "bins/*",
 ]
-default-members = ["aggregator-sol"]
+default-members = [
+  "crates/*",
+  "bins/*"
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -105,4 +100,7 @@ ethers = "2.0"
 toml = "0.8"
 orca_whirlpools_core = "2.0"
 bytes = "1.5"
-
+binance-price-stream = { path = "./crates/binance-price-stream" }
+eth-dex-quote = { path = "./crates/eth-dex-quote" }
+mexc-proto = { path = "./crates/mexc-proto" }
+cex-price-provider = { path = "./crates/cex-price-provider" }

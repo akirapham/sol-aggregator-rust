@@ -1,0 +1,31 @@
+[package]
+name = "arbitrade-dex-eth"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true, features = ["full"] }
+tokio-tungstenite = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+dotenv = { workspace = true }
+ethers = { version = "2.0", features = ["ws", "abigen"] }
+dashmap = { workspace = true }
+rocksdb = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+hex = { workspace = true }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+bytes = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tower-http = { version = "0.5", features = ["cors"] }
+axum = "0.7"
+eth-dex-quote = { workspace = true}
+reqwest = { version = "0.11", features = ["json"] }
+lazy_static = "1.5.0"

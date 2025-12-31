@@ -472,7 +472,7 @@ impl PriceProvider for GateService {
                 );
             }
 
-            if batch_num + 1 < (currencies.len() + BATCH_SIZE - 1) / BATCH_SIZE {
+            if batch_num + 1 < currencies.len().div_ceil(BATCH_SIZE) {
                 tokio::time::sleep(tokio::time::Duration::from_millis(BATCH_DELAY_MS)).await;
             }
         }

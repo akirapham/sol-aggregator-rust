@@ -1248,7 +1248,14 @@ async fn main() -> Result<()> {
         });
     }
 
-    info!("Enabled CEX providers: {}", cex_providers.iter().map(|p| p.name).collect::<Vec<_>>().join(", "));
+    info!(
+        "Enabled CEX providers: {}",
+        cex_providers
+            .iter()
+            .map(|p| p.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     if cex_providers.is_empty() {
         error!("No CEX providers enabled! Please configure ENABLED_CEXES or ensure DISABLED_CEXES doesn't disable all exchanges.");

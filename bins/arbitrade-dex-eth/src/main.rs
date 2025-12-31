@@ -330,9 +330,16 @@ async fn main() -> Result<()> {
                                                     // TODO: Execute the arbitrage if profit > gas costs
                                                 } else {
                                                     let net_profit_abs = net_profit.abs();
-                                                    let net_profit_after_decimals = net_profit_abs as f64
-                                                        / (10u128.pow(base_token_decimals as u32) as f64);
-                                                    let net_profit_value = net_profit_after_decimals * (if found_base_token_is_stable { 1.0 } else { eth_price });
+                                                    let net_profit_after_decimals = net_profit_abs
+                                                        as f64
+                                                        / (10u128.pow(base_token_decimals as u32)
+                                                            as f64);
+                                                    let net_profit_value = net_profit_after_decimals
+                                                        * (if found_base_token_is_stable {
+                                                            1.0
+                                                        } else {
+                                                            eth_price
+                                                        });
                                                     info!("2-hop unprofitable: net_profit = -{} | Time: {:.2}ms", net_profit_value, elapsed.as_secs_f64() * 1000.0);
                                                 }
                                             }

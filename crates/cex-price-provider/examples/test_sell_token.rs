@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     // test_kucoin_sell(&token_symbol, false).await?;
 
     log::info!("\n=== Testing Bitget ===");
-    test_bitget_sell(&token_symbol, false).await?;
+    test_bitget_sell(token_symbol, false).await?;
 
     log::info!("\n=== Sell Token Test Complete ===");
 

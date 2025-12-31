@@ -1,0 +1,116 @@
+name: Docker Compose ETH Build Check
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'docker/Dockerfile.eth'
+      - 'docker-compose.eth.yml'
+      - 'bins/amm-eth/**'
+      - 'bins/arbitrade-eth/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/docker-eth-build.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'docker/Dockerfile.eth'
+      - 'docker-compose.eth.yml'
+      - 'bins/amm-eth/**'
+      - 'bins/arbitrade-eth/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/docker-eth-build.yml'
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Run cargo fmt check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            protobuf-compiler \
+            libprotobuf-dev
+
+      - name: Run cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install docker-compose
+        run: |
+          sudo apt-get update && sudo apt-get install -y docker-compose
+          docker-compose --version
+
+      - name: Verify docker-compose.eth.yml syntax
+        run: |
+          docker-compose -f docker-compose.eth.yml config > /dev/null
+          echo "✅ docker-compose.eth.yml syntax is valid"
+
+      - name: Build Docker image for eth services
+        run: |
+          docker build --file docker/Dockerfile.eth --target runtime -t eth-services:test .
+          echo "✅ Dockerfile.eth builds successfully"
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        run: |
+          docker run --rm -i hadolint/hadolint --ignore DL3008,DL3009 < docker/Dockerfile.eth
+          echo "✅ Dockerfile passes linting"
+
+      - name: Validate YAML
+        run: |
+          python3 -m pip install pyyaml > /dev/null 2>&1
+          python3 -c "
+          import yaml
+          with open('docker-compose.eth.yml', 'r') as f:
+              yaml.safe_load(f)
+          print('✅ docker-compose.eth.yml is valid YAML')
+          "

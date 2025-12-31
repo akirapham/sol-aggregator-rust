@@ -1,0 +1,102 @@
+[package]
+name = "aggregator-sol"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "A Solana DEX aggregator supporting multiple protocols"
+license = "MIT"
+
+[dependencies]
+# Solana dependencies
+solana-client = { workspace = true}
+solana-sdk = { workspace = true}
+solana-program = { workspace = true}
+solana-account-decoder = { workspace = true}
+anchor-client = { workspace = true}
+anchor-lang = { workspace = true}
+
+tonic = { workspace = true}
+tonic-health = { workspace = true}
+prost = { workspace = true}
+
+# Serialization and async
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true}
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { workspace = true}
+async-trait = { workspace = true}
+
+# HTTP client for RPC calls (minimal usage)
+reqwest = { workspace = true, features = ["json"] }
+
+# Error handling
+anyhow = { workspace = true}
+thiserror = { workspace = true}
+
+# Math and decimal handling
+rust_decimal = { workspace = true}
+num-traits = { workspace = true}
+
+# Futures for async operations
+futures = { workspace = true}
+
+# Environment variable support
+dotenv = { workspace = true}
+envy = { workspace = true}
+
+# Logging
+log = { workspace = true}
+env_logger = { workspace = true}
+
+# Base58 encoding for Solana addresses
+bs58 = { workspace = true}
+
+# Base64 encoding for auth
+base64 = { workspace = true}
+
+# Borsh serialization (used by many Solana programs)
+borsh = { workspace = true}
+serde_with = { version = "3.0", features = ["macros"] }
+
+# Spl token program
+spl-token = { workspace = true}
+
+solana-streamer-sdk = { workspace = true}
+
+spl-token-2022 = { workspace = true}
+
+solana-commitment-config = { workspace = true}
+yellowstone-grpc-proto = { workspace = true}
+
+axum = { workspace = true}
+uuid = { workspace = true, features = ["v4"] }
+tower = { workspace = true}
+tower-http = { workspace = true, features = ["cors", "trace"] }
+tracing = { workspace = true}
+tracing-subscriber = { workspace = true}
+redis = { workspace = true, optional = true }
+rocksdb = { workspace = true }
+bincode = { workspace = true }
+# Anchor program dependencies for specific DEXs
+# These will be added as we implement each DEX
+
+tokio-tungstenite = { workspace = true}
+url = { workspace = true}
+futures-util = { workspace = true}
+validator = { workspace = true, features = ["derive"] }
+sol-trade-sdk = { workspace = true }
+rug = { workspace = true }
+serde-big-array = { workspace = true }
+toml = { workspace = true }
+binance-price-stream = { workspace = true}
+orca_whirlpools_core = { workspace = true }
+uint = "0.10.0"
+
+[features]
+default = ["bincode", "serde"]
+bincode = []
+serde = []
+
+[dev-dependencies]
+tokio-test = { workspace = true}
+env_logger = { workspace = true}

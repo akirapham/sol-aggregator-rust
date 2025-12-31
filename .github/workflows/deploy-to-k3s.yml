@@ -34,36 +34,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            protobuf-compiler \
-            libprotobuf-dev \
-            pkg-config \
-            libssl-dev \
-            libclang-dev \
-            clang \
-            > /dev/null 2>&1
-
-      # ===== BUILD STAGE =====
-
-      - name: Run cargo fmt check
-        run: cargo fmt --all -- --check || true
-
-      - name: Run cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings || true
-
-      - name: Build amm-eth
-        run: cargo build --release --bin amm-eth
-
-      - name: Build arbitrade-eth
-        run: cargo build --release --bin arbitrade-eth
-
       # ===== DOCKER BUILD STAGE =====
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      # (Dockerfile handles all cargo builds, checks, and dependency installation)
 
       - name: Build Docker images
         run: |

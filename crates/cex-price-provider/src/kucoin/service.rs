@@ -270,9 +270,7 @@ impl KucoinService {
                     .context("Failed to send subscription message")?;
 
                 // Small delay between subscription batches
-                if batch_num + 1
-                    < symbols.len().div_ceil(SYMBOLS_PER_SUBSCRIPTION)
-                {
+                if batch_num + 1 < symbols.len().div_ceil(SYMBOLS_PER_SUBSCRIPTION) {
                     drop(writer); // Release lock during sleep
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     writer = write.lock().await; // Re-acquire lock

@@ -180,20 +180,22 @@ impl MexcService {
             Ok(message) => {
                 let market_symbol = message.symbol.clone().unwrap_or_default();
                 if let Some(contract_address) = market_symbol_to_contract.get(&market_symbol) {
-                    if let Some(push_data) = message.body { match push_data {
-                        Body::PublicAggreDeals(item) => {
-                            if let Some(deal) = item.deals.first() {
-                                let price = TokenPrice {
-                                    symbol: market_symbol
-                                        .strip_suffix("USDT")
-                                        .unwrap_or(&market_symbol)
-                                        .to_string(),
-                                    price: f64::from_str(&deal.price).unwrap_or(0.0),
-                                };
-                                price_cache.insert(contract_address.value().clone(), price);
+                    if let Some(push_data) = message.body {
+                        match push_data {
+                            Body::PublicAggreDeals(item) => {
+                                if let Some(deal) = item.deals.first() {
+                                    let price = TokenPrice {
+                                        symbol: market_symbol
+                                            .strip_suffix("USDT")
+                                            .unwrap_or(&market_symbol)
+                                            .to_string(),
+                                        price: f64::from_str(&deal.price).unwrap_or(0.0),
+                                    };
+                                    price_cache.insert(contract_address.value().clone(), price);
+                                }
                             }
                         }
-                    } }
+                    }
                 }
 
                 Ok(())

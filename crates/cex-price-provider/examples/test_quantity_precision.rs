@@ -1,11 +1,7 @@
 use anyhow::Result;
 use cex_price_provider::{
-    bitget::BitgetService,
-    bybit::BybitService,
-    gate::GateService,
-    kucoin::KucoinService,
-    mexc::MexcService,
-    FilterAddressType, PriceProvider,
+    bitget::BitgetService, bybit::BybitService, gate::GateService, kucoin::KucoinService,
+    mexc::MexcService, FilterAddressType, PriceProvider,
 };
 use std::env;
 use std::sync::Arc;

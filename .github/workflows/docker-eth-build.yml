@@ -34,8 +34,8 @@ jobs:
       - name: Checkout code with PAT
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           token: ${{ secrets.PAT_TOKEN }}
+          submodules: recursive
 
       - name: Configure Git for private submodules
         run: |

@@ -271,7 +271,7 @@ impl KucoinService {
 
                 // Small delay between subscription batches
                 if batch_num + 1
-                    < (symbols.len() + SYMBOLS_PER_SUBSCRIPTION - 1) / SYMBOLS_PER_SUBSCRIPTION
+                    < symbols.len().div_ceil(SYMBOLS_PER_SUBSCRIPTION)
                 {
                     drop(writer); // Release lock during sleep
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -283,7 +283,7 @@ impl KucoinService {
         info!(
             "Connection {}: Sent {} subscription batches for {} symbols",
             connection_id,
-            (symbols.len() + SYMBOLS_PER_SUBSCRIPTION - 1) / SYMBOLS_PER_SUBSCRIPTION,
+            symbols.len().div_ceil(SYMBOLS_PER_SUBSCRIPTION),
             symbols.len()
         );
 
@@ -1284,7 +1284,7 @@ impl KucoinService {
             if available > 0.0 {
                 balances
                     .entry(currency.to_string())
-                    .or_insert_with(std::collections::HashMap::new)
+                    .or_default()
                     .insert(account_type.to_string(), available);
             }
         }
@@ -1401,7 +1401,7 @@ impl KucoinService {
             if available > 0.0 {
                 balances
                     .entry(currency.to_string())
-                    .or_insert_with(std::collections::HashMap::new)
+                    .or_default()
                     .insert(account_type.to_string(), available);
             }
         }

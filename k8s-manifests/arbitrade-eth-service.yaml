@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: arbitrade-eth-service
+  namespace: aggregators
+  labels:
+    app: arbitrade-eth
+spec:
+  selector:
+    app: arbitrade-eth
+  type: NodePort
+  ports:
+  - name: api
+    port: 3001
+    targetPort: 3001
+    protocol: TCP
+    nodePort: 30001

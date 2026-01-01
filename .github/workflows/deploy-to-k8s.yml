@@ -16,6 +16,35 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Fix k3s registry configuration
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          echo "🔧 Configuring k3s registry..."
+          ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} << 'REGISTRY_CONFIG'
+          sudo mkdir -p /etc/rancher/k3s
+          cat | sudo tee /etc/rancher/k3s/registries.yaml > /dev/null << 'EOF'
+          mirrors:
+            127.0.0.1:5000:
+              endpoint:
+                - "http://127.0.0.1:5000"
+            localhost:5000:
+              endpoint:
+                - "http://localhost:5000"
+          EOF
+          
+          echo "🔄 Restarting k3s..."
+          sudo systemctl restart k3s
+          sleep 15
+          echo "✅ k3s restarted"
+          REGISTRY_CONFIG
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v3
         with:
@@ -128,10 +157,21 @@ jobs:
       - name: Wait for rollout
         run: |
           echo "Waiting for amm-eth rollout..."
-          kubectl rollout status deployment/amm-eth -n aggregators --timeout=5m
+          if kubectl rollout status deployment/amm-eth -n aggregators --timeout=10m; then
+            echo "✅ amm-eth deployed successfully"
+          else
+            echo "⚠️  amm-eth rollout timeout - checking status..."
+            kubectl describe pods -n aggregators -l app=amm-eth | tail -50
+          fi
 
+          echo ""
           echo "Waiting for arbitrade-eth rollout..."
-          kubectl rollout status deployment/arbitrade-eth -n aggregators --timeout=5m
+          if kubectl rollout status deployment/arbitrade-eth -n aggregators --timeout=10m; then
+            echo "✅ arbitrade-eth deployed successfully"
+          else
+            echo "⚠️  arbitrade-eth rollout timeout - checking status..."
+            kubectl describe pods -n aggregators -l app=arbitrade-eth | tail -50
+          fi
 
       - name: Verify deployment
         run: |

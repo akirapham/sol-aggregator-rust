@@ -26,24 +26,33 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts 2>/dev/null || true
           
-          echo "🔧 Configuring k3s registry..."
-          ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} << 'REGISTRY_CONFIG'
-          sudo mkdir -p /etc/rancher/k3s
-          cat | sudo tee /etc/rancher/k3s/registries.yaml > /dev/null << 'EOF'
-          mirrors:
-            127.0.0.1:5000:
-              endpoint:
-                - "http://127.0.0.1:5000"
-            localhost:5000:
-              endpoint:
-                - "http://localhost:5000"
-          EOF
+          echo "🔧 Loading images into containerd..."
+          ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} << 'LOAD_IMAGES'
+          echo "Step 1: Check Docker images exist..."
+          docker images | grep -E "amm-eth|arbitrade-eth" || {
+            echo "❌ Images not found in Docker!"
+            exit 1
+          }
           
-          echo "🔄 Restarting k3s..."
-          sudo systemctl restart k3s
-          sleep 15
-          echo "✅ k3s restarted"
-          REGISTRY_CONFIG
+          echo "Step 2: Load amm-eth into containerd..."
+          docker save localhost:5000/amm-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
+          docker save amm-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
+          echo "⚠️  Could not import amm-eth"
+          
+          echo "Step 3: Load arbitrade-eth into containerd..."
+          docker save localhost:5000/arbitrade-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
+          docker save arbitrade-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
+          echo "⚠️  Could not import arbitrade-eth"
+          
+          echo "Step 4: Verify images in containerd..."
+          sudo k3s crictl images | grep -E "amm-eth|arbitrade-eth" || echo "⚠️  Images may not be visible yet"
+          
+          echo "Step 5: Delete old pods to force fresh pull..."
+          kubectl delete pods --all -n aggregators --ignore-not-found=true
+          sleep 5
+          
+          echo "✅ Images loaded into containerd"
+          LOAD_IMAGES
 
       - name: Setup kubectl
         uses: azure/setup-kubectl@v3

@@ -16,7 +16,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Fix k3s registry configuration
+      - name: Load images into containerd
         env:
           SERVER_IP: ${{ secrets.SERVER_IP }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
@@ -25,33 +25,32 @@ jobs:
           echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-          
-          echo "🔧 Loading images into containerd..."
+
+          echo "� Loading images into containerd..."
           ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} << 'LOAD_IMAGES'
-          echo "Step 1: Check Docker images exist..."
-          docker images | grep -E "amm-eth|arbitrade-eth" || {
-            echo "❌ Images not found in Docker!"
-            exit 1
-          }
-          
+
+          echo "Step 1: Verify Docker images exist..."
+          docker images | grep -E "amm-eth|arbitrade-eth" || exit 1
+
           echo "Step 2: Load amm-eth into containerd..."
-          docker save localhost:5000/amm-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
-          docker save amm-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
-          echo "⚠️  Could not import amm-eth"
-          
+          docker save localhost:5000/amm-eth:latest 2>/dev/null | sudo k3s ctr images import -
+
           echo "Step 3: Load arbitrade-eth into containerd..."
-          docker save localhost:5000/arbitrade-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
-          docker save arbitrade-eth:latest 2>/dev/null | sudo k3s ctr images import - || \
-          echo "⚠️  Could not import arbitrade-eth"
-          
-          echo "Step 4: Verify images in containerd..."
-          sudo k3s crictl images | grep -E "amm-eth|arbitrade-eth" || echo "⚠️  Images may not be visible yet"
-          
-          echo "Step 5: Delete old pods to force fresh pull..."
-          kubectl delete pods --all -n aggregators --ignore-not-found=true
+          docker save localhost:5000/arbitrade-eth:latest 2>/dev/null | sudo k3s ctr images import -
+
+          echo "Step 4: Tag images with all possible references..."
+          IMAGE_ID=$(sudo k3s ctr images ls | grep amm-eth | awk '{print $3}')
+          sudo k3s ctr images tag localhost:5000/amm-eth:latest 127.0.0.1:5000/amm-eth:latest
+          sudo k3s ctr images tag localhost:5000/arbitrade-eth:latest 127.0.0.1:5000/arbitrade-eth:latest
+
+          echo "Step 5: Verify images in containerd..."
+          sudo k3s crictl images | grep -E "amm-eth|arbitrade-eth"
+
+          echo "Step 6: Clean up old pods..."
+          kubectl delete pods --all -n aggregators --ignore-not-found=true 2>/dev/null || true
           sleep 5
-          
-          echo "✅ Images loaded into containerd"
+
+          echo "✅ Images ready for deployment"
           LOAD_IMAGES
 
       - name: Setup kubectl

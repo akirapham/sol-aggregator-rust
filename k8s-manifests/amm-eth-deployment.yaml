@@ -23,7 +23,7 @@ spec:
       containers:
       - name: amm-eth
         image: 127.0.0.1:5000/amm-eth:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
           name: ws

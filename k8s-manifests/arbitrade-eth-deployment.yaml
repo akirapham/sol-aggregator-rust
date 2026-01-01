@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
       - name: arbitrade-eth
-        image: localhost:5000/arbitrade-eth:latest
+        image: 127.0.0.1:5000/arbitrade-eth:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 3001

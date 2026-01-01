@@ -1,0 +1,93 @@
+name: Build and Push
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'bins/amm-eth/**'
+      - 'bins/arbitrade-eth/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'docker/Dockerfile.eth'
+      - '.github/workflows/build-and-push.yml'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code with PAT and submodules
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          submodules: recursive
+
+      - name: Configure Git for private submodules
+        run: |
+          git config --global url."https://${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # ===== DOCKER BUILD STAGE =====
+      # (Dockerfile handles all cargo builds, checks, and dependency installation)
+
+      - name: Build Docker images
+        run: |
+          docker build \
+            --file docker/Dockerfile.eth \
+            --build-arg BIN_NAME=amm-eth \
+            --tag localhost:5000/amm-eth:${{ github.sha }} \
+            --tag localhost:5000/amm-eth:latest \
+            .
+
+          docker build \
+            --file docker/Dockerfile.eth \
+            --build-arg BIN_NAME=arbitrade-eth \
+            --tag localhost:5000/arbitrade-eth:${{ github.sha }} \
+            --tag localhost:5000/arbitrade-eth:latest \
+            .
+
+      # ===== PUSH TO REGISTRY =====
+
+      - name: Push images to registry on server
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          # Create .ssh directory
+          mkdir -p ~/.ssh
+
+          # Save and configure SSH key
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          # Add server to known hosts
+          ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          # Save amm-eth image and load on server
+          docker save localhost:5000/amm-eth:latest | \
+            gzip | \
+            ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} \
+            'gunzip | docker load'
+
+          # Save arbitrade-eth image and load on server
+          docker save localhost:5000/arbitrade-eth:latest | \
+            gzip | \
+            ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} \
+            'gunzip | docker load'
+
+      - name: Build Success Notification
+        if: success()
+        run: |
+          echo "✅ Images built and pushed successfully!"
+          echo ""
+          echo "Images available on registry:"
+          echo "  • localhost:5000/amm-eth:latest"
+          echo "  • localhost:5000/arbitrade-eth:latest"
+          echo ""
+          echo "Next: Deploy to K8s using the 'deploy-to-k8s' workflow"

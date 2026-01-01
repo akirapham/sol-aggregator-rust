@@ -1,88 +1,20 @@
-name: Build and Deploy to k3s
+name: Deploy to K8s
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'bins/amm-eth/**'
-      - 'bins/arbitrade-eth/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/deploy-to-k3s.yml'
-      - 'docker/Dockerfile.eth'
-      - 'k8s-manifests/**'
+  workflow_run:
+    workflows: ["Build and Push"]
+    types:
+      - completed
+  workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Checkout code with PAT and submodules
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          submodules: recursive
-
-      - name: Configure Git for private submodules
-        run: |
-          git config --global url."https://${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      # ===== DOCKER BUILD STAGE =====
-      # (Dockerfile handles all cargo builds, checks, and dependency installation)
-
-      - name: Build Docker images
-        run: |
-          docker build \
-            --file docker/Dockerfile.eth \
-            --build-arg BIN_NAME=amm-eth \
-            --tag localhost:5000/amm-eth:${{ github.sha }} \
-            --tag localhost:5000/amm-eth:latest \
-            .
-
-          docker build \
-            --file docker/Dockerfile.eth \
-            --build-arg BIN_NAME=arbitrade-eth \
-            --tag localhost:5000/arbitrade-eth:${{ github.sha }} \
-            --tag localhost:5000/arbitrade-eth:latest \
-            .
-
-      # ===== PUSH TO REGISTRY =====
-
-      - name: Push images to k3s registry
-        env:
-          SERVER_IP: ${{ secrets.SERVER_IP }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-        run: |
-          # Create .ssh directory
-          mkdir -p ~/.ssh
-
-          # Save and configure SSH key
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-          # Add server to known hosts
-          ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-
-          # Save amm-eth image and load on server
-          docker save localhost:5000/amm-eth:latest | \
-            gzip | \
-            ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} \
-            'gunzip | docker load'
-
-          # Save arbitrade-eth image and load on server
-          docker save localhost:5000/arbitrade-eth:latest | \
-            gzip | \
-            ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} \
-            'gunzip | docker load'
-
-      # ===== KUBERNETES DEPLOYMENT =====
 
       - name: Setup kubectl
         uses: azure/setup-kubectl@v3
@@ -178,14 +110,20 @@ jobs:
             --from-literal=GATE_API_SECRET=$GATE_API_SECRET \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply deployments and services
+      - name: Apply PVCs
+        run: |
+          kubectl apply -f k8s-manifests/amm-eth-pvc.yaml
+          kubectl apply -f k8s-manifests/arbitrade-eth-pvc.yaml
+
+      - name: Apply deployments
         run: |
           kubectl apply -f k8s-manifests/amm-eth-deployment.yaml
-          kubectl apply -f k8s-manifests/amm-eth-service.yaml
-          kubectl apply -f k8s-manifests/amm-eth-pvc.yaml
           kubectl apply -f k8s-manifests/arbitrade-eth-deployment.yaml
+
+      - name: Apply services
+        run: |
+          kubectl apply -f k8s-manifests/amm-eth-service.yaml
           kubectl apply -f k8s-manifests/arbitrade-eth-service.yaml
-          kubectl apply -f k8s-manifests/arbitrade-eth-pvc.yaml
 
       - name: Wait for rollout
         run: |
@@ -223,8 +161,20 @@ jobs:
           echo ""
           echo "Your aggregators are now live:"
           echo "  • amm-eth: ws://your-server-ip:8080"
-          echo "  • arbitrade-eth: http://your-server-ip:30001"
+          echo "  • arbitrade-eth: http://your-server-ip:3001"
           echo ""
           echo "Check logs with:"
           echo "  kubectl logs -n aggregators deployment/amm-eth -f"
           echo "  kubectl logs -n aggregators deployment/arbitrade-eth -f"
+
+      - name: Deployment Failure Notification
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo ""
+          echo "Check the logs above for details."
+          echo ""
+          echo "Debug with:"
+          echo "  kubectl describe pods -n aggregators"
+          echo "  kubectl logs -n aggregators deployment/amm-eth"
+          echo "  kubectl logs -n aggregators deployment/arbitrade-eth"

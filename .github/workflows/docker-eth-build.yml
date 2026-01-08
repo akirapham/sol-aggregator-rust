@@ -1,4 +1,4 @@
-name: Docker Compose ETH Build Check
+name: ETH Build Check
 
 on:
   push:

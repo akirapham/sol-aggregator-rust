@@ -37,57 +37,59 @@ jobs:
       # (Dockerfile handles all cargo builds, checks, and dependency installation)
 
       - name: Build Docker images
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
         run: |
           docker build \
             --file docker/Dockerfile.eth \
             --build-arg BIN_NAME=amm-eth \
-            --tag localhost:5000/amm-eth:${{ github.sha }} \
-            --tag localhost:5000/amm-eth:latest \
+            --tag ${REGISTRY_URL}/amm-eth:${{ github.sha }} \
+            --tag ${REGISTRY_URL}/amm-eth:latest \
             .
 
           docker build \
             --file docker/Dockerfile.eth \
             --build-arg BIN_NAME=arbitrade-eth \
-            --tag localhost:5000/arbitrade-eth:${{ github.sha }} \
-            --tag localhost:5000/arbitrade-eth:latest \
+            --tag ${REGISTRY_URL}/arbitrade-eth:${{ github.sha }} \
+            --tag ${REGISTRY_URL}/arbitrade-eth:latest \
             .
+
+      # ===== LOGIN TO PRIVATE REGISTRY =====
+
+      - name: Login to private Docker registry
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USERNAME" --password-stdin "$REGISTRY_URL"
 
       # ===== PUSH TO REGISTRY =====
 
-      - name: Push images to registry on server
+      - name: Push images to private registry
         env:
-          SERVER_IP: ${{ secrets.SERVER_IP }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
         run: |
-          # Create .ssh directory
-          mkdir -p ~/.ssh
+          echo "Pushing images to private registry..."
+          docker push ${REGISTRY_URL}/amm-eth:${{ github.sha }}
+          docker push ${REGISTRY_URL}/amm-eth:latest
+          docker push ${REGISTRY_URL}/arbitrade-eth:${{ github.sha }}
+          docker push ${REGISTRY_URL}/arbitrade-eth:latest
+          echo "✅ Images pushed successfully"
 
-          # Save and configure SSH key
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-
-          # Add server to known hosts
-          ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts 2>/dev/null || true
-
-          # Save amm-eth image and load on server
-          docker save localhost:5000/amm-eth:latest | \
-            gzip | \
-            ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} \
-            'gunzip | docker load'
-
-          # Save arbitrade-eth image and load on server
-          docker save localhost:5000/arbitrade-eth:latest | \
-            gzip | \
-            ssh -i ~/.ssh/id_rsa ${SERVER_USER}@${SERVER_IP} \
-            'gunzip | docker load'
+      - name: Logout from registry
+        if: always()
+        run: docker logout
 
       - name: Build Success Notification
         if: success()
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
         run: |
           echo "✅ Images built and pushed successfully!"
           echo ""
           echo "Images available on registry:"
-          echo "  • localhost:5000/amm-eth:latest"
-          echo "  • localhost:5000/arbitrade-eth:latest"
+          echo "  • ${REGISTRY_URL}/amm-eth:latest"
+          echo "  • ${REGISTRY_URL}/arbitrade-eth:latest"
           echo ""
           echo "Next: Deploy to K8s using the 'deploy-to-k8s' workflow"

@@ -118,7 +118,8 @@ jobs:
           docker push "${REGISTRY_HOST}/amm-eth:latest"
           docker push "${REGISTRY_HOST}/arbitrade-eth:${COMMIT_SHA}"
           docker push "${REGISTRY_HOST}/arbitrade-eth:latest"
-          echo "✅ Images pushed successfully"      - name: Logout from registry
+          echo "✅ Images pushed successfully"      
+      - name: Logout from registry
         if: always()
         run: docker logout
 

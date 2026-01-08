@@ -135,3 +135,4 @@ jobs:
           echo "  • ${REGISTRY_URL}/arbitrade-eth:latest"
           echo ""
           echo "Next: Deploy to K8s using the 'deploy-to-k8s' workflow"
+          

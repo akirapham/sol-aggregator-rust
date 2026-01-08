@@ -37,17 +37,18 @@ jobs:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
-          # Extract registry host (remove https:// or http:// if present)
-          REGISTRY_HOST=$(echo ${REGISTRY_URL} | sed 's|^https://||;s|^http://||')
+          # Extract registry host (remove https://, http://, and /v2 if present)
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|^https://||;s|^http://||;s|/v2$||')
 
           kubectl create secret docker-registry regcred \
             -n aggregators \
-            --docker-server=${REGISTRY_HOST} \
-            --docker-username=${REGISTRY_USERNAME} \
-            --docker-password=${REGISTRY_PASSWORD} \
+            --docker-server="${REGISTRY_HOST}" \
+            --docker-username="${REGISTRY_USERNAME}" \
+            --docker-password="${REGISTRY_PASSWORD}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           echo "✅ Registry credentials secret created"
+          echo "Registry host: ${REGISTRY_HOST}"
 
       - name: Substitute registry URL in manifests
         env:
@@ -55,11 +56,11 @@ jobs:
         run: |
           # Create temporary directory for modified manifests
           mkdir -p /tmp/k8s-manifests
-          
+
           # Substitute REGISTRY_URL placeholder in deployment manifests
           sed "s|\${REGISTRY_URL}|${REGISTRY_URL}|g" k8s-manifests/amm-eth-deployment.yaml > /tmp/k8s-manifests/amm-eth-deployment.yaml
           sed "s|\${REGISTRY_URL}|${REGISTRY_URL}|g" k8s-manifests/arbitrade-eth-deployment.yaml > /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
-          
+
           echo "✅ Manifests substituted with registry URL: ${REGISTRY_URL}"
 
       - name: Apply namespace and ConfigMaps
@@ -147,17 +148,25 @@ jobs:
           kubectl apply -f k8s-manifests/amm-eth-pvc.yaml
           kubectl apply -f k8s-manifests/arbitrade-eth-pvc.yaml
 
-      - name: Apply deployments
+      - name: Prepare and apply deployments
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
         run: |
+          # Remove /v2 suffix if present and extract registry host
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|^https://||;s|^http://||;s|/v2$||')
+
           # Substitute REGISTRY_URL in deployment manifests using envsubst
           mkdir -p /tmp/k8s-manifests
+          export REGISTRY_URL="${REGISTRY_HOST}"
           envsubst < k8s-manifests/amm-eth-deployment.yaml > /tmp/k8s-manifests/amm-eth-deployment.yaml
           envsubst < k8s-manifests/arbitrade-eth-deployment.yaml > /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
 
-          echo "✅ Manifests prepared with registry URL: ${REGISTRY_URL}"
-          
+          echo "✅ Manifests prepared with registry host: ${REGISTRY_URL}"
+
+          # Apply the deployments from the temporary directory
+          kubectl apply -f /tmp/k8s-manifests/amm-eth-deployment.yaml
+          kubectl apply -f /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
+
           # Apply the substituted manifests
           kubectl apply -f /tmp/k8s-manifests/amm-eth-deployment.yaml
           kubectl apply -f /tmp/k8s-manifests/arbitrade-eth-deployment.yaml

@@ -42,19 +42,32 @@ jobs:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         run: |
+          MISSING_SECRETS=""
+
           if [ -z "$REGISTRY_URL" ]; then
-            echo "❌ ERROR: REGISTRY_URL secret is not set"
-            echo "Please add REGISTRY_URL, REGISTRY_USERNAME, and REGISTRY_PASSWORD to GitHub Secrets"
-            exit 1
+            MISSING_SECRETS="${MISSING_SECRETS}  - REGISTRY_URL\n"
           fi
           if [ -z "$REGISTRY_USERNAME" ]; then
-            echo "❌ ERROR: REGISTRY_USERNAME secret is not set"
-            exit 1
+            MISSING_SECRETS="${MISSING_SECRETS}  - REGISTRY_USERNAME\n"
           fi
           if [ -z "$REGISTRY_PASSWORD" ]; then
-            echo "❌ ERROR: REGISTRY_PASSWORD secret is not set"
+            MISSING_SECRETS="${MISSING_SECRETS}  - REGISTRY_PASSWORD\n"
+          fi
+
+          if [ -n "$MISSING_SECRETS" ]; then
+            echo "❌ ERROR: Missing required GitHub Secrets:"
+            echo -e "$MISSING_SECRETS"
+            echo ""
+            echo "Please add the following secrets to your GitHub repository:"
+            echo "Settings > Secrets and variables > Actions > New repository secret"
+            echo ""
+            echo "Required secrets:"
+            echo "  - REGISTRY_URL: Your private registry URL (e.g., https://registry.example.com)"
+            echo "  - REGISTRY_USERNAME: Your registry username"
+            echo "  - REGISTRY_PASSWORD: Your registry password or token"
             exit 1
           fi
+
           echo "✅ Registry configuration validated"
           echo "Registry: $REGISTRY_URL"
 

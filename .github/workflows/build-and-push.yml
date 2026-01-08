@@ -75,21 +75,24 @@ jobs:
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
         run: |
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+
+          # Remove /v2 suffix if present (it's only for API, not for image tags)
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|/v2$||')
+
           docker build \
             --file docker/Dockerfile.eth \
             --build-arg BIN_NAME=amm-eth \
-            --tag ${REGISTRY_URL}/amm-eth:${{ github.sha }} \
-            --tag ${REGISTRY_URL}/amm-eth:latest \
+            --tag "${REGISTRY_HOST}/amm-eth:${COMMIT_SHA}" \
+            --tag "${REGISTRY_HOST}/amm-eth:latest" \
             .
 
           docker build \
             --file docker/Dockerfile.eth \
             --build-arg BIN_NAME=arbitrade-eth \
-            --tag ${REGISTRY_URL}/arbitrade-eth:${{ github.sha }} \
-            --tag ${REGISTRY_URL}/arbitrade-eth:latest \
-            .
-
-      # ===== LOGIN TO PRIVATE REGISTRY =====
+            --tag "${REGISTRY_HOST}/arbitrade-eth:${COMMIT_SHA}" \
+            --tag "${REGISTRY_HOST}/arbitrade-eth:latest" \
+            .      # ===== LOGIN TO PRIVATE REGISTRY =====
 
       - name: Login to private Docker registry
         env:
@@ -105,14 +108,17 @@ jobs:
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
         run: |
-          echo "Pushing images to private registry..."
-          docker push ${REGISTRY_URL}/amm-eth:${{ github.sha }}
-          docker push ${REGISTRY_URL}/amm-eth:latest
-          docker push ${REGISTRY_URL}/arbitrade-eth:${{ github.sha }}
-          docker push ${REGISTRY_URL}/arbitrade-eth:latest
-          echo "✅ Images pushed successfully"
+          COMMIT_SHA=$(git rev-parse --short HEAD)
 
-      - name: Logout from registry
+          # Remove /v2 suffix if present (it's only for API, not for image tags)
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|/v2$||')
+
+          echo "Pushing images to private registry..."
+          docker push "${REGISTRY_HOST}/amm-eth:${COMMIT_SHA}"
+          docker push "${REGISTRY_HOST}/amm-eth:latest"
+          docker push "${REGISTRY_HOST}/arbitrade-eth:${COMMIT_SHA}"
+          docker push "${REGISTRY_HOST}/arbitrade-eth:latest"
+          echo "✅ Images pushed successfully"      - name: Logout from registry
         if: always()
         run: docker logout
 

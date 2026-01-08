@@ -36,6 +36,28 @@ jobs:
       # ===== DOCKER BUILD STAGE =====
       # (Dockerfile handles all cargo builds, checks, and dependency installation)
 
+      - name: Validate registry configuration
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          if [ -z "$REGISTRY_URL" ]; then
+            echo "❌ ERROR: REGISTRY_URL secret is not set"
+            echo "Please add REGISTRY_URL, REGISTRY_USERNAME, and REGISTRY_PASSWORD to GitHub Secrets"
+            exit 1
+          fi
+          if [ -z "$REGISTRY_USERNAME" ]; then
+            echo "❌ ERROR: REGISTRY_USERNAME secret is not set"
+            exit 1
+          fi
+          if [ -z "$REGISTRY_PASSWORD" ]; then
+            echo "❌ ERROR: REGISTRY_PASSWORD secret is not set"
+            exit 1
+          fi
+          echo "✅ Registry configuration validated"
+          echo "Registry: $REGISTRY_URL"
+
       - name: Build Docker images
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}

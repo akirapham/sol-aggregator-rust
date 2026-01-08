@@ -49,6 +49,19 @@ jobs:
 
           echo "✅ Registry credentials secret created"
 
+      - name: Substitute registry URL in manifests
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          # Create temporary directory for modified manifests
+          mkdir -p /tmp/k8s-manifests
+          
+          # Substitute REGISTRY_URL placeholder in deployment manifests
+          sed "s|\${REGISTRY_URL}|${REGISTRY_URL}|g" k8s-manifests/amm-eth-deployment.yaml > /tmp/k8s-manifests/amm-eth-deployment.yaml
+          sed "s|\${REGISTRY_URL}|${REGISTRY_URL}|g" k8s-manifests/arbitrade-eth-deployment.yaml > /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
+          
+          echo "✅ Manifests substituted with registry URL: ${REGISTRY_URL}"
+
       - name: Apply namespace and ConfigMaps
         run: |
           # Create namespace
@@ -134,20 +147,20 @@ jobs:
           kubectl apply -f k8s-manifests/amm-eth-pvc.yaml
           kubectl apply -f k8s-manifests/arbitrade-eth-pvc.yaml
 
-      - name: Substitute registry URL in manifests
+      - name: Apply deployments
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
         run: |
-          # Substitute REGISTRY_URL in deployment manifests
-          sed -i "s|\$(REGISTRY_URL)|${REGISTRY_URL}|g" k8s-manifests/amm-eth-deployment.yaml
-          sed -i "s|\$(REGISTRY_URL)|${REGISTRY_URL}|g" k8s-manifests/arbitrade-eth-deployment.yaml
+          # Substitute REGISTRY_URL in deployment manifests using envsubst
+          mkdir -p /tmp/k8s-manifests
+          envsubst < k8s-manifests/amm-eth-deployment.yaml > /tmp/k8s-manifests/amm-eth-deployment.yaml
+          envsubst < k8s-manifests/arbitrade-eth-deployment.yaml > /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
 
-          echo "✅ Registry URL substituted in manifests"
-
-      - name: Apply deployments
-        run: |
-          kubectl apply -f k8s-manifests/amm-eth-deployment.yaml
-          kubectl apply -f k8s-manifests/arbitrade-eth-deployment.yaml
+          echo "✅ Manifests prepared with registry URL: ${REGISTRY_URL}"
+          
+          # Apply the substituted manifests
+          kubectl apply -f /tmp/k8s-manifests/amm-eth-deployment.yaml
+          kubectl apply -f /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
 
       - name: Apply services
         run: |

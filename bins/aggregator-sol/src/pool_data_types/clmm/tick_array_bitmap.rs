@@ -181,7 +181,7 @@ impl TickArrayBitmapExtensionUtils {
         last_tick_array_start_index: i32,
         tick_spacing: u16,
         zero_for_one: bool,
-        tick_array_bitmap_extension: &TickArrayBitmapExtension,
+        tick_array_bitmap_extension: Option<&TickArrayBitmapExtension>,
     ) -> Result<NextTickArray, String> {
         let multiplier = TickQuery::tick_count(tick_spacing) as i32;
         let next_tick_array_start_index = if zero_for_one {
@@ -241,7 +241,7 @@ impl TickArrayBitmapExtensionUtils {
         let tick_index_abs = tick_index.unsigned_abs();
         // floor
         let mut offset = (tick_index_abs / ticks_in_one_bitmap) - 1;
-        if tick_index < 0 && tick_index_abs.is_multiple_of(ticks_in_one_bitmap) {
+        if tick_index < 0 && tick_index_abs % ticks_in_one_bitmap == 0 {
             offset -= 1;
         }
         Ok(offset)
@@ -249,13 +249,17 @@ impl TickArrayBitmapExtensionUtils {
     pub fn get_bitmap(
         tick_index: i32,
         tick_spacing: u16,
-        tick_array_bitmap_extension: &TickArrayBitmapExtension,
+        tick_array_bitmap_extension: Option<&TickArrayBitmapExtension>,
     ) -> Result<GetBitmapResult, String> {
         let offset = Self::get_bitmap_offset(tick_index, tick_spacing)?;
-        let tick_array_bitmap = if tick_index < 0 {
-            tick_array_bitmap_extension.negative_tick_array_bitmap[offset as usize]
+        let tick_array_bitmap = if let Some(extension) = tick_array_bitmap_extension {
+            if tick_index < 0 {
+                extension.negative_tick_array_bitmap[offset as usize]
+            } else {
+                extension.positive_tick_array_bitmap[offset as usize]
+            }
         } else {
-            tick_array_bitmap_extension.positive_tick_array_bitmap[offset as usize]
+            [0u64; 8]
         };
         Ok(GetBitmapResult {
             offset,
@@ -265,7 +269,7 @@ impl TickArrayBitmapExtensionUtils {
     pub fn check_tick_array_is_init(
         tick_array_start_index: i32,
         tick_spacing: u16,
-        tick_array_bitmap_extension: &TickArrayBitmapExtension,
+        tick_array_bitmap_extension: Option<&TickArrayBitmapExtension>,
     ) -> Result<CheckTickArrayIsInitResult, String> {
         let tick_array_bitmap = Self::get_bitmap(
             tick_array_start_index,

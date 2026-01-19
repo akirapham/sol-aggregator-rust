@@ -116,7 +116,7 @@ impl TickUtils {
     }
     pub fn get_initialized_tick_array_in_range(
         tick_array_bitmap: &[u64; 16],
-        ex_bitmap_info: &TickArrayBitmapExtension,
+        ex_bitmap_info: Option<&TickArrayBitmapExtension>,
         tick_spacing: u16,
         tick_array_start_index: i32,
         expected_count: u8,
@@ -145,19 +145,34 @@ impl TickUtils {
     }
     pub fn search_low_bit_from_start(
         tick_array_bitmap: &[u64; 16],
-        ex_bitmap_info: &TickArrayBitmapExtension,
+        ex_bitmap_info: Option<&TickArrayBitmapExtension>,
         current_tick_array_bit_start_index: i32,
         expected_count: u8,
         tick_spacing: u16,
     ) -> Vec<i32> {
         let mut current_tick_array_bit_start_index = current_tick_array_bit_start_index;
         let mut tick_array_bitmaps: Vec<[u64; 8]> = vec![];
-        let mut negative_tick_array_bitmap = ex_bitmap_info.negative_tick_array_bitmap.to_vec();
-        negative_tick_array_bitmap.reverse();
-        tick_array_bitmaps.append(&mut negative_tick_array_bitmap);
+
+        if let Some(extension) = ex_bitmap_info {
+            let mut negative_tick_array_bitmap = extension.negative_tick_array_bitmap.to_vec();
+            negative_tick_array_bitmap.reverse();
+            tick_array_bitmaps.append(&mut negative_tick_array_bitmap);
+        } else {
+            // Default (empty) negative part
+            // EXTENSION_TICKARRAY_BITMAP_SIZE is 14
+            let mut empty_negative = vec![[0u64; 8]; 14];
+            tick_array_bitmaps.append(&mut empty_negative);
+        }
+
         tick_array_bitmaps.push(tick_array_bitmap[0..8].try_into().unwrap());
         tick_array_bitmaps.push(tick_array_bitmap[8..16].try_into().unwrap());
-        tick_array_bitmaps.extend(ex_bitmap_info.positive_tick_array_bitmap);
+
+        if let Some(extension) = ex_bitmap_info {
+            tick_array_bitmaps.extend(extension.positive_tick_array_bitmap);
+        } else {
+            // Default (empty) positive part
+            tick_array_bitmaps.extend([[0u64; 8]; 14]);
+        }
         // println!("tick_array_bitmaps: {tick_array_bitmaps:?}");
         let merged: Vec<Integer> = tick_array_bitmaps
             .iter()
@@ -182,19 +197,33 @@ impl TickUtils {
 
     pub fn search_high_bit_from_start(
         tick_array_bitmap: &[u64; 16],
-        ex_bitmap_info: &TickArrayBitmapExtension,
+        ex_bitmap_info: Option<&TickArrayBitmapExtension>,
         current_tick_array_bit_start_index: i32,
         expected_count: u8,
         tick_spacing: u16,
     ) -> Vec<i32> {
         let mut current_tick_array_bit_start_index = current_tick_array_bit_start_index;
         let mut tick_array_bitmaps: Vec<[u64; 8]> = vec![];
-        let mut negative_tick_array_bitmap = ex_bitmap_info.negative_tick_array_bitmap.to_vec();
-        negative_tick_array_bitmap.reverse();
-        tick_array_bitmaps.append(&mut negative_tick_array_bitmap);
+
+        if let Some(extension) = ex_bitmap_info {
+            let mut negative_tick_array_bitmap = extension.negative_tick_array_bitmap.to_vec();
+            negative_tick_array_bitmap.reverse();
+            tick_array_bitmaps.append(&mut negative_tick_array_bitmap);
+        } else {
+            // Default (empty) negative part
+            let mut empty_negative = vec![[0u64; 8]; 14];
+            tick_array_bitmaps.append(&mut empty_negative);
+        }
+
         tick_array_bitmaps.push(tick_array_bitmap[0..8].try_into().unwrap());
         tick_array_bitmaps.push(tick_array_bitmap[8..16].try_into().unwrap());
-        tick_array_bitmaps.extend(ex_bitmap_info.positive_tick_array_bitmap);
+
+        if let Some(extension) = ex_bitmap_info {
+            tick_array_bitmaps.extend(extension.positive_tick_array_bitmap);
+        } else {
+            // Default (empty) positive part
+            tick_array_bitmaps.extend([[0u64; 8]; 14]);
+        }
         // println!("tick_array_bitmaps: {tick_array_bitmaps:?}");
         let merged: Vec<Integer> = tick_array_bitmaps
             .iter()

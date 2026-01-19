@@ -4,7 +4,7 @@ services:
   aggregator:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile.sol
     container_name: solana-aggregator
     restart: unless-stopped
     ports:

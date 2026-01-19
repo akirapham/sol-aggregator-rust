@@ -20,10 +20,12 @@ spec:
       labels:
         app: amm-eth
     spec:
+      imagePullSecrets:
+      - name: regcred
       containers:
       - name: amm-eth
-        image: 127.0.0.1:5000/amm-eth:latest
-        imagePullPolicy: IfNotPresent
+        image: ${REGISTRY_URL}/amm-eth:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
           name: ws
@@ -43,15 +45,17 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8080
-          initialDelaySeconds: 30
+            port: 2222
+          initialDelaySeconds: 120
           periodSeconds: 10
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /health
-            port: 8080
-          initialDelaySeconds: 10
+            port: 2222
+          initialDelaySeconds: 60
           periodSeconds: 5
+          failureThreshold: 3
         volumeMounts:
         - name: rocksdb-data
           mountPath: /app/rocksdb_data/amm-eth

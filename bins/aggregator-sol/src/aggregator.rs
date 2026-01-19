@@ -1,13 +1,15 @@
-use solana_sdk::pubkey::Pubkey;
+use crate::constants::BASE_TOKENS;
+use crate::pool_data_types::{traits::BuildSwapInstruction, DexType, GetAmmConfig, PoolState};
+use crate::pool_manager::PoolStateManager;
+use crate::types::{AggregatorConfig, ExecutionPriority, SwapParams};
+use crate::utils::{calculate_min_output_amount, tokens_equal};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::{
+    instruction::Instruction, message::Message, pubkey::Pubkey, transaction::Transaction,
+};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
-
-use crate::constants::BASE_TOKENS;
-use crate::pool_data_types::{DexType, GetAmmConfig, PoolState};
-use crate::pool_manager::PoolStateManager;
-use crate::types::{AggregatorConfig, SwapParams};
-use crate::utils::{calculate_min_output_amount, tokens_equal};
 
 #[allow(unused)]
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
@@ -22,7 +24,7 @@ pub struct SwapStepInternal {
     pub input_token: Pubkey,
     pub output_token: Pubkey,
     pub pool_address: Pubkey,
-    pool_state: Arc<PoolState>,
+    pub pool_state: Arc<PoolState>, // Made public for trait access
     pub input_amount: u64,
     pub output_amount: u64,
     pub percent: u64,
@@ -108,7 +110,6 @@ impl DexAggregator {
         // Loop over BASE_TOKENS to find hop routes
         for base_token in BASE_TOKENS.iter() {
             let base_token_key = Pubkey::from_str(base_token).unwrap();
-
             // Skip if base token is same as input or output
             if tokens_equal(&base_token_key, &swap_param.input_token.address)
                 || tokens_equal(&base_token_key, &swap_param.output_token.address)
@@ -148,19 +149,24 @@ impl DexAggregator {
                 continue;
             }
 
-            // Skip pools without synced ticks
-            if !self.pool_manager.is_pool_tick_synced(pool_address).await {
-                log::debug!("Skipping pool without synced ticks: {}", pool_address);
-                continue;
-            }
-
-            if let Some(pool_state) = self
+            // Get pool state to check type
+            let pool_state = self
                 .pool_manager
                 .get_pool_state_by_address(pool_address)
-                .await
-            {
+                .await;
+
+            if let Some(pool_state) = pool_state {
+                let no_needs_tick_sync = matches!(pool_state.dex(), DexType::PumpFun)
+                    || matches!(pool_state.dex(), DexType::RaydiumCpmm)
+                    || matches!(pool_state.dex(), DexType::PumpFunSwap)
+                    || matches!(pool_state.dex(), DexType::Raydium)
+                    || matches!(pool_state.dex(), DexType::MeteoraDbc)
+                    || matches!(pool_state.dex(), DexType::MeteoraDammV2);
+                if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await
+                {
+                    continue;
+                }
                 if pool_state.get_liquidity_usd() < min_liquidity_usd {
-                    // Skip pools with very low liquidity
                     continue;
                 }
                 all_pool_state.insert(*pool_address, Arc::new(pool_state));
@@ -198,6 +204,7 @@ impl DexAggregator {
                         self_arc.clone(),
                     )
                     .await;
+
                 if output_amount > 0 {
                     all_routes_with_out_amounts.push((
                         vec![SwapStepInternal {
@@ -529,7 +536,7 @@ impl DexAggregator {
         token_a: &SwapParams,
         token_b_address: &Pubkey,
         slippage_bps: u16,
-    ) -> Option<(u64, SwapRoute, SwapRoute, bool)> {
+    ) -> Option<(i64, SwapRoute, SwapRoute)> {
         let exclude_pools: HashSet<Pubkey> = HashSet::new();
 
         // Step 1: Get best forward route from tokenA -> tokenB
@@ -551,7 +558,7 @@ impl DexAggregator {
             }
         }
 
-        let token_b_amount = forward_route.output_amount;
+        let token_b_amount = forward_route.other_output_amount;
 
         // Step 2: Get the tokenB info from pool manager
         let token_b = self.pool_manager.get_token(token_b_address).await?;
@@ -571,17 +578,295 @@ impl DexAggregator {
             .get_swap_route_with_exclude(&reverse_params, &exclude_pools, false)
             .await?;
 
-        let final_token_a_amount = reverse_route.output_amount;
+        // Step 5: Check transaction size and fallback if needed
+        let mut final_reverse_route = reverse_route;
 
-        // Step 5: Calculate profit
-        if final_token_a_amount > token_a.input_amount {
-            let profit = final_token_a_amount - token_a.input_amount;
-            Some((profit, forward_route, reverse_route, false))
-        } else {
-            // None
-            let profit = token_a.input_amount - final_token_a_amount;
-            Some((profit, forward_route, reverse_route, true))
+        // Check if the combined transaction is too large
+        let is_too_large = self
+            .estimate_transaction_size(&forward_route, &final_reverse_route, token_a.user_wallet)
+            .await
+            .unwrap_or_else(|e| {
+                log::error!("estimate_transaction_size failed: {}", e);
+                true
+            }); // Treat error as too large to be safe
+
+        if is_too_large {
+            log::debug!(
+                "⚠️ Transaction too large with complex route, falling back to direct route..."
+            );
+
+            // Try to get a DIRECT reverse route instead
+            let direct_reverse_route = self
+                .get_swap_route_with_exclude(&reverse_params, &exclude_pools, true) // direct_only = true
+                .await;
+
+            if let Some(direct_route) = direct_reverse_route {
+                // Verify the direct route is actually smaller/valid
+                let direct_is_too_large = self
+                    .estimate_transaction_size(&forward_route, &direct_route, token_a.user_wallet)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::error!("estimate_transaction_size failed for direct route: {}", e);
+                        true
+                    });
+
+                if !direct_is_too_large {
+                    log::debug!("✅ Fallback to direct route successful");
+                    final_reverse_route = direct_route;
+                } else {
+                    log::debug!("❌ Direct route also too large or check failed");
+                    return None;
+                }
+            } else {
+                log::debug!("❌ No direct fallback route available");
+                return None;
+            }
         }
+
+        // Recalculate profit with the final route
+        let final_token_a_amount = final_reverse_route.other_output_amount;
+        let profit = final_token_a_amount as i64 - token_a.input_amount as i64;
+        let profit_percent = (profit as f64 / token_a.input_amount as f64) * 100.0;
+
+        log::info!(
+            "final_token_a_amount: {} input_amount: {} forward_route min output amount: {} profit: {} input token: {} output token: {} forward_route paths: {:?} reverse_route paths: {:?}",
+            final_token_a_amount,
+            token_a.input_amount,
+            forward_route.other_output_amount,
+            profit,
+            token_a.input_token.address,
+            token_a.output_token.address,
+            forward_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>(),
+            final_reverse_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>()
+        );
+
+        // Step 6: Check conditions: Profit > 0 OR Abnormal profit/loss (> 5% or < -5%)
+        if profit > 0 || profit_percent.abs() > 5.0 {
+            Some((profit, forward_route, final_reverse_route))
+        } else {
+            None
+        }
+    }
+
+    /// Estimate if the transaction size is within limits (1232 bytes)
+    async fn estimate_transaction_size(
+        &self,
+        forward_route: &SwapRoute,
+        reverse_route: &SwapRoute,
+        payer: Pubkey,
+    ) -> Result<bool, String> {
+        // We use a dummy execution priority here as it doesn't affect instructions size significantly for this check
+        // or we can just use the one from config if available, but Medium is safe default.
+        let priority = ExecutionPriority::Medium;
+
+        // We don't have the rpc_client here readily available in `calculate_arbitrage_profit`
+        // BUT we need it to build the transaction (get blockhash).
+        // However, `build_arbitrage_transaction` requires `rpc_client`.
+        // Wait, `calculate_arbitrage_profit` does NOT have rpc_client.
+        // We can't easily build the FULL transaction with blockhash without RPC.
+        // BUT we can build the instructions and estimate size.
+
+        let mut all_instructions = Vec::new();
+
+        for path in &forward_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, forward_route.slippage_bps, priority, payer)
+                    .await
+                    .map_err(|e| {
+                        log::error!("estimate_transaction_size forward_route error: {}", e);
+                        e
+                    })?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        for path in &reverse_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, reverse_route.slippage_bps, priority, payer)
+                    .await
+                    .map_err(|e| {
+                        log::error!("estimate_transaction_size reverse_route error: {}", e);
+                        e
+                    })?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        let all_instructions = Self::deduplicate_instructions(all_instructions);
+
+        // Estimate size based on instructions
+        // A simple transaction has header (approx 100 bytes) + instructions
+        // We can construct a Transaction with a default blockhash/payer to check size
+        let message = Message::new(&all_instructions, Some(&payer));
+
+        let serialized = message.serialize();
+        let size = serialized.len();
+
+        // Legacy transaction limit is 1232 bytes
+        // We add some buffer (signatures take 64 bytes per signer)
+        // Message size + 1 signature (64) < 1232
+        const MAX_TX_SIZE: usize = 1232;
+        const SIGNATURE_SIZE: usize = 64;
+
+        let total_size = size + SIGNATURE_SIZE;
+
+        log::debug!(
+            "📏 Estimated transaction size: {} bytes (Limit: {})",
+            total_size,
+            MAX_TX_SIZE
+        );
+
+        Ok(total_size > MAX_TX_SIZE)
+    }
+
+    pub async fn build_route_transaction(
+        &self,
+        route: &SwapRoute,
+        priority: ExecutionPriority,
+        payer: Pubkey,
+        rpc_client: &RpcClient,
+    ) -> Result<Transaction, String> {
+        let mut all_instructions = Vec::new();
+
+        for path in &route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, route.slippage_bps, priority, payer)
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_route_transaction error: {}", e);
+                        e
+                    })?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        // Deduplicate instructions to prevent duplicate ATA creation across multiple swap steps
+        let all_instructions = Self::deduplicate_instructions(all_instructions);
+
+        // Build unsigned transaction for client-side signing
+        let blockhash = rpc_client
+            .get_latest_blockhash()
+            .await
+            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
+
+        let message = Message::new_with_blockhash(&all_instructions, Some(&payer), &blockhash);
+        let transaction = Transaction::new_unsigned(message);
+        Ok(transaction)
+    }
+
+    pub async fn build_arbitrage_transaction(
+        &self,
+        forward_route: &SwapRoute,
+        reverse_route: &SwapRoute,
+        priority: ExecutionPriority,
+        payer: Pubkey,
+        rpc_client: &RpcClient,
+    ) -> Result<Transaction, String> {
+        let mut all_instructions = Vec::new();
+
+        for path in &forward_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, forward_route.slippage_bps, priority, payer)
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_arbitrage_transaction forward_route error: {}", e);
+                        e
+                    })?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        for path in &reverse_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, reverse_route.slippage_bps, priority, payer)
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_arbitrage_transaction reverse_route error: {}", e);
+                        e
+                    })?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        // Deduplicate instructions to prevent duplicate ATA creation across multiple swap steps
+        let all_instructions = Self::deduplicate_instructions(all_instructions);
+
+        // Build unsigned transaction for client-side signing
+        let blockhash = rpc_client
+            .get_latest_blockhash()
+            .await
+            .map_err(|e| format!("Failed to get blockhash: {}", e))?;
+
+        use solana_sdk::message::Message;
+        let message = Message::new_with_blockhash(&all_instructions, Some(&payer), &blockhash);
+        let transaction = Transaction::new_unsigned(message);
+
+        Ok(transaction)
+    }
+
+    /// Deduplicate instructions by comparing program_id, accounts, and data
+    /// This prevents duplicate ATA creation instructions in multi-step transactions
+    fn deduplicate_instructions(instructions: Vec<Instruction>) -> Vec<Instruction> {
+        let mut seen = HashSet::new();
+        let mut deduped = Vec::new();
+
+        for ix in instructions {
+            // Create a unique key for this instruction
+            let key = (
+                ix.program_id,
+                ix.accounts
+                    .iter()
+                    .map(|a| (a.pubkey, a.is_signer, a.is_writable))
+                    .collect::<Vec<_>>(),
+                ix.data.clone(),
+            );
+
+            if seen.insert(key) {
+                deduped.push(ix);
+            }
+        }
+
+        deduped
+    }
+
+    /// Build swap instructions for a single step using the pool state (works for all DEX types)
+    async fn build_step_instructions(
+        &self,
+        step: &SwapStepInternal,
+        slippage_bps: u16,
+        priority: ExecutionPriority,
+        payer: Pubkey,
+    ) -> Result<Vec<Instruction>, String> {
+        let self_arc: Arc<dyn GetAmmConfig> = self.pool_manager.clone();
+        let token_a = self.pool_manager.get_token(&step.input_token).await;
+        let token_b = self.pool_manager.get_token(&step.output_token).await;
+
+        let params = SwapParams {
+            input_token: token_a.unwrap(),
+            output_token: token_b.unwrap(),
+            input_amount: step.input_amount,
+            slippage_bps,
+            user_wallet: payer,
+            priority,
+        };
+
+        step.pool_state
+            .build_swap_instruction(&params, self_arc)
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to build swap instruction for DEX {:?} Pool {}: {}",
+                    step.pool_state.dex(),
+                    step.pool_address,
+                    e
+                );
+                e
+            })
     }
 
     #[allow(unused)]

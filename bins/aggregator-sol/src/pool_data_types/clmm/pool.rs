@@ -9,6 +9,7 @@ use crate::pool_data_types::clmm::tick_query::TickQuery;
 use crate::pool_data_types::clmm::tpe::ComputeClmmPoolInfo;
 use crate::pool_data_types::raydium_clmm::TickArrayState;
 use crate::pool_data_types::TickArrayBitmapExtension;
+
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::ops::Neg;
@@ -81,7 +82,7 @@ impl PoolUtils {
         tick_current: i32,
         tick_spacing: u16,
         tick_array_bitmap: &[u64; 16],
-        ex_bitmap_info: &TickArrayBitmapExtension,
+        ex_bitmap_info: Option<&TickArrayBitmapExtension>,
         zero_for_one: bool,
     ) -> Result<Option<i32>, String> {
         let mut last_tick_array_start_index =
@@ -130,7 +131,7 @@ impl PoolUtils {
                     pool_info.pool_state.tick_spacing,
                 ),
                 pool_info.pool_state.tick_spacing,
-                pool_info.ex_bitmap_info.as_ref().unwrap(),
+                pool_info.ex_bitmap_info,
             )?
         } else {
             // println!("2");
@@ -158,7 +159,7 @@ impl PoolUtils {
                 pool_info.pool_state.tick_current_index,
                 pool_info.pool_state.tick_spacing,
                 &pool_info.pool_state.tick_array_bitmap,
-                pool_info.ex_bitmap_info.as_ref().unwrap(),
+                pool_info.ex_bitmap_info,
                 // TickQuery::get_array_start_index(pool_info.pool_state.tick_current, pool_info.pool_state.tick_spacing),
                 zero_for_one,
             )? {
@@ -199,7 +200,7 @@ impl PoolUtils {
             &pool_info.id,
             tick_array_cache,
             &pool_info.pool_state.tick_array_bitmap,
-            pool_info.ex_bitmap_info.as_ref().unwrap(),
+            pool_info.ex_bitmap_info,
             zero_for_one,
             pool_info.amm_config.as_ref().unwrap().trade_fee_rate,
             pool_info.pool_state.liquidity as i128,
@@ -243,7 +244,7 @@ impl PoolUtils {
             &pool_info.id,
             tick_array_cache,
             &pool_info.pool_state.tick_array_bitmap,
-            pool_info.ex_bitmap_info.as_ref().unwrap(),
+            pool_info.ex_bitmap_info,
             zero_for_one,
             pool_info.amm_config.as_ref().unwrap().trade_fee_rate,
             pool_info.pool_state.liquidity as i128,

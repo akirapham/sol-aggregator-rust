@@ -20,10 +20,12 @@ spec:
       labels:
         app: arbitrade-eth
     spec:
+      imagePullSecrets:
+      - name: regcred
       containers:
       - name: arbitrade-eth
-        image: 127.0.0.1:5000/arbitrade-eth:latest
-        imagePullPolicy: IfNotPresent
+        image: ${REGISTRY_URL}/arbitrade-eth:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 3001
           name: api
@@ -44,14 +46,16 @@ spec:
           httpGet:
             path: /health
             port: 3001
-          initialDelaySeconds: 30
+          initialDelaySeconds: 120
           periodSeconds: 10
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /health
             port: 3001
-          initialDelaySeconds: 10
+          initialDelaySeconds: 60
           periodSeconds: 5
+          failureThreshold: 3
         volumeMounts:
         - name: rocksdb-data
           mountPath: /app/rocksdb_data

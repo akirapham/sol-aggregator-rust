@@ -5,9 +5,9 @@ use solana_sdk::pubkey::Pubkey;
 use crate::{
     error::Result,
     pool_data_types::{
-        BonkPoolUpdate, DbcPoolUpdate, DexType, PoolUpdateEventType, PumpSwapPoolUpdate,
-        PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
-        WhirlpoolPoolUpdate,
+        BonkPoolUpdate, DbcPoolUpdate, DexType, MeteoraDammV2PoolUpdate, MeteoraDlmmPoolUpdate,
+        PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
+        RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate, WhirlpoolPoolUpdate,
     },
 };
 
@@ -74,6 +74,8 @@ impl std::fmt::Display for DexType {
             DexType::Bonk => write!(f, "Bonk"),
             DexType::RaydiumClmm => write!(f, "Raydium CLMM"),
             DexType::MeteoraDbc => write!(f, "Meteora DBC"),
+            DexType::MeteoraDammV2 => write!(f, "Meteora DammV2"),
+            DexType::MeteoraDlmm => write!(f, "Meteora DLMM"),
         }
     }
 }
@@ -119,6 +121,8 @@ pub struct AggregatorConfig {
     pub enable_raydium_amm_v4: bool,
     pub enable_orca_whirlpools: bool,
     pub enable_meteora_dbc: bool,
+    pub enable_meteora_dammv2: bool,
+    pub enable_meteora_dlmm: bool,
 }
 
 /// Smart routing configuration
@@ -144,6 +148,8 @@ pub enum PoolUpdateEvent {
     Bonk(BonkPoolUpdate),
     RaydiumClmm(Box<RaydiumClmmPoolUpdate>),
     MeteoraDbc(DbcPoolUpdate),
+    MeteoraDammV2(MeteoraDammV2PoolUpdate),
+    MeteoraDlmm(MeteoraDlmmPoolUpdate),
     Whirlpool(Box<WhirlpoolPoolUpdate>),
 }
 
@@ -158,6 +164,8 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumClmm(update) => update.address,
             PoolUpdateEvent::MeteoraDbc(update) => update.address,
             PoolUpdateEvent::Whirlpool(update) => update.address,
+            PoolUpdateEvent::MeteoraDammV2(update) => update.address,
+            PoolUpdateEvent::MeteoraDlmm(update) => update.address,
         }
     }
 
@@ -171,6 +179,8 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumClmm(update) => update.is_account_state_update,
             PoolUpdateEvent::MeteoraDbc(update) => update.is_account_state_update,
             PoolUpdateEvent::Whirlpool(update) => update.is_account_state_update,
+            PoolUpdateEvent::MeteoraDammV2(update) => update.is_account_state_update,
+            PoolUpdateEvent::MeteoraDlmm(update) => update.is_account_state_update,
         }
     }
 
@@ -184,6 +194,8 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumClmm(update) => update.pool_update_event_type,
             PoolUpdateEvent::MeteoraDbc(update) => update.pool_update_event_type,
             PoolUpdateEvent::Whirlpool(update) => update.pool_update_event_type,
+            PoolUpdateEvent::MeteoraDammV2(update) => update.pool_update_event_type,
+            PoolUpdateEvent::MeteoraDlmm(update) => update.pool_update_event_type,
         }
     }
 
@@ -197,6 +209,8 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumClmm(update) => update.last_updated,
             PoolUpdateEvent::MeteoraDbc(update) => update.last_updated,
             PoolUpdateEvent::Whirlpool(update) => update.last_updated,
+            PoolUpdateEvent::MeteoraDammV2(update) => update.last_updated,
+            PoolUpdateEvent::MeteoraDlmm(update) => update.last_updated,
         }
     }
 
@@ -210,6 +224,8 @@ impl PoolUpdateEvent {
             PoolUpdateEvent::RaydiumClmm(update) => update.additional_event_type,
             PoolUpdateEvent::MeteoraDbc(update) => update.additional_event_type,
             PoolUpdateEvent::Whirlpool(update) => update.additional_event_type,
+            PoolUpdateEvent::MeteoraDammV2(update) => update.additional_event_type,
+            PoolUpdateEvent::MeteoraDlmm(update) => update.additional_event_type,
         }
     }
 }
@@ -234,6 +250,8 @@ impl Default for AggregatorConfig {
             enable_raydium_amm_v4: true,
             enable_orca_whirlpools: true,
             enable_meteora_dbc: true,
+            enable_meteora_dammv2: true,
+            enable_meteora_dlmm: true,
         }
     }
 }

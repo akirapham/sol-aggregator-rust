@@ -8,103 +8,100 @@ license = "MIT"
 
 [dependencies]
 # Solana dependencies
-solana-client = { workspace = true }
-solana-sdk = { workspace = true }
-solana-program = { workspace = true }
-solana-account-decoder = { workspace = true }
-anchor-client = { workspace = true }
-anchor-lang = { workspace = true }
+solana-client = { workspace = true}
+solana-sdk = { workspace = true}
+solana-program = { workspace = true}
+solana-account-decoder = { workspace = true}
+anchor-client = { workspace = true}
+anchor-lang = { workspace = true}
 
-tonic = { workspace = true }
-tonic-health = { workspace = true }
-prost = { workspace = true }
+tonic = { workspace = true}
+tonic-health = { workspace = true}
+prost = { workspace = true}
 
 # Serialization and async
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true}
 tokio = { workspace = true, features = ["full"] }
-tokio-stream = { workspace = true }
-async-trait = { workspace = true }
-chrono = { workspace = true }
+tokio-stream = { workspace = true}
+async-trait = { workspace = true}
 
 # HTTP client for RPC calls (minimal usage)
 reqwest = { workspace = true, features = ["json"] }
 
 # Error handling
-anyhow = { workspace = true }
-thiserror = { workspace = true }
+anyhow = { workspace = true}
+thiserror = { workspace = true}
 
 # Math and decimal handling
-rust_decimal = { workspace = true }
-num-traits = { workspace = true }
+rust_decimal = { workspace = true}
+num-traits = { workspace = true}
 
 # Futures for async operations
-futures = { workspace = true }
+futures = { workspace = true}
 
 # Environment variable support
-dotenv = { workspace = true }
-envy = { workspace = true }
+dotenv = { workspace = true}
+envy = { workspace = true}
 
 # Logging
-log = { workspace = true }
-env_logger = { workspace = true }
+log = { workspace = true}
+env_logger = { workspace = true}
 
 # Base58 encoding for Solana addresses
-bs58 = { workspace = true }
+bs58 = { workspace = true}
 
 # Base64 encoding for auth
-base64 = { workspace = true }
+base64 = { workspace = true}
 
 # Borsh serialization (used by many Solana programs)
-borsh = { workspace = true }
+borsh = { workspace = true}
 serde_with = { version = "3.0", features = ["macros"] }
 
 # Spl token program
-spl-token = { workspace = true }
+spl-token = { workspace = true}
 
-solana-streamer-sdk = { workspace = true }
-
-spl-token-2022 = { workspace = true }
-
-solana-commitment-config = { workspace = true }
-solana-compute-budget = { workspace = true }
+solana-streamer-sdk = { workspace = true}
+chrono = { workspace = true }
+spl-associated-token-account = { workspace = true }
+solana-address = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
-yellowstone-grpc-proto = { workspace = true }
+dashmap = { workspace = true }
+once_cell = { workspace = true }
+dynamic_bonding_curve = { workspace = true }
+dynamic_bonding_curve_sdk = { workspace = true }
+cp-amm = { workspace = true }
+cp-amm-sdk = { workspace = true }
+meteora_dlmm_sdk = { workspace = true }
 
-axum = { workspace = true }
+spl-token-2022 = { workspace = true}
+
+solana-commitment-config = { workspace = true}
+yellowstone-grpc-proto = { workspace = true}
+
+axum = { workspace = true}
 uuid = { workspace = true, features = ["v4"] }
-tower = { workspace = true }
+tower = { workspace = true}
 tower-http = { workspace = true, features = ["cors", "trace"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing = { workspace = true}
+tracing-subscriber = { workspace = true}
 redis = { workspace = true, optional = true }
 rocksdb = { workspace = true }
 bincode = { workspace = true }
 # Anchor program dependencies for specific DEXs
 # These will be added as we implement each DEX
 
-tokio-tungstenite = { workspace = true }
-url = { workspace = true }
-futures-util = { workspace = true }
+tokio-tungstenite = { workspace = true}
+url = { workspace = true}
+futures-util = { workspace = true}
 validator = { workspace = true, features = ["derive"] }
 sol-trade-sdk = { workspace = true }
 rug = { workspace = true }
 serde-big-array = { workspace = true }
 toml = { workspace = true }
-binance-price-stream = { path = "../crates/binance-price-stream" }
-uint = "0.10.0"
-spl-associated-token-account = { workspace = true }
-solana-address = { workspace = true }
+binance-price-stream = { workspace = true}
 orca_whirlpools_core = { workspace = true }
-dynamic_bonding_curve_sdk = { workspace = true }
-dynamic_bonding_curve = { workspace = true }
-cp-amm = { workspace = true }
-cp-amm-sdk = { workspace = true }
-meteora_dlmm_sdk = { workspace = true }
-arrayref = { version = "0.3.6" }
-spl-memo = "6.0.0"
-dashmap.workspace = true
-once_cell = "1.21.3"
+uint = "0.10.0"
 
 [features]
 default = ["bincode", "serde"]
@@ -112,5 +109,5 @@ bincode = []
 serde = []
 
 [dev-dependencies]
-tokio-test = { workspace = true }
-env_logger = { workspace = true }
+tokio-test = { workspace = true}
+env_logger = { workspace = true}

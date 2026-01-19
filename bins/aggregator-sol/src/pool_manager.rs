@@ -1,13 +1,13 @@
 use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
+use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
-use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{
-    DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig,
-    RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig, WhirlpoolPoolState,
-    WhirlpoolPoolUpdate, dbc, MeteoraDlmmPoolUpdate,
+    dbc, DexType, GetAmmConfig, MeteoraDlmmPoolUpdate, PoolState, PoolUpdateEventType,
+    RaydiumClmmAmmConfig, RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig,
+    WhirlpoolPoolState, WhirlpoolPoolUpdate,
 };
 use crate::types::Token;
 use crate::types::{AggregatorConfig, ChainStateUpdate, PoolUpdateEvent};
@@ -248,7 +248,9 @@ impl PoolStateManager {
     }
 
     /// Get DBC config cache for caching configs from events
-    pub fn get_dbc_config_cache(&self) -> Arc<RwLock<HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>>> {
+    pub fn get_dbc_config_cache(
+        &self,
+    ) -> Arc<RwLock<HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>>> {
         Arc::clone(&self.dbc_configs)
     }
 
@@ -389,7 +391,8 @@ impl PoolStateManager {
                 rpc_client.clone(),
                 WhirlpoolPoolState::get_program_id(),
             ));
-            let meteora_dlmm_fetcher = Arc::new(MeteoraDlmmBinArrayFetcher::new(rpc_client.clone()));
+            let meteora_dlmm_fetcher =
+                Arc::new(MeteoraDlmmBinArrayFetcher::new(rpc_client.clone()));
             loop {
                 ticker.tick().await;
 
@@ -570,11 +573,9 @@ impl PoolStateManager {
                                                     let mut tick_synced = tick_synced_pools_c.lock().await;
                                                     tick_synced.insert(pool_id);
                                                 }
-                                                
                                                 bin_arrays.iter().for_each(|bin_array| {
                                                     let mut bin_arrays_map = HashMap::new();
                                                     bin_arrays_map.insert(bin_array.index as i32, bin_array.clone());
-                                                    
                                                     let event = PoolUpdateEvent::MeteoraDlmm(MeteoraDlmmPoolUpdate {
                                                         slot: 0,
                                                         transaction_index: None,
@@ -676,7 +677,7 @@ impl PoolStateManager {
                         v
                     }
                 };
-                
+
                 let draineds: Vec<PoolUpdateEvent> = {
                     let mut buf = pending.lock().await;
                     if buf.is_empty() {
@@ -695,7 +696,7 @@ impl PoolStateManager {
                 let count_account = draineds_account_event.len();
                 let count_normal = draineds.len();
                 let total_count = count_account + count_normal;
-                
+
                 // bounded concurrency (hybrid)
                 let concurrency_limit = 64usize;
 
@@ -704,7 +705,7 @@ impl PoolStateManager {
                     let tokens = arbitrage_monitored_tokens.read().await;
                     tokens.clone()
                 };
-                
+
                 // Process account events and normal events in parallel using join!
                 let apply_start = std::time::Instant::now();
                 let (_, _) = tokio::join!(
@@ -793,7 +794,7 @@ impl PoolStateManager {
                 window_total_apply_duration =
                     window_total_apply_duration.saturating_add(total_apply_ns);
                 window_iterations = window_iterations.saturating_add(1);
-                
+
                 // Emit aggregated log once every 10s summarizing the last window
                 if window_start.elapsed() >= Duration::from_secs(10) {
                     let avg_per_update_ms = if window_total_events > 0 {
@@ -962,21 +963,21 @@ impl PoolStateManager {
                     let mut configs_write = dbc_configs.write().await;
                     configs_write.insert(dbc_update.config, config.clone());
                     log::info!("Cached DBC config: {}", dbc_update.config);
-                    
+
                     // If this is a config-only update (no pool data), return early
                     if dbc_update.base_mint == Pubkey::default() {
                         return;
                     }
                 }
             }
-            
+
             // If this is a pool update without config, try to fetch config from RPC
             if !dbc_update.is_config_update && dbc_update.pool_config.is_none() {
                 let config_exists = {
                     let configs_read = dbc_configs.read().await;
                     configs_read.contains_key(&dbc_update.config)
                 };
-                
+
                 if !config_exists {
                     log::info!("Fetching DBC config from RPC: {}", dbc_update.config);
                     match fetch_account_data(&rpc_client, &dbc_update.config).await {
@@ -994,11 +995,19 @@ impl PoolStateManager {
                                     }
                                 }
                             } else {
-                                log::error!("DBC config account {} data too short: {} bytes", dbc_update.config, data.len());
+                                log::error!(
+                                    "DBC config account {} data too short: {} bytes",
+                                    dbc_update.config,
+                                    data.len()
+                                );
                             }
                         }
                         Err(e) => {
-                            log::error!("Failed to fetch DBC config {} from RPC: {:?}", dbc_update.config, e);
+                            log::error!(
+                                "Failed to fetch DBC config {} from RPC: {:?}",
+                                dbc_update.config,
+                                e
+                            );
                         }
                     }
                 }
@@ -1008,13 +1017,13 @@ impl PoolStateManager {
         let pool_address = update.address();
         let mut pool_with_ticks = false;
         let mut pool_dex_type: Option<DexType> = None;
-        
+
         // check if pool exists
         let pool_exists = {
             let pools_read = pools.read().await;
             pools_read.contains_key(&pool_address)
         };
-        
+
         if pool_exists {
             // Get the pool's individual mutex (no blocking other pools)
             let pool_mutex = {

@@ -31,4 +31,3 @@ pub const SYSTEM_PROGRAM_META: solana_sdk::instruction::AccountMeta =
     };
 pub const WSOL_TOKEN_ACCOUNT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 pub const USDC_TOKEN_ACCOUNT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-

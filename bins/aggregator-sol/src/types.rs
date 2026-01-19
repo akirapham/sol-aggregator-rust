@@ -5,9 +5,9 @@ use solana_sdk::pubkey::Pubkey;
 use crate::{
     error::Result,
     pool_data_types::{
-        BonkPoolUpdate, DbcPoolUpdate, DexType, PoolUpdateEventType, PumpSwapPoolUpdate,
-        PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
-        WhirlpoolPoolUpdate, MeteoraDammV2PoolUpdate, MeteoraDlmmPoolUpdate,
+        BonkPoolUpdate, DbcPoolUpdate, DexType, MeteoraDammV2PoolUpdate, MeteoraDlmmPoolUpdate,
+        PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
+        RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate, WhirlpoolPoolUpdate,
     },
 };
 

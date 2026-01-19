@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arbitrade-eth-config
+  namespace: aggregators
+data:
+  RUST_LOG: "info"
+  ARBITRADE_PORT: "3001"
+  DEX_PRICE_STREAM: "ws://amm-eth-service:8080"
+  DEX_SUBSCRIPTION_TOPIC: "token_price"
+  DEX_RECONNECT_DELAY_SECS: "5"
+  DEX_PING_INTERVAL_SECS: "30"
+  DEX_BATCH_SIZE: "100"
+  DEX_BATCH_TIMEOUT_MS: "500"
+  MIN_PERCENT_DIFF: "0.5"
+  ARB_AMOUNT_USDT: "200"
+  ARB_COOLDOWN_SECS: "3600"
+  ENABLED_CEXES: "MEXC,BYBIT,KUCOIN,BITGET,GATE"
+  DISABLED_CEXES: ""
+  KYBER_CLIENT_ID: "my-trade-eth"

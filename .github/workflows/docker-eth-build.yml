@@ -1,0 +1,113 @@
+name: ETH Build Check
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'docker/Dockerfile.eth'
+      - 'docker-compose.eth.yml'
+      - 'bins/amm-eth/**'
+      - 'bins/arbitrade-eth/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/docker-eth-build.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'docker/Dockerfile.eth'
+      - 'docker-compose.eth.yml'
+      - 'bins/amm-eth/**'
+      - 'bins/arbitrade-eth/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/docker-eth-build.yml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code with PAT
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          submodules: recursive
+
+      - name: Configure Git for private submodules
+        run: |
+          git config --global url."https://${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            libprotobuf-dev \
+            pkg-config \
+            libssl-dev \
+            libclang-dev \
+            clang \
+            > /dev/null 2>&1
+          echo "✅ Build dependencies installed"
+
+      # - name: Run cargo fmt check (ignore submodule)
+      #   run: |
+      #     set -o pipefail
+      #     # Run fmt and capture output; don't fail this shell directly so we can inspect which files differ
+      #     cargo fmt --all -- --check 2>&1 | tee fmt_output.txt || true
+      #     # Look for rustfmt diffs which start with 'Diff in '
+      #     diffs=$(grep -E '^Diff in ' fmt_output.txt || true)
+      #     if [ -z "$diffs" ]; then
+      #       echo "✅ cargo fmt: no diffs"
+      #       exit 0
+      #     fi
+      #     # If any diff is outside the submodule, fail. Allow diffs only under crates/solana-streamer
+      #     non_submodule=$(echo "$diffs" | grep -v 'crates/solana-streamer' || true)
+      #     if [ -n "$non_submodule" ]; then
+      #       echo "Formatting changes outside submodule detected:" >&2
+      #       echo "$non_submodule" >&2
+      #       echo "Full fmt output:" >&2
+      #       cat fmt_output.txt >&2
+      #       exit 1
+      #     fi
+      #     echo "Only formatting diffs are within crates/solana-streamer; continuing."
+
+      # - name: Run cargo clippy (ignore submodule)
+      #   run: |
+      #     set -o pipefail
+      #     # Run clippy and capture output; allow non-zero to inspect location lines
+      #     cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee clippy_output.txt || true
+      #     # clippy reports locations with lines that start with '  --> path:line:col'
+      #     locations=$(grep -E '^\s*-->' clippy_output.txt || true)
+      #     # If no location lines, check for any 'error:' occurrences
+      #     if [ -z "$locations" ]; then
+      #       errors=$(grep -E '^error:' clippy_output.txt || true)
+      #       if [ -z "$errors" ]; then
+      #         echo "✅ cargo clippy: no errors/warnings"
+      #         exit 0
+      #       fi
+      #     fi
+      #     non_submodule=$(echo "$locations" | grep -v 'crates/solana-streamer' || true)
+      #     if [ -n "$non_submodule" ]; then
+      #       echo "Clippy issues outside submodule detected:" >&2
+      #       echo "$non_submodule" >&2
+      #       echo "Full clippy output:" >&2
+      #       cat clippy_output.txt >&2
+      #       exit 1
+      #     fi
+      #     echo "Only clippy issues are within crates/solana-streamer; continuing."
+
+      - name: Build amm-eth
+        run: cargo build --release --bin amm-eth
+
+      - name: Build arbitrade-eth
+        run: cargo build --release --bin arbitrade-eth

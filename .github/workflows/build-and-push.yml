@@ -1,0 +1,138 @@
+name: Build and Push
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'bins/amm-eth/**'
+      - 'bins/arbitrade-eth/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'docker/Dockerfile.eth'
+      - '.github/workflows/build-and-push.yml'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code with PAT and submodules
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          submodules: recursive
+
+      - name: Configure Git for private submodules
+        run: |
+          git config --global url."https://${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # ===== DOCKER BUILD STAGE =====
+      # (Dockerfile handles all cargo builds, checks, and dependency installation)
+
+      - name: Validate registry configuration
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          MISSING_SECRETS=""
+
+          if [ -z "$REGISTRY_URL" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}  - REGISTRY_URL\n"
+          fi
+          if [ -z "$REGISTRY_USERNAME" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}  - REGISTRY_USERNAME\n"
+          fi
+          if [ -z "$REGISTRY_PASSWORD" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}  - REGISTRY_PASSWORD\n"
+          fi
+
+          if [ -n "$MISSING_SECRETS" ]; then
+            echo "❌ ERROR: Missing required GitHub Secrets:"
+            echo -e "$MISSING_SECRETS"
+            echo ""
+            echo "Please add the following secrets to your GitHub repository:"
+            echo "Settings > Secrets and variables > Actions > New repository secret"
+            echo ""
+            echo "Required secrets:"
+            echo "  - REGISTRY_URL: Your private registry URL (e.g., https://registry.example.com)"
+            echo "  - REGISTRY_USERNAME: Your registry username"
+            echo "  - REGISTRY_PASSWORD: Your registry password or token"
+            exit 1
+          fi
+
+          echo "✅ Registry configuration validated"
+          echo "Registry: $REGISTRY_URL"
+
+      - name: Build Docker images
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+
+          # Remove /v2 suffix if present (it's only for API, not for image tags)
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|/v2$||')
+
+          docker build \
+            --file docker/Dockerfile.eth \
+            --build-arg BIN_NAME=amm-eth \
+            --tag "${REGISTRY_HOST}/amm-eth:${COMMIT_SHA}" \
+            --tag "${REGISTRY_HOST}/amm-eth:latest" \
+            .
+
+          docker build \
+            --file docker/Dockerfile.eth \
+            --build-arg BIN_NAME=arbitrade-eth \
+            --tag "${REGISTRY_HOST}/arbitrade-eth:${COMMIT_SHA}" \
+            --tag "${REGISTRY_HOST}/arbitrade-eth:latest" \
+            .      # ===== LOGIN TO PRIVATE REGISTRY =====
+
+      - name: Login to private Docker registry
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USERNAME" --password-stdin "$REGISTRY_URL"
+
+      # ===== PUSH TO REGISTRY =====
+
+      - name: Push images to private registry
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+
+          # Remove /v2 suffix if present (it's only for API, not for image tags)
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|/v2$||')
+
+          echo "Pushing images to private registry..."
+          docker push "${REGISTRY_HOST}/amm-eth:${COMMIT_SHA}"
+          docker push "${REGISTRY_HOST}/amm-eth:latest"
+          docker push "${REGISTRY_HOST}/arbitrade-eth:${COMMIT_SHA}"
+          docker push "${REGISTRY_HOST}/arbitrade-eth:latest"
+          echo "✅ Images pushed successfully"      
+      - name: Logout from registry
+        if: always()
+        run: docker logout
+
+      - name: Build Success Notification
+        if: success()
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          echo "✅ Images built and pushed successfully!"
+          echo ""
+          echo "Images available on registry:"
+          echo "  • ${REGISTRY_URL}/amm-eth:latest"
+          echo "  • ${REGISTRY_URL}/arbitrade-eth:latest"
+          echo ""
+          echo "Next: Deploy to K8s using the 'deploy-to-k8s' workflow"
+          

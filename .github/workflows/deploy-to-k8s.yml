@@ -1,0 +1,242 @@
+name: Deploy to K8s
+
+on:
+  workflow_run:
+    workflows: ["Build and Push"]
+    types:
+      - completed
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.K8S_KUBECONFIG_B64 }}
+        run: |
+          mkdir -p ~/.kube
+          echo $KUBECONFIG_B64 | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl cluster-info
+
+      - name: Create private registry image pull secret
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          # Extract registry host (remove https://, http://, and /v2 if present)
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|^https://||;s|^http://||;s|/v2$||')
+
+          kubectl create secret docker-registry regcred \
+            -n aggregators \
+            --docker-server="${REGISTRY_HOST}" \
+            --docker-username="${REGISTRY_USERNAME}" \
+            --docker-password="${REGISTRY_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "✅ Registry credentials secret created"
+          echo "Registry host: ${REGISTRY_HOST}"
+
+      - name: Substitute registry URL in manifests
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          # Create temporary directory for modified manifests
+          mkdir -p /tmp/k8s-manifests
+
+          # Substitute REGISTRY_URL placeholder in deployment manifests
+          sed "s|\${REGISTRY_URL}|${REGISTRY_URL}|g" k8s-manifests/amm-eth-deployment.yaml > /tmp/k8s-manifests/amm-eth-deployment.yaml
+          sed "s|\${REGISTRY_URL}|${REGISTRY_URL}|g" k8s-manifests/arbitrade-eth-deployment.yaml > /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
+
+          echo "✅ Manifests substituted with registry URL: ${REGISTRY_URL}"
+
+      - name: Apply namespace and ConfigMaps
+        run: |
+          # Create namespace
+          kubectl apply -f k8s-manifests/namespace.yaml
+
+          # Apply ConfigMaps (non-sensitive config from Git)
+          kubectl apply -f k8s-manifests/amm-eth-configmap.yaml
+          kubectl apply -f k8s-manifests/arbitrade-eth-configmap.yaml
+
+      - name: Create amm-eth secrets
+        env:
+          ETH_RPC_URL: ${{ secrets.K8S_ETH_RPC_URL }}
+          ETH_WEBSOCKET_URL: ${{ secrets.K8S_ETH_WEBSOCKET_URL }}
+        run: |
+          kubectl create secret generic amm-eth-secrets \
+            -n aggregators \
+            --from-literal=ETH_RPC_URL=$ETH_RPC_URL \
+            --from-literal=ETH_WEBSOCKET_URL=$ETH_WEBSOCKET_URL \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create arbitrade-eth secrets
+        env:
+          # Blockchain
+          ETH_RPC_URL: ${{ secrets.K8S_ETH_RPC_URL }}
+          ETH_PRIVATE_KEY: ${{ secrets.K8S_ETH_PRIVATE_KEY }}
+
+          # Dashboard
+          DASHBOARD_USERNAME: ${{ secrets.K8S_DASHBOARD_USERNAME }}
+          DASHBOARD_PASSWORD: ${{ secrets.K8S_DASHBOARD_PASSWORD }}
+
+          # MEXC
+          MEXC_API_KEY: ${{ secrets.K8S_MEXC_API_KEY }}
+          MEXC_API_SECRET: ${{ secrets.K8S_MEXC_API_SECRET }}
+          MEXC_ERC20_DEPOSIT_ADDRESS: ${{ secrets.K8S_MEXC_ERC20_DEPOSIT_ADDRESS }}
+
+          # Bybit
+          BYBIT_API_KEY: ${{ secrets.K8S_BYBIT_API_KEY }}
+          BYBIT_API_SECRET: ${{ secrets.K8S_BYBIT_API_SECRET }}
+          BYBIT_ERC20_DEPOSIT_ADDRESS: ${{ secrets.K8S_BYBIT_ERC20_DEPOSIT_ADDRESS }}
+
+          # KuCoin
+          KUCOIN_API_KEY: ${{ secrets.K8S_KUCOIN_API_KEY }}
+          KUCOIN_API_SECRET: ${{ secrets.K8S_KUCOIN_API_SECRET }}
+          KUCOIN_API_PASSPHRASE: ${{ secrets.K8S_KUCOIN_API_PASSPHRASE }}
+          KUCOIN_ERC20_DEPOSIT_ADDRESS: ${{ secrets.K8S_KUCOIN_ERC20_DEPOSIT_ADDRESS }}
+
+          # Bitget
+          BITGET_API_KEY: ${{ secrets.K8S_BITGET_API_KEY }}
+          BITGET_API_SECRET: ${{ secrets.K8S_BITGET_API_SECRET }}
+          BITGET_API_PASSPHRASE: ${{ secrets.K8S_BITGET_API_PASSPHRASE }}
+          BITGET_ERC20_DEPOSIT_ADDRESS: ${{ secrets.K8S_BITGET_ERC20_DEPOSIT_ADDRESS }}
+
+          # Gate.io
+          GATE_API_KEY: ${{ secrets.K8S_GATE_API_KEY }}
+          GATE_API_SECRET: ${{ secrets.K8S_GATE_API_SECRET }}
+        run: |
+          kubectl create secret generic arbitrade-eth-secrets \
+            -n aggregators \
+            --from-literal=ETH_RPC_URL=$ETH_RPC_URL \
+            --from-literal=ETH_PRIVATE_KEY=$ETH_PRIVATE_KEY \
+            --from-literal=DASHBOARD_USERNAME=$DASHBOARD_USERNAME \
+            --from-literal=DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD \
+            --from-literal=MEXC_API_KEY=$MEXC_API_KEY \
+            --from-literal=MEXC_API_SECRET=$MEXC_API_SECRET \
+            --from-literal=MEXC_ERC20_DEPOSIT_ADDRESS=$MEXC_ERC20_DEPOSIT_ADDRESS \
+            --from-literal=BYBIT_API_KEY=$BYBIT_API_KEY \
+            --from-literal=BYBIT_API_SECRET=$BYBIT_API_SECRET \
+            --from-literal=BYBIT_ERC20_DEPOSIT_ADDRESS=$BYBIT_ERC20_DEPOSIT_ADDRESS \
+            --from-literal=KUCOIN_API_KEY=$KUCOIN_API_KEY \
+            --from-literal=KUCOIN_API_SECRET=$KUCOIN_API_SECRET \
+            --from-literal=KUCOIN_API_PASSPHRASE=$KUCOIN_API_PASSPHRASE \
+            --from-literal=KUCOIN_ERC20_DEPOSIT_ADDRESS=$KUCOIN_ERC20_DEPOSIT_ADDRESS \
+            --from-literal=BITGET_API_KEY=$BITGET_API_KEY \
+            --from-literal=BITGET_API_SECRET=$BITGET_API_SECRET \
+            --from-literal=BITGET_API_PASSPHRASE=$BITGET_API_PASSPHRASE \
+            --from-literal=BITGET_ERC20_DEPOSIT_ADDRESS=$BITGET_ERC20_DEPOSIT_ADDRESS \
+            --from-literal=GATE_API_KEY=$GATE_API_KEY \
+            --from-literal=GATE_API_SECRET=$GATE_API_SECRET \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply PVCs
+        run: |
+          kubectl apply -f k8s-manifests/amm-eth-pvc.yaml
+          kubectl apply -f k8s-manifests/arbitrade-eth-pvc.yaml
+
+      - name: Prepare and apply deployments
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        run: |
+          # Remove /v2 suffix if present and extract registry host
+          REGISTRY_HOST=$(echo "${REGISTRY_URL}" | sed 's|^https://||;s|^http://||;s|/v2$||')
+
+          # Substitute REGISTRY_URL in deployment manifests using envsubst
+          mkdir -p /tmp/k8s-manifests
+          export REGISTRY_URL="${REGISTRY_HOST}"
+          envsubst < k8s-manifests/amm-eth-deployment.yaml > /tmp/k8s-manifests/amm-eth-deployment.yaml
+          envsubst < k8s-manifests/arbitrade-eth-deployment.yaml > /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
+
+          echo "✅ Manifests prepared with registry host: ${REGISTRY_URL}"
+
+          # Apply the deployments from the temporary directory
+          kubectl apply -f /tmp/k8s-manifests/amm-eth-deployment.yaml
+          kubectl apply -f /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
+
+          # Apply the substituted manifests
+          kubectl apply -f /tmp/k8s-manifests/amm-eth-deployment.yaml
+          kubectl apply -f /tmp/k8s-manifests/arbitrade-eth-deployment.yaml
+
+      - name: Apply services
+        run: |
+          kubectl apply -f k8s-manifests/amm-eth-service.yaml
+          kubectl apply -f k8s-manifests/arbitrade-eth-service.yaml
+
+      - name: Wait for rollout
+        run: |
+          echo "Waiting for amm-eth rollout..."
+          if kubectl rollout status deployment/amm-eth -n aggregators --timeout=10m; then
+            echo "✅ amm-eth deployed successfully"
+          else
+            echo "⚠️  amm-eth rollout timeout - checking status..."
+            kubectl describe pods -n aggregators -l app=amm-eth | tail -50
+          fi
+
+          echo ""
+          echo "Waiting for arbitrade-eth rollout..."
+          if kubectl rollout status deployment/arbitrade-eth -n aggregators --timeout=10m; then
+            echo "✅ arbitrade-eth deployed successfully"
+          else
+            echo "⚠️  arbitrade-eth rollout timeout - checking status..."
+            kubectl describe pods -n aggregators -l app=arbitrade-eth | tail -50
+          fi
+
+      - name: Verify deployment
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n aggregators
+
+          echo ""
+          echo "=== Services ==="
+          kubectl get svc -n aggregators
+
+          echo ""
+          echo "=== Secrets (values hidden) ==="
+          kubectl get secrets -n aggregators
+
+          echo ""
+          echo "=== ConfigMaps ==="
+          kubectl get configmaps -n aggregators
+
+          echo ""
+          echo "=== Recent Events ==="
+          kubectl get events -n aggregators --sort-by='.lastTimestamp' | tail -15
+
+      - name: Deployment Success Notification
+        if: success()
+        run: |
+          echo "✅ Deployment successful!"
+          echo ""
+          echo "Your aggregators are now live:"
+          echo "  • amm-eth: ws://your-server-ip:8080"
+          echo "  • arbitrade-eth: http://your-server-ip:3001"
+          echo ""
+          echo "Check logs with:"
+          echo "  kubectl logs -n aggregators deployment/amm-eth -f"
+          echo "  kubectl logs -n aggregators deployment/arbitrade-eth -f"
+
+      - name: Deployment Failure Notification
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo ""
+          echo "Check the logs above for details."
+          echo ""
+          echo "Debug with:"
+          echo "  kubectl describe pods -n aggregators"
+          echo "  kubectl logs -n aggregators deployment/amm-eth"
+          echo "  kubectl logs -n aggregators deployment/arbitrade-eth"

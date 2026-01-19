@@ -42,13 +42,12 @@ impl<P: ethers::providers::Middleware + 'static> UniswapV2Quoter<P> {
 
         // Create contract instance using abigen
         let router = UniswapV2Router::new(router_addr, self.provider.clone());
-
         // Call getAmountsOut - abigen handles all ABI encoding
         let amounts = router
-            .get_amounts_out(amount_in, path)
+            .get_amounts_out(amount_in, path.clone())
             .call()
             .await
-            .map_err(|e| QuoteError::RpcError(format!("Router call failed: {}", e)))?;
+            .map_err(|e| QuoteError::RpcError(format!("Router call failed with amount_in = {}, path = {:?}, router = {:?} : error = {}", amount_in, path, router_addr, e)))?;
 
         // Return the last amount (final output)
         amounts.last().copied().ok_or(QuoteError::ContractError(

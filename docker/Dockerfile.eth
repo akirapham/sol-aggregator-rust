@@ -1,0 +1,44 @@
+# Build stage
+FROM rust:1.88 AS builder
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    libprotobuf-dev \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    libclang-dev \
+    clang \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Cargo files first for dependency caching
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY bins ./bins
+
+# Build dependencies first (this layer caches dependencies)
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --bin amm-eth --bin arbitrade-eth && \
+    cp /app/target/release/amm-eth /amm-eth && \
+    cp /app/target/release/arbitrade-eth /arbitrade-eth
+
+# Runtime
+FROM debian:bookworm-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binaries from builder
+COPY --from=builder /amm-eth /usr/local/bin/amm-eth
+COPY --from=builder /arbitrade-eth /usr/local/bin/arbitrade-eth
+
+# Use CMD instead of ENTRYPOINT so docker-compose command can override it
+CMD ["/usr/local/bin/amm-eth"]

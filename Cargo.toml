@@ -1,18 +1,12 @@
 [workspace]
 resolver = "2"
-members = [
-  "crates/solana-streamer",
-  "crates/mexc-proto",
-  "crates/eth-dex-quote",
-  "aggregator-sol",
-  "arbitrade",
-  "amm-eth",
-  "crates/binance-price-stream",
-  "arbitrade-eth",
-  "arbitrade-dex-eth",
-  "crates/cex-price-provider",
+  "crates/*",
+  "bins/*",
 ]
-default-members = ["aggregator-sol"]
+default-members = [
+  "crates/*",
+  "bins/*"
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -122,3 +116,7 @@ spl-token-2022 = { version = "9.0.0", default-features = false, features = [
   "no-entrypoint",
 ] }
 tokio-tungstenite = { version = "0.27.0", features = ["native-tls", "connect"] }
+binance-price-stream = { path = "./crates/binance-price-stream" }
+eth-dex-quote = { path = "./crates/eth-dex-quote" }
+mexc-proto = { path = "./crates/mexc-proto" }
+cex-price-provider = { path = "./crates/cex-price-provider" }

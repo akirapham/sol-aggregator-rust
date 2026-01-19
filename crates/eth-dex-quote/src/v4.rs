@@ -1,9 +1,45 @@
 use crate::types::{DexType, QuoteError, Result, SwapQuote};
 use async_trait::async_trait;
 use ethers::prelude::*;
-use ethers::types::transaction::eip2718::TypedTransaction;
-use ethers::utils::keccak256;
 use std::sync::Arc;
+
+// Generate contract bindings for Uniswap V4 Quoter
+abigen!(
+    UniswapV4QuoterContract,
+    r#"[
+        {
+            "name": "quoteExactInputSingle",
+            "type": "function",
+            "stateMutability": "nonpayable",
+            "inputs": [
+                {
+                    "name": "params",
+                    "type": "tuple",
+                    "components": [
+                        {
+                            "name": "poolKey",
+                            "type": "tuple",
+                            "components": [
+                                {"name": "currency0", "type": "address"},
+                                {"name": "currency1", "type": "address"},
+                                {"name": "fee", "type": "uint24"},
+                                {"name": "tickSpacing", "type": "int24"},
+                                {"name": "hooks", "type": "address"}
+                            ]
+                        },
+                        {"name": "zeroForOne", "type": "bool"},
+                        {"name": "exactAmount", "type": "uint128"},
+                        {"name": "hookData", "type": "bytes"}
+                    ]
+                }
+            ],
+            "outputs": [
+                {"name": "amountOut", "type": "uint256"},
+                {"name": "gasEstimate", "type": "uint256"}
+            ]
+        }
+    ]"#
+);
 
 #[async_trait]
 pub trait V4Quoter: Send + Sync {
@@ -14,6 +50,7 @@ pub trait V4Quoter: Send + Sync {
         amount_in: U256,
         fee_tier: u32,
         tick_spacing: i32,
+        pool_id: Option<String>,
         hooks: Address,
     ) -> Result<SwapQuote>;
 }
@@ -40,91 +77,47 @@ impl<P: ethers::providers::Middleware + 'static> UniswapV4Quoter<P> {
         amount_in: U256,
         fee: u32,
         tick_spacing: i32,
+        pool_id: Option<String>,
         hooks: Address,
     ) -> Result<U256> {
-        // Encode call to quoteExactInputSingle(QuoteExactSingleParams memory params)
-        // Function selector for quoteExactInputSingle
-        let selector = keccak256(
-            "quoteExactInputSingle((address,address,uint24,int24,address,bool,int256,uint160))",
-        );
-        let selector = [selector[0], selector[1], selector[2], selector[3]];
-
-        let mut call_data = Vec::new();
-        call_data.extend_from_slice(&selector);
+        // Create contract instance using abigen-generated contract binding
+        let quoter_contract =
+            UniswapV4QuoterContract::new(self.quote_router, self.provider.clone());
 
         // Determine swap direction (zeroForOne)
         let zero_for_one = token_in < token_out;
 
-        // Create pool key
+        // Create pool key - currencies must be ordered
         let (currency0, currency1) = if zero_for_one {
             (token_in, token_out)
         } else {
             (token_out, token_in)
         };
 
-        // Encode the tuple params:
-        // (currency0: address, currency1: address, fee: uint24, tickSpacing: int24, hooks: address, zeroForOne: bool, amountSpecified: int256, sqrtPriceLimitX96: uint160)
-
-        // currency0
-        let mut currency0_bytes = [0u8; 32];
-        currency0_bytes[12..].copy_from_slice(&currency0[..]);
-        call_data.extend_from_slice(&currency0_bytes);
-
-        // currency1
-        let mut currency1_bytes = [0u8; 32];
-        currency1_bytes[12..].copy_from_slice(&currency1[..]);
-        call_data.extend_from_slice(&currency1_bytes);
-
-        // fee (uint24) - padded to 32 bytes
-        let mut fee_bytes = [0u8; 32];
-        let fee_be = fee.to_be_bytes();
-        fee_bytes[32 - 3..].copy_from_slice(&fee_be[1..]);
-        call_data.extend_from_slice(&fee_bytes);
-
-        // tickSpacing (int24) - padded to 32 bytes
-        let mut tick_spacing_bytes = [0u8; 32];
-        let ts_be = (tick_spacing as i32).to_be_bytes();
-        tick_spacing_bytes[32 - 3..].copy_from_slice(&ts_be[1..]);
-        call_data.extend_from_slice(&tick_spacing_bytes);
-
-        // hooks (address)
-        let mut hooks_bytes = [0u8; 32];
-        hooks_bytes[12..].copy_from_slice(&hooks[..]);
-        call_data.extend_from_slice(&hooks_bytes);
-
-        // zeroForOne (bool)
-        let mut zero_for_one_bytes = [0u8; 32];
-        if zero_for_one {
-            zero_for_one_bytes[31] = 1;
+        // exactAmount is an unsigned 128-bit integer; ensure amount_in fits
+        if amount_in.bits() > 128 {
+            return Err(QuoteError::RpcError(format!(
+                "amount_in too large for uint128: {} bits",
+                amount_in.bits()
+            )));
         }
-        call_data.extend_from_slice(&zero_for_one_bytes);
 
-        // amountSpecified (int256) - as positive value
-        let amount_specified_bytes: [u8; 32] = amount_in.into();
-        call_data.extend_from_slice(&amount_specified_bytes);
+        // Prepare params matching QuoteExactSingleParams -> (PoolKey, bool zeroForOne, uint128 exactAmount, bytes hookData)
+        let pool_key = (currency0, currency1, fee, tick_spacing, hooks);
+        let exact_amount = amount_in.as_u128(); // Convert U256 to u128
+        let hook_data = Bytes::new(); // Empty hook data
 
-        // sqrtPriceLimitX96 (uint160) = 0
-        call_data.extend_from_slice(&[0u8; 32]);
-
-        let tx: TypedTransaction = TransactionRequest::new()
-            .to(self.quote_router)
-            .data(Bytes::from(call_data))
-            .into();
-
-        let result = self
-            .provider
-            .call(&tx, None)
+        let (amount_out, _gas_estimate) = quoter_contract
+            .quote_exact_input_single((pool_key, zero_for_one, exact_amount, hook_data))
+            .call()
             .await
-            .map_err(|e| QuoteError::RpcError(e.to_string()))?;
-
-        // Result is encoded as [amountOut (32 bytes), gasEstimate (32 bytes)]
-        if result.len() < 64 {
-            return Err(QuoteError::ContractError(
-                "Invalid V4 quoter response length".to_string(),
-            ));
-        }
-
-        let amount_out = U256::from_big_endian(&result[0..32]);
+            .map_err(|e| {
+                log::error!("V4 Quoter call failed: {:?}", e);
+                QuoteError::RpcError(format!(
+                    "V4 Quoter call failed with token_in = {:?}, token_out = {:?}, fee = {}, amount_in = {:?}, quoter = {:?}, hooks = {:?}, tick spacing = {}, pool = {:?}: error = {:?}",
+                    token_in, token_out, fee, amount_in, self.quote_router, hooks, tick_spacing, pool_id, e
+                ))
+            })?;
 
         if amount_out.is_zero() {
             return Err(QuoteError::NoLiquidity);
@@ -143,6 +136,7 @@ impl<P: ethers::providers::Middleware + 'static> V4Quoter for UniswapV4Quoter<P>
         amount_in: U256,
         fee_tier: u32,
         tick_spacing: i32,
+        pool_id: Option<String>,
         hooks: Address,
     ) -> Result<SwapQuote> {
         let amount_out = self
@@ -152,6 +146,7 @@ impl<P: ethers::providers::Middleware + 'static> V4Quoter for UniswapV4Quoter<P>
                 amount_in,
                 fee_tier,
                 tick_spacing,
+                pool_id,
                 hooks,
             )
             .await?;

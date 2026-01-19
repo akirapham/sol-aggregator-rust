@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amm-eth
+  namespace: aggregators
+  labels:
+    app: amm-eth
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: amm-eth
+  template:
+    metadata:
+      labels:
+        app: amm-eth
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: amm-eth
+        image: ${REGISTRY_URL}/amm-eth:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: ws
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: amm-eth-config
+        - secretRef:
+            name: amm-eth-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 2222
+          initialDelaySeconds: 120
+          periodSeconds: 10
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 2222
+          initialDelaySeconds: 60
+          periodSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: rocksdb-data
+          mountPath: /app/rocksdb_data/amm-eth
+      volumes:
+      - name: rocksdb-data
+        persistentVolumeClaim:
+          claimName: amm-eth-pvc

@@ -13,21 +13,21 @@ async fn generate_dashboard_html(state: &AppState) -> String {
     let pool_stats = state.aggregator.get_pool_manager().get_stats().await;
     let arb_config = state.arbitrage_config.read().unwrap();
     let monitored_count = arb_config.monitored_tokens.len();
-    
+
     // Generate Monitored Tokens HTML
     let mut tokens_html = String::new();
     for token in &arb_config.monitored_tokens {
         tokens_html.push_str(&format!(
             "<tr><td>{}</td><td>{}</td></tr>",
-            token.symbol,
-            token.address
+            token.symbol, token.address
         ));
     }
-    
+
     if tokens_html.is_empty() {
-         tokens_html = "<tr><td colspan='2' class='no-data'>No monitored tokens found</td></tr>".to_string();
+        tokens_html =
+            "<tr><td colspan='2' class='no-data'>No monitored tokens found</td></tr>".to_string();
     }
-    
+
     // Generate Settings HTML
     let settings = &arb_config.settings;
     let settings_html = format!(
@@ -77,7 +77,8 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         let mut opp_html = String::new();
         for opp in top_20 {
             use chrono::{DateTime, Utc};
-            let start_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let start_time =
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
             let datetime_utc: DateTime<Utc> = start_time.into();
             let datetime = datetime_utc.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
@@ -107,14 +108,14 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                         )
                 }
             };
-            
+
             // Format dexes string
             let fwd_dex = opp.forward_dexes.join(", ");
             let rev_dex = opp.reverse_dexes.join(", ");
             let route_display = if fwd_dex.is_empty() && rev_dex.is_empty() {
-                 "-".to_string()
+                "-".to_string()
             } else {
-                 format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex)
+                format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex)
             };
 
             opp_html.push_str(&format!(
@@ -140,7 +141,8 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         let mut abn_html = String::new();
         for opp in abnormal_opportunities {
             use chrono::{DateTime, Utc};
-            let start_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let start_time =
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
             let datetime_utc: DateTime<Utc> = start_time.into();
             let datetime = datetime_utc.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
@@ -173,7 +175,15 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 .to_string();
         }
 
-        (total, profit_usdc, all_time_profit_usdc, opp_html, abn_html, settings_html, tokens_html)
+        (
+            total,
+            profit_usdc,
+            all_time_profit_usdc,
+            opp_html,
+            abn_html,
+            settings_html,
+            tokens_html,
+        )
     } else {
         (
             0,

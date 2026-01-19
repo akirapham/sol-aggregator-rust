@@ -74,7 +74,8 @@ pub const PUMPSWAP_GLOBAL_ACCOUNT_META: solana_sdk::instruction::AccountMeta =
         is_writable: false,
     };
 
-pub const PUMPSWAP_EVENT_AUTHORITY: Pubkey = pubkey!("GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR");
+pub const PUMPSWAP_EVENT_AUTHORITY: Pubkey =
+    pubkey!("GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR");
 pub const PUMPSWAP_EVENT_AUTHORITY_META: solana_sdk::instruction::AccountMeta =
     solana_sdk::instruction::AccountMeta {
         pubkey: PUMPSWAP_EVENT_AUTHORITY,

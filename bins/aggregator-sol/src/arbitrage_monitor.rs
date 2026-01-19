@@ -508,7 +508,10 @@ impl ArbitrageMonitor {
                     ..Default::default()
                 };
 
-                match rpc_client.simulate_transaction_with_config(&transaction, sim_config).await {
+                match rpc_client
+                    .simulate_transaction_with_config(&transaction, sim_config)
+                    .await
+                {
                     Ok(simulation) => {
                         if let Some(err) = simulation.value.err {
                             // Simulation failed

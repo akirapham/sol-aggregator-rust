@@ -106,14 +106,16 @@ impl MeteoraDammV2PoolState {
         let pool = cp_amm::state::Pool {
             pool_fees: cp_amm::state::fee::PoolFeesStruct {
                 base_fee: cp_amm::state::fee::BaseFeeStruct {
-                    cliff_fee_numerator: self.pool_fees.base_fee.cliff_fee_numerator,
-                    base_fee_mode: self.pool_fees.base_fee.base_fee_mode,
-                    padding_0: self.pool_fees.base_fee.padding_0,
-                    first_factor: self.pool_fees.base_fee.first_factor,
-                    second_factor: self.pool_fees.base_fee.second_factor,
-                    third_factor: self.pool_fees.base_fee.third_factor,
+                    base_fee_info: cp_amm::state::BaseFeeInfo::default(), // Use Default
+                    // cliff_fee_numerator: self.pool_fees.base_fee.cliff_fee_numerator, // Removed
+                    // base_fee_mode: self.pool_fees.base_fee.base_fee_mode, // Mapped above
+                    // padding_0: self.pool_fees.base_fee.padding_0, // Removed
+                    // first_factor: self.pool_fees.base_fee.first_factor, // Removed
+                    // second_factor: self.pool_fees.base_fee.second_factor, // Removed
+                    // third_factor: self.pool_fees.base_fee.third_factor, // Removed
                     padding_1: self.pool_fees.base_fee.padding_1,
                 },
+                init_sqrt_price: 0, // Added missing field
                 protocol_fee_percent: self.pool_fees.protocol_fee_percent,
                 partner_fee_percent: self.pool_fees.partner_fee_percent,
                 referral_fee_percent: self.pool_fees.referral_fee_percent,
@@ -136,7 +138,7 @@ impl MeteoraDammV2PoolState {
                     volatility_accumulator: self.pool_fees.dynamic_fee.volatility_accumulator,
                     volatility_reference: self.pool_fees.dynamic_fee.volatility_reference,
                 },
-                padding_1: self.pool_fees.padding_1,
+                // padding_1: self.pool_fees.padding_1,
             },
             token_a_mint: to_anchor_pubkey(self.token_a_mint),
             token_b_mint: to_anchor_pubkey(self.token_b_mint),

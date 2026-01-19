@@ -4,17 +4,34 @@ use crate::{
     constants::is_base_token,
     pool_data_types::{
         clmm::{pool::PoolUtils, tpe::ComputeClmmPoolInfo},
+        common::{self, functions},
         GetAmmConfig, PoolUpdateEventType,
     },
     utils::tokens_equal,
 };
-use borsh::BorshDeserialize;
+
+use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
 
+use crate::pool_data_types::traits::BuildSwapInstruction;
+use crate::types::SwapParams;
+use async_trait::async_trait;
+use solana_program::instruction::{AccountMeta, Instruction};
+use spl_associated_token_account;
+
 const MIN_SQRT_PRICE_X64: u128 = 4295048016;
 const MAX_SQRT_PRICE_X64: u128 = 79226673521066979257578248091;
+
+#[derive(BorshSerialize)]
+struct SwapV2Args {
+    amount: u64,
+    other_amount_threshold: u64,
+    sqrt_price_limit_x64: u128,
+    is_base_input: bool,
+}
+
 #[derive(Clone, Debug, Copy, Default)]
 #[allow(dead_code)]
 pub struct TickState {
@@ -145,13 +162,17 @@ impl RaydiumClmmPoolState {
         Pubkey::new_from_array(*RAYDIUM_CLMM_PROGRAM_ID.as_array())
     }
 
-    /// Calculate output amount for PumpFun bonding curve
+    /// Calculate output amount using Raydium CLMM pool state
     pub async fn calculate_output_amount(
         &self,
         input_token: &Pubkey,
         input_amount: u64,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> u64 {
+        if input_amount == 0 {
+            return 0;
+        }
+
         let (token0, _) = (self.token_mint0, self.token_mint1);
         let input_is_token0 = tokens_equal(input_token, &token0);
         let sqrt_price_limit_x64 = if input_is_token0 {
@@ -160,7 +181,6 @@ impl RaydiumClmmPoolState {
             MAX_SQRT_PRICE_X64 - 1
         };
 
-        // dont take transfer tax into account for now, users should account for it un their slippage
         let real_input_amount = input_amount;
         self.get_output_amount(
             real_input_amount,
@@ -178,25 +198,29 @@ impl RaydiumClmmPoolState {
         _sqrt_price_limit_x64: u128,
         amm_config_fetcher: Arc<dyn GetAmmConfig>,
     ) -> u64 {
-        // create pool info
+        let amm_config = match amm_config_fetcher
+            .get_raydium_clmm_amm_config(&self.amm_config)
+            .await
+        {
+            Ok(Some(config)) => config,
+            _ => return 0,
+        };
+
         let pool_info = ComputeClmmPoolInfo::new(
             self.address,
             Self::get_program_id(),
             self,
             self.tick_array_bitmap_extension.as_ref(),
-            amm_config_fetcher
-                .get_raydium_clmm_amm_config(&self.amm_config)
-                .await
-                .unwrap_or(None),
+            Some(amm_config),
         );
-        let result = PoolUtils::get_output_amount_and_remain_accounts(
+
+        match PoolUtils::get_output_amount_and_remain_accounts(
             &pool_info,
             &self.tick_array_state,
             input_token,
             rug::Integer::from(input_amount),
-        );
-        match result {
-            Ok(output) => output.expected_amount_out.abs().to_u64().unwrap_or(0),
+        ) {
+            Ok(result) => result.expected_amount_out.abs().to_u64().unwrap_or(0),
             Err(_) => 0,
         }
     }
@@ -253,5 +277,186 @@ impl RaydiumClmmPoolState {
             // Neither token is a base token, assume relative pricing
             (price_ratio, 1.0)
         }
+    }
+}
+
+#[async_trait]
+impl BuildSwapInstruction for RaydiumClmmPoolState {
+    async fn build_swap_instruction(
+        &self,
+        params: &SwapParams,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> std::result::Result<Vec<Instruction>, String> {
+        // 1. Determine direction (zero_for_one)
+        let zero_for_one = params.input_token.address == self.token_mint0;
+        if !zero_for_one && params.input_token.address != self.token_mint1 {
+            return Err("Input token does not match pool mints".to_string());
+        }
+
+        // Get AMM config
+        let amm_config = match amm_config_fetcher
+            .get_raydium_clmm_amm_config(&self.amm_config)
+            .await
+        {
+            Ok(Some(config)) => config,
+            _ => return Err("Failed to get AMM config".to_string()),
+        };
+
+        // Build pool info for calculations
+        let pool_info = ComputeClmmPoolInfo::new(
+            self.address,
+            Self::get_program_id(),
+            self,
+            self.tick_array_bitmap_extension.as_ref(),
+            Some(amm_config),
+        );
+
+        // Calculate output amount and get remaining tick array accounts
+        let calculation_result = PoolUtils::get_output_amount_and_remain_accounts(
+            &pool_info,
+            &self.tick_array_state,
+            &params.input_token.address,
+            rug::Integer::from(params.input_amount),
+        )
+        .map_err(|e| e.to_string())?;
+
+        let expected_amount_out = calculation_result.expected_amount_out.to_u64().unwrap_or(0);
+        let all_tick_arrays = calculation_result.remaining_accounts;
+
+        // Calculate slippage
+        let other_amount_threshold =
+            functions::calculate_slippage(expected_amount_out, params.slippage_bps)?;
+
+        // Sqrt price limit
+        let sqrt_price_limit_x64 = if zero_for_one {
+            MIN_SQRT_PRICE_X64 + 1
+        } else {
+            MAX_SQRT_PRICE_X64 - 1
+        };
+
+        let (input_vault, output_vault) = if zero_for_one {
+            (self.token_vault0, self.token_vault1)
+        } else {
+            (self.token_vault1, self.token_vault0)
+        };
+
+        let (input_mint, output_mint) = if zero_for_one {
+            (self.token_mint0, self.token_mint1)
+        } else {
+            (self.token_mint1, self.token_mint0)
+        };
+        // Get tick array accounts for remaining_accounts
+        if all_tick_arrays.is_empty() {
+            return Err("No tick arrays returned from calculation".to_string());
+        }
+
+        // Build remaining accounts: tickarray_bitmap_extension + tick_arrays
+        let mut remaining_accounts = Vec::new();
+
+        // Add all tick arrays as remaining accounts
+        for &tick_array_key in &all_tick_arrays {
+            remaining_accounts.push(AccountMeta::new(tick_array_key, false));
+        }
+
+        let token_program_0 = if params.input_token.is_token_2022 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id()
+        };
+        let token_program_1 = if params.output_token.is_token_2022 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id()
+        };
+
+        // Determine which token program to use for input and output
+        let (input_token_program, output_token_program) = if zero_for_one {
+            (token_program_0, token_program_1)
+        } else {
+            (token_program_1, token_program_0)
+        };
+
+        // Convert Address types to anchor_lang Pubkey for compatibility
+        let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
+        let input_mint_anchor = functions::to_pubkey(&params.input_token.address);
+        let output_mint_anchor = functions::to_pubkey(&params.output_token.address);
+
+        // Get user's associated token accounts
+        let user_input_token_old =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_anchor,
+                &input_mint_anchor,
+                &input_token_program,
+            );
+        let user_output_token_old =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_anchor,
+                &output_mint_anchor,
+                &output_token_program,
+            );
+
+        // Convert back to Address for AccountMeta
+        let user_input_token = functions::to_address(&user_input_token_old);
+        let user_output_token = functions::to_address(&user_output_token_old);
+
+        // SwapV2 instruction (supports both SPL Token and Token-2022)
+        // Discriminator for SwapV2
+        let discriminator: [u8; 8] = [43, 4, 237, 11, 26, 201, 30, 98]; // SwapV2 discriminator
+
+        let args = SwapV2Args {
+            amount: params.input_amount,
+            other_amount_threshold,
+            sqrt_price_limit_x64,
+            is_base_input: true,
+        };
+        let mut data = Vec::with_capacity(8 + 32);
+        data.extend_from_slice(&discriminator);
+        args.serialize(&mut data).map_err(|e| e.to_string())?;
+
+        let mut accounts = vec![
+            AccountMeta::new(params.user_wallet, true),        // payer
+            AccountMeta::new_readonly(self.amm_config, false), // amm_config
+            AccountMeta::new(self.address, false),             // pool_state
+            AccountMeta::new(user_input_token, false),         // input_token_account
+            AccountMeta::new(user_output_token, false),        // output_token_account
+            AccountMeta::new(input_vault, false),              // input_vault
+            AccountMeta::new(output_vault, false),             // output_vault
+            AccountMeta::new(self.observation_key, false),     // observation_state
+            common::constants::TOKEN_PROGRAM_META,             // token_program
+            common::constants::TOKEN_PROGRAM_2022_META,        // token_program_2022
+            common::constants::SPL_MEMO_PROGRAM_META,          // memo_program
+            AccountMeta::new_readonly(input_mint, false),      // input_vault_mint
+            AccountMeta::new_readonly(output_mint, false),     // output_vault_mint
+        ];
+        // Add remaining tick arrays
+        accounts.extend(remaining_accounts);
+        let swap_instruction = Instruction {
+            program_id: Self::get_program_id(),
+            accounts,
+            data,
+        };
+
+        let mut instructions = Vec::new();
+
+        // Create input token ATA instruction (idempotent - creates if doesn't exist)
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            user_input_token,
+            input_mint,
+            params.input_token.is_token_2022,
+        ));
+
+        // Create output token ATA instruction (idempotent - creates if doesn't exist)
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            user_output_token,
+            output_mint,
+            params.output_token.is_token_2022,
+        ));
+
+        // Add swap instruction
+        instructions.push(swap_instruction);
+
+        Ok(instructions)
     }
 }

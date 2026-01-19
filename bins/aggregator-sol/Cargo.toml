@@ -62,6 +62,17 @@ serde_with = { version = "3.0", features = ["macros"] }
 spl-token = { workspace = true}
 
 solana-streamer-sdk = { workspace = true}
+chrono = { workspace = true }
+spl-associated-token-account = { workspace = true }
+solana-address = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
+dashmap = { workspace = true }
+once_cell = { workspace = true }
+dynamic_bonding_curve = { workspace = true }
+dynamic_bonding_curve_sdk = { workspace = true }
+cp-amm = { workspace = true }
+cp-amm-sdk = { workspace = true }
+meteora_dlmm_sdk = { workspace = true }
 
 spl-token-2022 = { workspace = true}
 

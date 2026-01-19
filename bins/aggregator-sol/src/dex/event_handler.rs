@@ -18,7 +18,13 @@ use solana_streamer_sdk::{
                     BonkPlatformConfigAccountEvent, BonkPoolCreateEvent, BonkPoolStateAccountEvent,
                     BonkTradeEvent,
                 },
+                meteora_dammv2::MeteoraDammV2PoolAccountEvent,
                 meteora_dbc::{DbcPoolConfigAccountEvent, DbcVirtualPoolAccountEvent},
+                meteora_dlmm::{
+                    types::LbPair, MeteoraDlmmBinArrayAccountEvent,
+                    MeteoraDlmmBinArrayBitmapExtensionAccountEvent, MeteoraDlmmLbPairAccountEvent,
+                    MeteoraDlmmSwapEvent,
+                },
                 orca_whirlpools::{
                     self, WhirlpoolCollectFeesEvent, WhirlpoolCollectFeesV2Event,
                     WhirlpoolCollectProtocolFeesEvent, WhirlpoolCollectProtocolFeesV2Event,
@@ -70,10 +76,11 @@ use tokio::sync::mpsc;
 use crate::{
     constants::is_base_token,
     pool_data_types::{
-        PoolUpdateEventType, PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate,
-        RaydiumClmmPoolReservePart, RaydiumClmmPoolStatePart, RaydiumClmmPoolUpdate,
-        RaydiumCpmmPoolUpdate, TickArrayBitmapExtension, TickArrayState, TickState,
-        WhirlpoolPoolReservePart, WhirlpoolPoolStatePart, WhirlpoolPoolUpdate,
+        DbcPoolUpdate, MeteoraDammV2PoolUpdate, MeteoraDlmmPoolUpdate, PoolUpdateEventType,
+        PumpSwapPoolUpdate, PumpfunPoolUpdate, RaydiumAmmV4PoolUpdate, RaydiumClmmPoolReservePart,
+        RaydiumClmmPoolStatePart, RaydiumClmmPoolUpdate, RaydiumCpmmPoolUpdate,
+        TickArrayBitmapExtension, TickArrayState, TickState, WhirlpoolPoolReservePart,
+        WhirlpoolPoolStatePart, WhirlpoolPoolUpdate,
     },
     types::PoolUpdateEvent,
     utils::get_sol_mint,
@@ -122,9 +129,12 @@ pub fn handle_dex_event(
                         address: e.bonding_curve,
                         last_updated: e.metadata.recv_us as u64,
                         mint: e.mint,
-                        token_reserve: e.virtual_token_reserves,
-                        sol_reserve: e.virtual_sol_reserves,
-                        real_token_reserve: e.real_token_reserves,
+                        virtual_token_reserves: e.virtual_token_reserves,
+                        virtual_sol_reserves: e.virtual_sol_reserves,
+                        real_token_reserves: e.real_token_reserves,
+                        real_sol_reserves: e.real_sol_reserves,
+                        creator: e.creator,
+                        is_mayhem_mode: false,
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         complete: false,
@@ -139,9 +149,12 @@ pub fn handle_dex_event(
                         address: e.bonding_curve,
                         last_updated: e.metadata.recv_us as u64,
                         mint: e.mint,
-                        token_reserve: 0,
-                        sol_reserve: 0,
-                        real_token_reserve: 0,
+                        virtual_token_reserves: 0,
+                        virtual_sol_reserves: 0,
+                        real_token_reserves: 0,
+                        real_sol_reserves: 0,
+                        creator: Pubkey::default(),
+                        is_mayhem_mode: false,
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         complete: true,
@@ -156,9 +169,12 @@ pub fn handle_dex_event(
                         address: e.bonding_curve,
                         last_updated: e.metadata.recv_us as u64,
                         mint: e.mint,
-                        token_reserve: e.virtual_token_reserves,
-                        sol_reserve: e.virtual_sol_reserves,
-                        real_token_reserve: e.real_token_reserves,
+                        virtual_token_reserves: e.virtual_token_reserves,
+                        virtual_sol_reserves: e.virtual_sol_reserves,
+                        real_token_reserves: e.real_token_reserves,
+                        real_sol_reserves: 0,
+                        creator: e.creator,
+                        is_mayhem_mode: false,
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         complete: false,
@@ -186,6 +202,8 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapBuy,
                         additional_event_type: 0,
+                        coin_creator: e.coin_creator,
+                        protocol_fee_recipient: e.protocol_fee_recipient,
                     }));
             },
             PumpSwapSellEvent => |e: PumpSwapSellEvent| {
@@ -206,6 +224,8 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapSell,
                         additional_event_type: 0,
+                        coin_creator: e.coin_creator,
+                        protocol_fee_recipient: e.protocol_fee_recipient,
                     }));
             },
             PumpSwapCreatePoolEvent => |e: PumpSwapCreatePoolEvent| {
@@ -226,6 +246,8 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapCreatePool,
                         additional_event_type: 0,
+                        coin_creator: e.coin_creator,
+                        protocol_fee_recipient: Pubkey::default(),
                     }));
             },
             PumpSwapDepositEvent => |e: PumpSwapDepositEvent| {
@@ -246,6 +268,8 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapDeposit,
                         additional_event_type: 0,
+                        coin_creator: Pubkey::default(),
+                        protocol_fee_recipient: Pubkey::default(),
                     }));
             },
             PumpSwapWithdrawEvent => |e: PumpSwapWithdrawEvent| {
@@ -266,6 +290,8 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapWithdraw,
                         additional_event_type: 0,
+                        coin_creator: Pubkey::default(),
+                        protocol_fee_recipient: Pubkey::default(),
                     }));
             },
             // -------------------------- raydium_cpmm -----------------------
@@ -1067,10 +1093,29 @@ pub fn handle_dex_event(
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::PumpSwapPoolAccount,
                         additional_event_type: 0,
+                        coin_creator: e.pool.coin_creator,
+                        protocol_fee_recipient: Pubkey::default(),
                     }));
             },
             PumpFunBondingCurveAccountEvent => |e: PumpFunBondingCurveAccountEvent| {
-                // println!("PumpFunBondingCurveAccountEvent: {e:?}");
+                pool_update_events.push(PoolUpdateEvent::Pumpfun(
+                    PumpfunPoolUpdate {
+                        address: e.pubkey,
+                        last_updated: e.metadata.recv_us as u64,
+                        mint: Pubkey::default(),
+                        virtual_token_reserves: e.bonding_curve.virtual_token_reserves,
+                        virtual_sol_reserves: e.bonding_curve.virtual_sol_reserves,
+                        real_token_reserves: e.bonding_curve.real_token_reserves,
+                        real_sol_reserves: e.bonding_curve.real_sol_reserves,
+                        creator: e.bonding_curve.creator,
+                        is_mayhem_mode: e.bonding_curve.is_mayhem_mode,
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        complete: e.bonding_curve.complete,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::PumpFunBondingCurveAccount,
+                        additional_event_type: 0,
+                    }));
             },
             PumpFunGlobalAccountEvent => |e: PumpFunGlobalAccountEvent| {
                 // println!("PumpFunGlobalAccountEvent: {e:?}");
@@ -1255,10 +1300,210 @@ pub fn handle_dex_event(
                     })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
-                // do nothing for now
+                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
+                    DbcPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey,
+                        config: e.virtual_pool.config,
+                        creator: e.virtual_pool.creator,
+                        base_mint: e.virtual_pool.base_mint,
+                        base_vault: e.virtual_pool.base_vault,
+                        quote_vault: e.virtual_pool.quote_vault,
+                        base_reserve: e.virtual_pool.base_reserve,
+                        quote_reserve: e.virtual_pool.quote_reserve,
+                        protocol_base_fee: e.virtual_pool.protocol_base_fee,
+                        protocol_quote_fee: e.virtual_pool.protocol_quote_fee,
+                        partner_base_fee: e.virtual_pool.partner_base_fee,
+                        partner_quote_fee: e.virtual_pool.partner_quote_fee,
+                        sqrt_price: e.virtual_pool.sqrt_price,
+                        activation_point: e.virtual_pool.activation_point,
+                        pool_type: e.virtual_pool.pool_type,
+                        is_migrated: e.virtual_pool.is_migrated,
+                        is_partner_withdraw_surplus: e.virtual_pool.is_partner_withdraw_surplus,
+                        is_protocol_withdraw_surplus: e.virtual_pool.is_protocol_withdraw_surplus,
+                        migration_progress: e.virtual_pool.migration_progress,
+                        is_withdraw_leftover: e.virtual_pool.is_withdraw_leftover,
+                        is_creator_withdraw_surplus: e.virtual_pool.is_creator_withdraw_surplus,
+                        migration_fee_withdraw_status: e.virtual_pool.migration_fee_withdraw_status,
+                        finish_curve_timestamp: e.virtual_pool.finish_curve_timestamp,
+                        creator_base_fee: e.virtual_pool.creator_base_fee,
+                        creator_quote_fee: e.virtual_pool.creator_quote_fee,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::DbcVirtualPoolAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+
+                        // Config fields (default for virtual pool update)
+                        is_config_update: false,
+                        pool_config: None,
+
+                        // Volatility Tracker
+                        volatility_tracker: Some(e.virtual_pool.volatility_tracker),
+                    }));
             },
             DbcPoolConfigAccountEvent => |e: DbcPoolConfigAccountEvent| {
-                // do nothing for now
+                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
+                    DbcPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey,
+                        config: e.pubkey,
+
+                        // Config fields
+                        is_config_update: true,
+                        pool_config: Some(e.pool_config),
+
+                        // Volatility Tracker (default for config update)
+                        volatility_tracker: None,
+
+                        // Virtual Pool fields (default for config update)
+                        creator: Pubkey::default(),
+                        base_mint: Pubkey::default(),
+                        base_vault: Pubkey::default(),
+                        quote_vault: Pubkey::default(),
+                        base_reserve: 0,
+                        quote_reserve: 0,
+                        protocol_base_fee: 0,
+                        protocol_quote_fee: 0,
+                        partner_base_fee: 0,
+                        partner_quote_fee: 0,
+                        sqrt_price: 0,
+                        activation_point: 0,
+                        pool_type: 0,
+                        is_migrated: 0,
+                        is_partner_withdraw_surplus: 0,
+                        is_protocol_withdraw_surplus: 0,
+                        migration_progress: 0,
+                        is_withdraw_leftover: 0,
+                        is_creator_withdraw_surplus: 0,
+                        migration_fee_withdraw_status: 0,
+                        finish_curve_timestamp: 0,
+                        creator_base_fee: 0,
+                        creator_quote_fee: 0,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::DbcPoolConfigAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+                    }));
+            },
+            MeteoraDammV2PoolAccountEvent => |e: MeteoraDammV2PoolAccountEvent| {
+                pool_update_events.push(PoolUpdateEvent::MeteoraDammV2(
+                    MeteoraDammV2PoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey,
+                        pool_fees: e.pool.pool_fees,
+                        token_a_mint: e.pool.token_a_mint,
+                        token_b_mint: e.pool.token_b_mint,
+                        token_a_vault: e.pool.token_a_vault,
+                        token_b_vault: e.pool.token_b_vault,
+                        whitelisted_vault: e.pool.whitelisted_vault,
+                        partner: e.pool.partner,
+                        liquidity: e.pool.liquidity,
+                        protocol_a_fee: e.pool.protocol_a_fee,
+                        protocol_b_fee: e.pool.protocol_b_fee,
+                        partner_a_fee: e.pool.partner_a_fee,
+                        partner_b_fee: e.pool.partner_b_fee,
+                        sqrt_min_price: e.pool.sqrt_min_price,
+                        sqrt_max_price: e.pool.sqrt_max_price,
+                        sqrt_price: e.pool.sqrt_price,
+                        activation_point: e.pool.activation_point,
+                        activation_type: e.pool.activation_type,
+                        pool_status: e.pool.pool_status,
+                        token_a_flag: e.pool.token_a_flag,
+                        token_b_flag: e.pool.token_b_flag,
+                        collect_fee_mode: e.pool.collect_fee_mode,
+                        pool_type: e.pool.pool_type,
+                        version: e.pool.version,
+                        fee_a_per_liquidity: e.pool.fee_a_per_liquidity,
+                        fee_b_per_liquidity: e.pool.fee_b_per_liquidity,
+                        permanent_lock_liquidity: e.pool.permanent_lock_liquidity,
+                        metrics: e.pool.metrics,
+                        creator: e.pool.creator,
+                        reward_infos: e.pool.reward_infos,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::MeteoraDammV2PoolStateAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+                    }));
+                },
+            MeteoraDlmmSwapEvent => |e: MeteoraDlmmSwapEvent| {
+                let reserve_x_balance = post_token_balances.get(e.reserve_x.to_string().as_str());
+                let reserve_y_balance = post_token_balances.get(e.reserve_y.to_string().as_str());
+
+                if let (Some(rx_b), Some(ry_b)) = (reserve_x_balance, reserve_y_balance) {
+                    pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                        MeteoraDlmmPoolUpdate {
+                            slot: e.metadata.slot,
+                            transaction_index: e.metadata.transaction_index,
+                            address: e.lb_pair,
+                            lbpair: LbPair::default(),
+                            bin_arrays: None,
+                            bitmap_extension: None,
+                            is_account_state_update: false,
+                            pool_update_event_type: PoolUpdateEventType::MeteoraDlmmSwap,
+                            additional_event_type: 0,
+                            last_updated: e.metadata.recv_us as u64,
+                            reserve_x: Some(rx_b.amount),
+                            reserve_y: Some(ry_b.amount),
+                        }
+                    ));
+                }
+            },
+            MeteoraDlmmLbPairAccountEvent => |e: MeteoraDlmmLbPairAccountEvent| {
+                pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                    MeteoraDlmmPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey,
+                        lbpair: e.lbpair,
+                        bin_arrays: None,
+                        bitmap_extension: None,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::MeteoraDlmmLbPairAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+                        reserve_x: None,
+                        reserve_y: None,
+                    }));
+            },
+            MeteoraDlmmBinArrayAccountEvent => |e: MeteoraDlmmBinArrayAccountEvent| {
+                let mut bin_arrays_map = std::collections::HashMap::new();
+                let lb_pair = e.bin_array.lb_pair;
+                bin_arrays_map.insert(e.bin_array.index as i32, e.bin_array);
+                pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                    MeteoraDlmmPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: lb_pair,
+                        lbpair: LbPair::default(),
+                        bin_arrays: Some(bin_arrays_map),
+                        bitmap_extension: None,
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::MeteoraDlmmBinArrayAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+                        reserve_x: None,
+                        reserve_y: None,
+                    }));
+            },
+            MeteoraDlmmBinArrayBitmapExtensionAccountEvent => |e: MeteoraDlmmBinArrayBitmapExtensionAccountEvent| {
+                pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                    MeteoraDlmmPoolUpdate {
+                        slot: e.metadata.slot,
+                        transaction_index: e.metadata.transaction_index,
+                        address: e.pubkey,
+                        lbpair: LbPair::default(),
+                        bin_arrays: None,
+                        bitmap_extension: Some(e.bitmap_extension),
+                        is_account_state_update: true,
+                        pool_update_event_type: PoolUpdateEventType::MeteoraDlmmBinArrayBitmapExtensionAccount,
+                        additional_event_type: 0,
+                        last_updated: e.metadata.recv_us as u64,
+                        reserve_x: None,
+                        reserve_y: None,
+                    }));
             },
         });
     }

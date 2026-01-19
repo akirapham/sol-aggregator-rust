@@ -1,12 +1,13 @@
 use crate::config::ConfigLoader;
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
+use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
 use crate::grpc::{BatchProcessor, GrpcService};
 use crate::pool_data_types::{
-    DexType, GetAmmConfig, PoolState, PoolUpdateEventType, RaydiumClmmAmmConfig,
-    RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig, WhirlpoolPoolState,
-    WhirlpoolPoolUpdate,
+    dbc, DexType, GetAmmConfig, MeteoraDlmmPoolUpdate, PoolState, PoolUpdateEventType,
+    RaydiumClmmAmmConfig, RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig,
+    WhirlpoolPoolState, WhirlpoolPoolUpdate,
 };
 use crate::types::Token;
 use crate::types::{AggregatorConfig, ChainStateUpdate, PoolUpdateEvent};
@@ -20,13 +21,14 @@ use futures::stream::{self, StreamExt};
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
     PubkeyData, SimplifiedTokenBalance,
 };
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig;
+use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::LbPair;
 use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools;
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use std::collections::{HashMap, HashSet};
@@ -114,6 +116,8 @@ pub struct PoolStateManager {
     startup_time: SystemTime,
     /// Application configuration with DEX enable/disable flags
     config: AggregatorConfig,
+    /// Meteora DBC config cache (config_address -> PoolConfig)
+    dbc_configs: Arc<RwLock<HashMap<Pubkey, dbc::PoolConfig>>>,
 }
 
 // Serializable wrappers for RocksDB (serialize inner data, not Mutex/Arc)
@@ -169,6 +173,7 @@ impl PoolStateManager {
             arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
             startup_time: SystemTime::now(),
             config,
+            dbc_configs: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Load data from RocksDB on startup
@@ -240,6 +245,13 @@ impl PoolStateManager {
     pub async fn get_arbitrage_monitored_tokens(&self) -> HashSet<Pubkey> {
         let monitored = self.arbitrage_monitored_tokens.read().await;
         monitored.clone()
+    }
+
+    /// Get DBC config cache for caching configs from events
+    pub fn get_dbc_config_cache(
+        &self,
+    ) -> Arc<RwLock<HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>>> {
+        Arc::clone(&self.dbc_configs)
     }
 
     /// Add a token to arbitrage monitoring and save to DB
@@ -379,6 +391,8 @@ impl PoolStateManager {
                 rpc_client.clone(),
                 WhirlpoolPoolState::get_program_id(),
             ));
+            let meteora_dlmm_fetcher =
+                Arc::new(MeteoraDlmmBinArrayFetcher::new(rpc_client.clone()));
             loop {
                 ticker.tick().await;
 
@@ -413,16 +427,15 @@ impl PoolStateManager {
                     let pool_update_tx_clone = pool_update_tx.clone();
                     let raydium_clmm_fetcher_c = raydium_clmm_fetcher.clone();
                     let whirlpool_fetcher_c = whirlpool_fetcher.clone();
+                    let meteora_dlmm_fetcher_c = meteora_dlmm_fetcher.clone();
                     async move {
                         let pool_id = pool_for_fetch.address;
                         let dex_type = pool_for_fetch.dex_type;
 
-                        // fetch tick arrays for this pool
                         // check if pool_id already synced
                         {
                             let tick_synced = tick_synced_pools_c.lock().await;
                             if tick_synced.contains(&pool_id) {
-                                // already synced, skip
                                 return;
                             }
                         }
@@ -549,6 +562,43 @@ impl PoolStateManager {
                                         }
                                     }
                                 }
+                                DexType::MeteoraDlmm => {
+                                    if let PoolState::MeteoraDlmm(ref dlmm_pool_state) = pool_state {
+                                        let bin_arrays_result = meteora_dlmm_fetcher_c.fetch_all_bin_arrays(pool_id, dlmm_pool_state).await;
+                                        let recv_us = get_high_perf_clock();
+                                        match bin_arrays_result {
+                                            Ok(bin_arrays) => {
+                                                // log::info!("Fetched {} bin arrays for Meteora DLMM pool {}", bin_arrays.len(), pool_id);
+                                                {
+                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
+                                                    tick_synced.insert(pool_id);
+                                                }
+                                                bin_arrays.iter().for_each(|bin_array| {
+                                                    let mut bin_arrays_map = HashMap::new();
+                                                    bin_arrays_map.insert(bin_array.index as i32, bin_array.clone());
+                                                    let event = PoolUpdateEvent::MeteoraDlmm(MeteoraDlmmPoolUpdate {
+                                                        slot: 0,
+                                                        transaction_index: None,
+                                                        address: pool_id,
+                                                        lbpair: LbPair::default(),
+                                                        bin_arrays: Some(bin_arrays_map),
+                                                        bitmap_extension: None,
+                                                        is_account_state_update: true,
+                                                        pool_update_event_type: PoolUpdateEventType::MeteoraDlmmBinArrayAccount,
+                                                        additional_event_type: bin_array.index as i32,
+                                                        last_updated: recv_us as u64,
+                                                        reserve_x: None,
+                                                        reserve_y: None,
+                                                    });
+                                                    let _ = pool_update_tx_clone.send(vec![event]);
+                                                });
+                                            }
+                                            Err(e) => {
+                                                log::error!("Failed to fetch bin arrays for Meteora DLMM pool {:?}: {:?}", dlmm_pool_state.address, e);
+                                            }
+                                        }
+                                    }
+                                }
                                 _ => {
                                     // Other DEX types don't have tick arrays, mark as synced
                                     log::debug!(
@@ -591,6 +641,7 @@ impl PoolStateManager {
         let price_service = Arc::clone(&self.price_service);
         let arbitrage_pool_tx = self.arbitrage_pool_tx.clone();
         let arbitrage_monitored_tokens = Arc::clone(&self.arbitrage_monitored_tokens);
+        let dbc_configs = Arc::clone(&self.dbc_configs);
 
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_millis(100));
@@ -630,13 +681,14 @@ impl PoolStateManager {
                 let draineds: Vec<PoolUpdateEvent> = {
                     let mut buf = pending.lock().await;
                     if buf.is_empty() {
-                        continue;
+                        Vec::new()
+                    } else {
+                        let mut v = Vec::with_capacity(buf.len());
+                        for (_k, v_event) in buf.drain() {
+                            v.push(v_event);
+                        }
+                        v
                     }
-                    let mut v = Vec::with_capacity(buf.len());
-                    for (_k, v_event) in buf.drain() {
-                        v.push(v_event);
-                    }
-                    v
                 };
                 let _ = drain_start.elapsed();
 
@@ -671,6 +723,7 @@ impl PoolStateManager {
                             let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
                             let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
                             let monitored_tokens_c = monitored_tokens_snapshot.clone();
+                            let dbc_configs_c = Arc::clone(&dbc_configs);
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -684,6 +737,7 @@ impl PoolStateManager {
                                     sol_price,
                                     &arbitrage_pool_tx_c,
                                     &monitored_tokens_c,
+                                    dbc_configs_c,
                                 )
                                 .await;
                             }
@@ -707,6 +761,7 @@ impl PoolStateManager {
                             let tick_synced_pools_c = Arc::clone(&tick_synced_pools);
                             let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
                             let monitored_tokens_c = monitored_tokens_snapshot.clone();
+                            let dbc_configs_c = Arc::clone(&dbc_configs);
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -720,6 +775,7 @@ impl PoolStateManager {
                                     sol_price,
                                     &arbitrage_pool_tx_c,
                                     &monitored_tokens_c,
+                                    dbc_configs_c,
                                 )
                                 .await;
                             }
@@ -898,7 +954,66 @@ impl PoolStateManager {
         sol_price: f64,
         arbitrage_pool_tx: &broadcast::Sender<ArbitragePoolUpdate>,
         arbitrage_monitored_tokens: &HashSet<Pubkey>,
+        dbc_configs: Arc<RwLock<HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>>>,
     ) {
+        // Cache DBC config if this is a config update
+        if let PoolUpdateEvent::MeteoraDbc(dbc_update) = update {
+            if dbc_update.is_config_update {
+                if let Some(config) = &dbc_update.pool_config {
+                    let mut configs_write = dbc_configs.write().await;
+                    configs_write.insert(dbc_update.config, config.clone());
+                    log::info!("Cached DBC config: {}", dbc_update.config);
+
+                    // If this is a config-only update (no pool data), return early
+                    if dbc_update.base_mint == Pubkey::default() {
+                        return;
+                    }
+                }
+            }
+
+            // If this is a pool update without config, try to fetch config from RPC
+            if !dbc_update.is_config_update && dbc_update.pool_config.is_none() {
+                let config_exists = {
+                    let configs_read = dbc_configs.read().await;
+                    configs_read.contains_key(&dbc_update.config)
+                };
+
+                if !config_exists {
+                    log::info!("Fetching DBC config from RPC: {}", dbc_update.config);
+                    match fetch_account_data(&rpc_client, &dbc_update.config).await {
+                        Ok(data) => {
+                            // Skip 8-byte discriminator for Anchor accounts
+                            if data.len() > 8 {
+                                match borsh::from_slice::<solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig>(&data[8..]) {
+                                    Ok(config) => {
+                                        let mut configs_write = dbc_configs.write().await;
+                                        configs_write.insert(dbc_update.config, config.clone());
+                                        log::info!("Successfully fetched and cached DBC config: {}", dbc_update.config);
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to deserialize DBC config {}: {:?}", dbc_update.config, e);
+                                    }
+                                }
+                            } else {
+                                log::error!(
+                                    "DBC config account {} data too short: {} bytes",
+                                    dbc_update.config,
+                                    data.len()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to fetch DBC config {} from RPC: {:?}",
+                                dbc_update.config,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let pool_address = update.address();
         let mut pool_with_ticks = false;
         let mut pool_dex_type: Option<DexType> = None;
@@ -908,6 +1023,7 @@ impl PoolStateManager {
             let pools_read = pools.read().await;
             pools_read.contains_key(&pool_address)
         };
+
         if pool_exists {
             // Get the pool's individual mutex (no blocking other pools)
             let pool_mutex = {
@@ -922,15 +1038,19 @@ impl PoolStateManager {
             }
         } else {
             // Insert new pool
-            let (pool_state, is_pool_with_ticks) =
-                pool_update_event_to_pool_state(update, sol_price);
+            let (pool_state, is_pool_with_ticks) = {
+                let dbc_configs_read = dbc_configs.read().await;
+                pool_update_event_to_pool_state(update, sol_price, Some(&*dbc_configs_read))
+            };
             pool_with_ticks = is_pool_with_ticks;
+
             if let Some(pool_state) = pool_state {
                 let (token0, token1) = pool_state.get_tokens();
                 if token0 == Pubkey::default() || token1 == Pubkey::default() {
                     return;
                 }
                 pool_dex_type = Some(pool_state.dex());
+
                 Self::insert_new_pool(
                     pool_state,
                     pools.clone(),
@@ -1188,6 +1308,11 @@ impl PoolStateManager {
         Arc::clone(&self.db)
     }
 
+    /// Get access to the RPC client
+    pub fn get_rpc_client(&self) -> Arc<RpcClient> {
+        Arc::clone(&self.rpc_client)
+    }
+
     pub async fn get_pool_addresses_for_pair(
         &self,
         token_a: &Pubkey,
@@ -1344,6 +1469,19 @@ impl PoolStateManager {
             }
         }
 
+        // Load DBC configs
+        if let Ok(Some(data)) = self.db.get(b"dbc_configs") {
+            if let Ok((configs, _)) = bincode::serde::decode_from_slice::<
+                HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>,
+                Configuration,
+            >(&data, bincode::config::standard())
+            {
+                let mut configs_write = self.dbc_configs.write().await;
+                *configs_write = configs;
+                log::info!("Loaded {} DBC configs from RocksDB", configs_write.len());
+            }
+        }
+
         // Load arbitrage monitored tokens from DB
         match Self::load_arbitrage_tokens_from_db(&self.db) {
             Ok(tokens) => {
@@ -1459,6 +1597,32 @@ impl PoolStateManager {
                         continue;
                     }
                 }
+                PoolState::MeteoraDammV2(_) => {
+                    if !self.config.enable_meteora_dammv2 {
+                        log::debug!(
+                            "Skipping Meteora DAMMV2 pool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+                }
+                PoolState::MeteoraDlmm(_) => {
+                    if !self.config.enable_meteora_dlmm {
+                        log::debug!(
+                            "Skipping Meteora DLMMPool {} - disabled in configuration",
+                            pool_address
+                        );
+                        continue;
+                    }
+
+                    // add pool to pending pools to fetch bin arrays
+                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
+                    pending.insert(PoolForTickFetching {
+                        address: *pool_address,
+                        dex_type: DexType::MeteoraDlmm,
+                    });
+                    drop(pending); // release lock early
+                }
                 PoolState::OrcaWhirlpool(_) => {
                     if !self.config.enable_orca_whirlpools {
                         log::debug!(
@@ -1559,7 +1723,8 @@ impl PoolStateManager {
     /// Save in-memory data to RocksDB
     pub async fn save_pools(&self) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Saving pools to database...");
-        Self::save_to_db(&self.db, &self.pools, &self.token_cache).await
+        Self::save_to_db(&self.db, &self.pools, &self.token_cache).await?;
+        Ok(())
     }
 
     async fn save_to_db(

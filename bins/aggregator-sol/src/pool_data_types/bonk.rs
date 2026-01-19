@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sol_trade_sdk::utils::calc::bonk::{
     get_buy_token_amount_from_sol_amount, get_sell_sol_amount_from_token_amount,
 };
+use sol_trade_sdk::utils::price::bonk::price_base_in_quote;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::bonk::parser::BONK_PROGRAM_ID;
 
@@ -59,7 +60,7 @@ pub struct BonkPoolUpdate {
     pub last_updated: u64,
     pub is_account_state_update: bool,
     pub pool_update_event_type: PoolUpdateEventType,
-    pub additional_event_type: i32, // for tick array index tracking, 0 for others
+    pub additional_event_type: i32,
 }
 
 #[allow(dead_code)]
@@ -76,8 +77,7 @@ impl BonkPoolState {
         _: Arc<dyn GetAmmConfig>,
     ) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
-
-        if is_buy {
+        let output = if is_buy {
             get_buy_token_amount_from_sol_amount(
                 input_amount,
                 self.base_reserve as u128,
@@ -95,7 +95,8 @@ impl BonkPoolState {
                 self.real_quote as u128,
                 0,
             )
-        }
+        };
+        output
     }
 
     pub fn calculate_token_prices(

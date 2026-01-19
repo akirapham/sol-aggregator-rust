@@ -72,7 +72,7 @@ impl SwapMath {
         pool_id: &Pubkey,
         tick_array_cache: &HashMap<i32, TickArrayState>,
         tick_array_bitmap: &[u64; 16],
-        tick_array_bitmap_extension: &TickArrayBitmapExtension,
+        tick_array_bitmap_extension: Option<&TickArrayBitmapExtension>,
         zero_for_one: bool,
         fee: u32,
         liquidity: i128,

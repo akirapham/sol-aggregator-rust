@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
-
+use crate::types::SwapParams;
 use crate::{
     constants::wsol,
     pool_data_types::{
-        BonkPoolState, DbcPoolState, DexType, GetAmmConfig, PumpSwapPoolState, PumpfunPoolState,
+        BonkPoolState, BuildSwapInstruction, DbcPoolState, DexType, GetAmmConfig,
+        MeteoraDammV2PoolState, MeteoraDlmmPoolState, PumpSwapPoolState, PumpfunPoolState,
         RaydiumAmmV4PoolState, RaydiumClmmPoolState, RaydiumCpmmPoolState, WhirlpoolPoolState,
     },
 };
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use solana_sdk::instruction::Instruction;
+use solana_sdk::pubkey::Pubkey;
 
 /// Macro to delegate simple field access across all PoolState variants
 /// Usage: pool_state_delegate!(self, field_name)
@@ -23,7 +26,9 @@ macro_rules! pool_state_delegate {
             PoolState::Bonk(state) => state.$field,
             PoolState::RadyiumClmm(state) => state.$field,
             PoolState::MeteoraDbc(state) => state.$field,
+            PoolState::MeteoraDammV2(state) => state.$field,
             PoolState::OrcaWhirlpool(state) => state.$field,
+            PoolState::MeteoraDlmm(state) => state.$field,
         }
     };
 }
@@ -37,54 +42,80 @@ pub enum PoolState {
     Bonk(BonkPoolState),
     RadyiumClmm(RaydiumClmmPoolState),
     MeteoraDbc(DbcPoolState),
+    MeteoraDammV2(MeteoraDammV2PoolState),
     OrcaWhirlpool(WhirlpoolPoolState),
+    MeteoraDlmm(MeteoraDlmmPoolState),
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum PoolUpdateEventType {
-    PumpFunTrade,
-    PumpFunMigrate,
-    PumpFunCreateToken,
+    // PumpSwap
     PumpSwapBuy,
     PumpSwapSell,
     PumpSwapCreatePool,
     PumpSwapDeposit,
     PumpSwapWithdraw,
+    PumpSwapPoolAccount,
+    // PumpFun
+    PumpFunTrade,
+    PumpFunMigrate,
+    PumpFunBuy,
+    PumpFunSell,
+    PumpFunCreateToken,
+    PumpFunBondingCurveAccount,
+    // Raydium CPMM
     RaydiumCpmmSwap,
     RaydiumCpmmDeposit,
-    RaydiumCpmmInitialize,
     RaydiumCpmmWithdraw,
+    RaydiumCpmmInitialize,
+    RaydiumCpmmPoolStateAccount,
+    // Raydium CLMM
     RaydiumClmmSwap,
     RaydiumClmmSwapV2,
-    RaydiumClmmClosePosition,
-    RaydiumClmmDecreaseLiquidityV2,
+    RaydiumClmmIncreaseLiquidity,
     RaydiumClmmIncreaseLiquidityV2,
-    RaydiumClmmOpenPositionWithToken22Nft,
+    RaydiumClmmDecreaseLiquidity,
+    RaydiumClmmDecreaseLiquidityV2,
+    RaydiumClmmClosePosition,
     RaydiumClmmOpenPositionV2,
-    RaydiumAmmV4Swap,
+    RaydiumClmmOpenPositionWithToken22Nft,
+    RaydiumClmmPoolStateAccount,
+    RaydiumClmmTickArrayStateAccount,
+    RaydiumClmmTickArrayBitmapExtensionAccount,
+    // Raydium AMM V4
+    RaydiumAmmV4Swap, // General swap event
+    RaydiumAmmV4SwapBaseIn,
+    RaydiumAmmV4SwapBaseOut,
     RaydiumAmmV4Deposit,
     RaydiumAmmV4Initialize2,
     RaydiumAmmV4Withdraw,
     RaydiumAmmV4WithdrawPnl,
-    BonkPoolStateAccount,
-    PumpSwapPoolAccount,
-    RaydiumClmmPoolStateAccount,
-    RaydiumClmmTickArrayStateAccount,
-    RaydiumClmmTickArrayBitmapExtensionAccount,
-    RaydiumCpmmPoolStateAccount,
-    DbcPoolStateAccount,
+    RaydiumAmmV4AmmInfoAccount,
+    // Whirlpool
+    WhirlpoolSwap,
+    WhirlpoolSwapV2,
+    WhirlpoolIncreaseLiquidity,
+    WhirlpoolIncreaseLiquidityV2,
+    WhirlpoolDecreaseLiquidity,
+    WhirlpoolDecreaseLiquidityV2,
+    WhirlpoolTwoHopSwap,
+    WhirlpoolTwoHopSwapV2,
     WhirlpoolPoolStateAccount,
     WhirlpoolTickArrayStateAccount,
     WhirlpoolOracleStateAccount,
-    WhirlpoolSwap,
-    WhirlpoolSwapV2,
-    WhirlpoolDecreaseLiquidity,
-    WhirlpoolDecreaseLiquidityV2,
-    WhirlpoolIncreaseLiquidity,
-    WhirlpoolIncreaseLiquidityV2,
-    WhirlpoolTwoHopSwap,
-    WhirlpoolTwoHopSwapV2,
+    // Meteora DLMM
+    MeteoraDlmmSwap,
+    MeteoraDlmmLbPairAccount,
+    MeteoraDlmmBinArrayAccount,
+    MeteoraDlmmBinArrayBitmapExtensionAccount,
+    // Meteora DBC
+    DbcVirtualPoolAccount,
+    DbcPoolConfigAccount,
+    // Meteora DAMM V2
+    MeteoraDammV2PoolStateAccount,
+    // Bonk
+    BonkPoolStateAccount,
 }
 
 #[derive(Debug, Clone)]
@@ -111,8 +142,17 @@ impl PoolState {
             PoolState::RaydiumCpmm(state) => (state.token0, state.token1),
             PoolState::Bonk(state) => (state.base_mint, state.quote_mint),
             PoolState::RadyiumClmm(state) => (state.token_mint0, state.token_mint1),
-            PoolState::MeteoraDbc(state) => (state.base_mint, state.base_mint),
+            PoolState::MeteoraDbc(state) => {
+                let quote_mint = state
+                    .pool_config
+                    .as_ref()
+                    .map(|config| config.quote_mint)
+                    .unwrap_or_default();
+                (state.base_mint, quote_mint)
+            }
             PoolState::OrcaWhirlpool(state) => (state.token_mint_a, state.token_mint_b),
+            PoolState::MeteoraDammV2(state) => (state.token_a_mint, state.token_b_mint),
+            PoolState::MeteoraDlmm(state) => (state.lbpair.token_x_mint, state.lbpair.token_y_mint),
         }
     }
 
@@ -126,6 +166,8 @@ impl PoolState {
             PoolState::RadyiumClmm(_) => DexType::RaydiumClmm,
             PoolState::MeteoraDbc(_) => DexType::MeteoraDbc,
             PoolState::OrcaWhirlpool(_) => DexType::Orca,
+            PoolState::MeteoraDammV2(_) => DexType::MeteoraDammV2,
+            PoolState::MeteoraDlmm(_) => DexType::MeteoraDlmm,
         }
     }
 
@@ -163,12 +205,20 @@ impl PoolState {
                 slot: state.slot,
                 transaction_index: state.transaction_index,
             },
+            PoolState::MeteoraDammV2(state) => PoolStateMetadata {
+                slot: state.slot,
+                transaction_index: state.transaction_index,
+            },
+            PoolState::MeteoraDlmm(state) => PoolStateMetadata {
+                slot: state.slot,
+                transaction_index: state.transaction_index,
+            },
         }
     }
 
     pub fn get_reserves(&self) -> (u64, u64) {
         match self {
-            PoolState::Pumpfun(state) => (state.token_reserve, state.sol_reserve),
+            PoolState::Pumpfun(state) => (state.virtual_token_reserves, state.virtual_sol_reserves),
             PoolState::PumpSwap(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RaydiumAmmV4(state) => (state.base_reserve, state.quote_reserve),
             PoolState::RaydiumCpmm(state) => (state.token0_reserve, state.token1_reserve),
@@ -176,6 +226,29 @@ impl PoolState {
             PoolState::RadyiumClmm(state) => (state.token0_reserve, state.token1_reserve),
             PoolState::MeteoraDbc(state) => (state.base_reserve, state.quote_reserve),
             PoolState::OrcaWhirlpool(state) => (state.token_a_reserve, state.token_b_reserve),
+            PoolState::MeteoraDammV2(state) => {
+                // Calculate reserves from DAMM V2 state
+                let delta_sqrt_price_b = state.sqrt_price.saturating_sub(state.sqrt_min_price);
+                let product_b = (state.liquidity as u128).saturating_mul(delta_sqrt_price_b);
+                let reserve_b = if product_b > 0 {
+                    (product_b / (1u128 << 64) / (1u128 << 64)) as u64
+                } else {
+                    0
+                };
+
+                let numerator = (state.liquidity as u128)
+                    .saturating_mul(state.sqrt_max_price.saturating_sub(state.sqrt_price));
+                let denominator =
+                    (state.sqrt_max_price as u128).saturating_mul(state.sqrt_price as u128);
+                let reserve_a = if denominator > 0 {
+                    (numerator / denominator) as u64
+                } else {
+                    0
+                };
+
+                (reserve_a, reserve_b)
+            }
+            PoolState::MeteoraDlmm(state) => (state.reserve_x.unwrap(), state.reserve_y.unwrap()),
         }
     }
 
@@ -209,15 +282,22 @@ impl PoolState {
                 let output_amount = state
                     .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
                     .await;
-                // log::info!("1111 RadyiumClmm input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
                 output_amount
             }
             PoolState::MeteoraDbc(state) => {
                 state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
             PoolState::OrcaWhirlpool(state) => {
-                // log::info!("1111 OrcaWhirlpool input_token {} input_amount {} output_amount {}", input_token, input_amount, output_amount);
-                state.calculate_output_amount(input_token, input_amount)
+                let output_amount = state
+                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .await;
+                output_amount
+            }
+            PoolState::MeteoraDammV2(state) => {
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+            }
+            PoolState::MeteoraDlmm(state) => {
+                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
             }
         }
     }
@@ -253,6 +333,103 @@ impl PoolState {
             PoolState::OrcaWhirlpool(state) => {
                 state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
             }
+            PoolState::MeteoraDammV2(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+            PoolState::MeteoraDlmm(state) => {
+                state.calculate_token_prices(sol_price, base_decimals, quote_decimals)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl BuildSwapInstruction for PoolState {
+    async fn build_swap_instruction(
+        &self,
+        params: &SwapParams,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> std::result::Result<Vec<Instruction>, String> {
+        // Validation
+        if params.input_amount == 0 {
+            return Err("Input amount is zero".to_string());
+        }
+        if params.input_token.address == params.output_token.address {
+            return Err("Input and output tokens are the same".to_string());
+        }
+        if params.slippage_bps > 500 {
+            return Err("Slippage tolerance exceeds maximum allowed (5%)".to_string());
+        }
+
+        match self {
+            PoolState::Pumpfun(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("Pumpfun build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::PumpSwap(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("PumpSwap build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::RaydiumAmmV4(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("RaydiumAmmV4 build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::RaydiumCpmm(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("RaydiumCpmm build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::Bonk(_state) => {
+                let e = "Bonk BuildSwapInstruction not yet implemented".to_string();
+                log::error!("{}", e);
+                Err(e)
+            }
+            PoolState::RadyiumClmm(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("RadyiumClmm build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::MeteoraDbc(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("MeteoraDbc build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::OrcaWhirlpool(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("OrcaWhirlpool build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::MeteoraDammV2(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("MeteoraDammV2 build_swap_instruction error: {}", e);
+                    e
+                }),
+            PoolState::MeteoraDlmm(state) => state
+                .build_swap_instruction(params, amm_config_fetcher)
+                .await
+                .map_err(|e| {
+                    log::error!("MeteoraDlmm build_swap_instruction error: {}", e);
+                    e
+                }),
         }
     }
 }

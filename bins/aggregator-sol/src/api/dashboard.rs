@@ -14,85 +14,189 @@ async fn generate_dashboard_html(state: &AppState) -> String {
     let arb_config = state.arbitrage_config.read().unwrap();
     let monitored_count = arb_config.monitored_tokens.len();
 
+    // Generate Monitored Tokens HTML
+    let mut tokens_html = String::new();
+    for token in &arb_config.monitored_tokens {
+        tokens_html.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td></tr>",
+            token.symbol, token.address
+        ));
+    }
+
+    if tokens_html.is_empty() {
+        tokens_html =
+            "<tr><td colspan='2' class='no-data'>No monitored tokens found</td></tr>".to_string();
+    }
+
+    // Generate Settings HTML
+    let settings = &arb_config.settings;
+    let settings_html = format!(
+        r#"
+        <table>
+            <tbody>
+                <tr><td><strong>Base Token</strong></td><td>{}</td></tr>
+                <tr><td><strong>Base Amount</strong></td><td>{}</td></tr>
+                <tr><td><strong>Slippage</strong></td><td>{} bps</td></tr>
+                <tr><td><strong>Min Profit</strong></td><td>{} bps</td></tr>
+                <tr><td><strong>Max Concurrent Checks</strong></td><td>{}</td></tr>
+            </tbody>
+        </table>
+        "#,
+        settings.base_token,
+        settings.base_amount,
+        settings.slippage_bps,
+        settings.min_profit_bps,
+        settings.max_concurrent_checks
+    );
+
     // Get arbitrage stats
-    let (total_opportunities, recent_profit_usdc, all_time_profit_usdc, top_opportunities_html) =
-        if let Some(monitor) = &state.arbitrage_monitor {
-            let all_opportunities = monitor.get_recent_opportunities(1000);
-            let total = all_opportunities.len();
-            let recent_profit: u64 = all_opportunities
-                .iter()
-                .take(10)
-                .map(|o| o.profit_amount)
-                .sum();
-            let profit_usdc = recent_profit as f64 / 1_000_000.0;
+    let (
+        total_opportunities,
+        recent_profit_usdc,
+        all_time_profit_usdc,
+        top_opportunities_html,
+        abnormal_html,
+        settings_html,
+        monitored_tokens_html,
+    ) = if let Some(monitor) = &state.arbitrage_monitor {
+        let all_opportunities = monitor.get_recent_opportunities(1000);
+        let total = all_opportunities.len();
+        let recent_profit: i64 = all_opportunities
+            .iter()
+            .take(10)
+            .map(|o| o.profit_amount)
+            .sum();
+        let profit_usdc = recent_profit as f64 / 1_000_000.0;
 
-            // Calculate all-time profit
-            let all_time_profit: u64 = all_opportunities.iter().map(|o| o.profit_amount).sum();
-            let all_time_profit_usdc = all_time_profit as f64 / 1_000_000.0;
+        // Calculate all-time profit
+        let all_time_profit: i64 = all_opportunities.iter().map(|o| o.profit_amount).sum();
+        let all_time_profit_usdc = all_time_profit as f64 / 1_000_000.0;
 
-            // Generate opportunities table
-            let top_20 = all_opportunities.iter().take(20);
-            let mut opp_html = String::new();
-            for opp in top_20 {
-                // Format timestamp as human readable
-                let secs = opp.detected_at / 1000; // Convert milliseconds to seconds
-                let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
-                let datetime = format!("{:?}", timestamp);
+        // Generate opportunities table
+        let top_20 = all_opportunities.iter().take(20);
+        let mut opp_html = String::new();
+        for opp in top_20 {
+            use chrono::{DateTime, Utc};
+            let start_time =
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let datetime_utc: DateTime<Utc> = start_time.into();
+            let datetime = datetime_utc.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
-                let profit_pct = if opp.input_amount > 0 {
-                    (opp.profit_amount as f64 / opp.input_amount as f64) * 100.0
-                } else {
-                    0.0
-                };
+            let profit_pct = if opp.input_amount > 0 {
+                (opp.profit_amount as f64 / opp.input_amount as f64) * 100.0
+            } else {
+                0.0
+            };
 
-                // Format status based on OpportunityStatus
-                let status_html = match &opp.status {
-                    crate::arbitrage_monitor::OpportunityStatus::Completed => {
-                        let swapped_secs = opp.swapped_at;
-                        let swapped_timestamp =
-                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(swapped_secs);
-                        let swapped_datetime = format!("{:?}", swapped_timestamp);
-                        format!("<span class='status-badge completed'>✅ Completed<br><small>{}</small></span>", swapped_datetime)
-                    }
-                    crate::arbitrage_monitor::OpportunityStatus::Executing => {
-                        "<span class='status-badge executing'>🔄 Executing</span>".to_string()
-                    }
-                    crate::arbitrage_monitor::OpportunityStatus::Failed => {
-                        "<span class='status-badge failed'>❌ Failed</span>".to_string()
-                    }
-                    crate::arbitrage_monitor::OpportunityStatus::Pending => {
-                        "<span class='status-badge pending'>⏳ Pending</span>".to_string()
-                    }
-                };
+            // Format status badge
+            let status_html = match opp.execution_status {
+                crate::arbitrage_monitor::ExecutionStatus::NotYet => {
+                    "<span class='status-badge status-pending'>⏳ Pending</span>".to_string()
+                }
+                crate::arbitrage_monitor::ExecutionStatus::Success => {
+                    "<span class='status-badge status-success'>✅ Success</span>".to_string()
+                }
+                crate::arbitrage_monitor::ExecutionStatus::Fail => {
+                    let error_text = opp.error_message.as_deref().unwrap_or("Unknown error");
+                    let escaped_error = error_text.replace("'", "\\'");
+                    format!(
+                            "<div class='tooltip' onclick=\"copyToClipboard('{}')\" title='Click to copy error'>\
+                                <span class='status-badge status-fail'>❌ Failed</span>\
+                                <span class='tooltiptext'>{}</span>\
+                            </div>",
+                            escaped_error, error_text
+                        )
+                }
+            };
 
-                opp_html.push_str(&format!(
-                    "<tr><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
+            // Format dexes string
+            let fwd_dex = opp.forward_dexes.join(", ");
+            let rev_dex = opp.reverse_dexes.join(", ");
+            let route_display = if fwd_dex.is_empty() && rev_dex.is_empty() {
+                "-".to_string()
+            } else {
+                format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex)
+            };
+
+            opp_html.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.2}</td><td>{:.2}%</td><td>{}</td></tr>",
                     datetime,
                     &opp.pair_name,
+                    route_display,
                     opp.token_a.chars().take(6).collect::<String>(),
                     opp.token_b.chars().take(6).collect::<String>(),
                     opp.profit_amount as f64 / 1_000_000.0,
                     profit_pct,
-                    status_html
+                    status_html,
                 ));
-            }
+        }
 
-            if opp_html.is_empty() {
-                opp_html =
-                    "<tr><td colspan='6' class='no-data'>No opportunities found yet</td></tr>"
-                        .to_string();
-            }
+        if opp_html.is_empty() {
+            opp_html = "<tr><td colspan='6' class='no-data'>No opportunities found yet</td></tr>"
+                .to_string();
+        }
 
-            (total, profit_usdc, all_time_profit_usdc, opp_html)
-        } else {
-            (
-                0,
-                0.0,
-                0.0,
-                "<tr><td colspan='5' class='no-data'>Arbitrage monitor not available</td></tr>"
-                    .to_string(),
-            )
-        };
+        // Generate Abnormal Cases Table
+        let abnormal_opportunities = monitor.get_recent_abnormal_opportunities(50);
+        let mut abn_html = String::new();
+        for opp in abnormal_opportunities {
+            use chrono::{DateTime, Utc};
+            let start_time =
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(opp.detected_at);
+            let datetime_utc: DateTime<Utc> = start_time.into();
+            let datetime = datetime_utc.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+
+            let profit_pct = opp.profit_percent;
+            let profit_class = if profit_pct > 0.0 {
+                "status-success"
+            } else {
+                "status-fail"
+            };
+
+            // Format dexes string
+            let fwd_dex = opp.forward_dexes.join(", ");
+            let rev_dex = opp.reverse_dexes.join(", ");
+            let route_display = format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex);
+
+            abn_html.push_str(&format!(
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.4}</td><td class='{}'>{:.2}%</td></tr>",
+                    datetime,
+                    &opp.pair_name,
+                    route_display,
+                    opp.token_a.chars().take(4).collect::<String>(),
+                    opp.token_b.chars().take(4).collect::<String>(),
+                    opp.profit_amount as f64 / 1_000_000.0,
+                    profit_class,
+                    profit_pct,
+                ));
+        }
+        if abn_html.is_empty() {
+            abn_html = "<tr><td colspan='6' class='no-data'>No abnormal cases found yet</td></tr>"
+                .to_string();
+        }
+
+        (
+            total,
+            profit_usdc,
+            all_time_profit_usdc,
+            opp_html,
+            abn_html,
+            settings_html,
+            tokens_html,
+        )
+    } else {
+        (
+            0,
+            0.0,
+            0.0,
+            "<tr><td colspan='7' class='no-data'>Arbitrage monitor not available</td></tr>"
+                .to_string(),
+            "<tr><td colspan='6' class='no-data'>Arbitrage monitor not available</td></tr>"
+                .to_string(),
+            String::new(), // settings
+            tokens_html,
+        )
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -217,29 +321,71 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         }}
 
         .status-badge {{
-            display: inline-block;
-            padding: 6px 12px;
-            border-radius: 6px;
+            padding: 4px 12px;
+            border-radius: 12px;
             font-size: 12px;
             font-weight: 600;
+            display: inline-block;
         }}
 
-        .status-badge.pending {{
+        .status-pending {{
             background: #fff3cd;
             color: #856404;
         }}
 
-        .status-badge.swapped {{
+        .status-success {{
             background: #d4edda;
             color: #155724;
         }}
 
-        .status-badge small {{
-            display: block;
-            font-size: 10px;
-            margin-top: 2px;
-            font-weight: 400;
+        .status-fail {{
+            background: #f8d7da;
+            color: #721c24;
         }}
+
+        .tooltip {{
+            position: relative;
+            display: inline-block;
+            cursor: pointer;
+        }}
+
+        .tooltip .tooltiptext {{
+            visibility: hidden;
+            width: 250px;
+            background-color: #333;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 8px 12px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%; /* Position above */
+            left: 50%;
+            margin-left: -125px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 11px;
+            line-height: 1.4;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            white-space: normal;
+        }}
+
+        .tooltip .tooltiptext::after {{
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }}
+
+        .tooltip:hover .tooltiptext {{
+            visibility: visible;
+            opacity: 0.95;
+        }}
+
 
         .footer {{
             text-align: center;
@@ -300,6 +446,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                     <tr>
                         <th>Time</th>
                         <th>Pair</th>
+                        <th>Dex Route</th>
                         <th>Route</th>
                         <th>Profit</th>
                         <th>Profit %</th>
@@ -313,16 +460,40 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         </div>
 
         <div class="section">
+            <h2>🚨 Abnormal Cases (> 5% | < -5%)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Pair</th>
+                        <th>Dex Route</th>
+                        <th>Route</th>
+                        <th>Profit</th>
+                        <th>Profit %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>⚙️ Configuration Settings</h2>
+            {}
+        </div>
+
+        <div class="section">
             <h2>📋 Monitored Tokens</h2>
             <table>
                 <thead>
                     <tr>
                         <th>Token</th>
                         <th>Address</th>
-                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody id="tokens-tbody">
+                    {}
                 </tbody>
             </table>
             <div id="no-tokens" class="no-data" style="display:none;">No monitored tokens found</div>
@@ -340,6 +511,15 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             window.location.href = '/dashboard';
         }}
 
+        function copyToClipboard(text) {{
+            navigator.clipboard.writeText(text).then(function() {{
+                // Optional: visual feedback
+                console.log('Copied to clipboard');
+            }}, function(err) {{
+                console.error('Could not copy text: ', err);
+            }});
+        }}
+
         document.getElementById('update-time').textContent = new Date().toLocaleTimeString();
     </script>
 </body>
@@ -352,5 +532,8 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         recent_profit_usdc,
         all_time_profit_usdc,
         top_opportunities_html,
+        abnormal_html,
+        settings_html,
+        monitored_tokens_html
     )
 }

@@ -1,15 +1,28 @@
 use std::sync::Arc;
 
+use crate::{
+    pool_data_types::{common::functions, GetAmmConfig, PoolUpdateEventType},
+    utils::tokens_equal,
+};
 use borsh::BorshDeserialize;
 use serde::{Deserialize, Serialize};
+
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID;
 
-use crate::{
-    constants::is_base_token,
-    pool_data_types::{GetAmmConfig, PoolUpdateEventType},
-    utils::tokens_equal,
-};
+use crate::pool_data_types::traits::BuildSwapInstruction;
+use crate::types::SwapParams;
+use async_trait::async_trait;
+use borsh::BorshSerialize;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
+use solana_program::instruction::{AccountMeta, Instruction};
+use spl_associated_token_account;
+
+#[derive(BorshSerialize)]
+struct SwapBaseInputArgs {
+    amount_in: u64,
+    minimum_amount_out: u64,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaydiumCpmmPoolState {
     pub slot: u64,
@@ -97,47 +110,148 @@ impl RaydiumCpmmPoolState {
         base_decimals: u8,
         quote_decimals: u8,
     ) -> (f64, f64) {
-        if self.token1_reserve == 0 || self.token0_reserve == 0 {
-            return (0.0, 0.0);
+        functions::calculate_amm_token_prices(
+            &self.token0,
+            &self.token1,
+            self.token0_reserve,
+            self.token1_reserve,
+            sol_price,
+            base_decimals,
+            quote_decimals,
+        )
+    }
+}
+
+#[async_trait]
+impl BuildSwapInstruction for RaydiumCpmmPoolState {
+    async fn build_swap_instruction(
+        &self,
+        params: &SwapParams,
+        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+    ) -> std::result::Result<Vec<Instruction>, String> {
+        // 1. Determine direction
+        // In Raydium CPMM, we need to know if we are swapping Token 0 -> Token 1 or Token 1 -> Token 0
+        // to correctly assign input/output accounts.
+        let is_input_token0 = params.input_token.address == self.token0;
+        if !is_input_token0 && params.input_token.address != self.token1 {
+            return Err("Input token does not match pool mints".to_string());
         }
 
-        let token0_str = self.token0.to_string();
-        let token1_str = self.token1.to_string();
+        // 2. Calculate output amount
+        let amount_out = self.calculate_output_amount(
+            &params.input_token.address,
+            params.input_amount,
+            amm_config_fetcher.clone(),
+        );
 
-        let is_token0_a_base_token = is_base_token(&token0_str);
-        let is_token1_a_base_token = is_base_token(&token1_str);
+        // 3. Calculate minimum output amount (slippage)
+        let minimum_amount_out = functions::calculate_slippage(amount_out, params.slippage_bps)?;
 
-        let decimal_scale = 10_f64.powi(base_decimals as i32 - quote_decimals as i32);
-
-        // If token1 is a base token (like USDC, SOL), use its price
-        if is_token1_a_base_token {
-            let token1_price = if token1_str == "So11111111111111111111111111111111111111112" {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let token0_price = (self.token1_reserve as f64 / self.token0_reserve as f64)
-                * decimal_scale
-                * token1_price;
-            (token0_price, token1_price)
-        } else if is_token0_a_base_token {
-            // If token0 is a base token, use its price
-            let token0_price = if token0_str == "So11111111111111111111111111111111111111112" {
-                sol_price // SOL
-            } else {
-                1.0 // Assume USDC/USDT are ~$1
-            };
-
-            let token1_price = (self.token0_reserve as f64 / self.token1_reserve as f64)
-                * (1.0 / decimal_scale)
-                * token0_price;
-            (token0_price, token1_price)
+        // 4. Prepare accounts
+        let (
+            input_vault,
+            output_vault,
+            input_mint,
+            output_mint,
+            input_token_program,
+            output_token_program,
+        ) = if is_input_token0 {
+            (
+                self.token0_vault,
+                self.token1_vault,
+                self.token0,
+                self.token1,
+                functions::get_token_program(params.input_token.is_token_2022),
+                functions::get_token_program(params.output_token.is_token_2022),
+            )
         } else {
-            // Neither token is a base token, assume relative pricing
-            let token0_price =
-                (self.token1_reserve as f64 / self.token0_reserve as f64) * decimal_scale * 1.0;
-            (token0_price, 1.0)
-        }
+            (
+                self.token1_vault,
+                self.token0_vault,
+                self.token1,
+                self.token0,
+                functions::get_token_program(params.input_token.is_token_2022),
+                functions::get_token_program(params.output_token.is_token_2022),
+            )
+        };
+
+        // User ATAs
+        let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
+        let input_mint_anchor = functions::to_pubkey(&params.input_token.address);
+        let output_mint_anchor = functions::to_pubkey(&params.output_token.address);
+
+        let user_input_token_old =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_anchor,
+                &input_mint_anchor,
+                &functions::to_pubkey(&input_token_program),
+            );
+        let user_output_token_old =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &user_wallet_anchor,
+                &output_mint_anchor,
+                &functions::to_pubkey(&output_token_program),
+            );
+
+        let user_input_token = functions::to_address(&user_input_token_old);
+        let user_output_token = functions::to_address(&user_output_token_old);
+
+        // 5. Construct Instruction Data
+        // global:swap_base_input discriminator: [143, 190, 90, 218, 196, 30, 51, 222]
+        let discriminator: [u8; 8] = [143, 190, 90, 218, 196, 30, 51, 222];
+        let args = SwapBaseInputArgs {
+            amount_in: params.input_amount,
+            minimum_amount_out,
+        };
+        let mut data = Vec::with_capacity(8 + 16);
+        data.extend_from_slice(&discriminator);
+        args.serialize(&mut data).map_err(|e| e.to_string())?;
+
+        // Derive Authority
+        // AUTH_SEED = "vault_and_lp_mint_auth_seed"
+        let (authority, _) = Pubkey::find_program_address(
+            &[b"vault_and_lp_mint_auth_seed"],
+            &Self::get_program_id(),
+        );
+
+        let accounts = vec![
+            AccountMeta::new(params.user_wallet, true),        // payer
+            AccountMeta::new_readonly(authority, false),       // authority
+            AccountMeta::new_readonly(self.amm_config, false), // amm_config
+            AccountMeta::new(self.address, false),             // pool_state
+            AccountMeta::new(user_input_token, false),         // input_token_account
+            AccountMeta::new(user_output_token, false),        // output_token_account
+            AccountMeta::new(input_vault, false),              // input_vault
+            AccountMeta::new(output_vault, false),             // output_vault
+            AccountMeta::new_readonly(input_token_program, false), // input_token_program
+            AccountMeta::new_readonly(output_token_program, false), // output_token_program
+            AccountMeta::new_readonly(input_mint, false),      // input_token_mint
+            AccountMeta::new_readonly(output_mint, false),     // output_token_mint
+            AccountMeta::new(self.observation_state, false),   // observation_state
+        ];
+
+        let swap_instruction = Instruction {
+            program_id: Self::get_program_id(),
+            accounts,
+            data,
+        };
+
+        let mut instructions = Vec::new();
+
+        // Compute Budget
+        instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(1_400_000));
+
+        // Create Output ATA (Idempotent)
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            user_output_token,
+            output_mint,
+            params.output_token.is_token_2022,
+        ));
+
+        // Swap Instruction
+        instructions.push(swap_instruction);
+
+        Ok(instructions)
     }
 }

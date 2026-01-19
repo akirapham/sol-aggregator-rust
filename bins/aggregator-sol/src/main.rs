@@ -2,14 +2,12 @@ mod aggregator;
 mod api;
 mod arbitrage_config;
 mod arbitrage_monitor;
-mod arbitrage_transaction_handler;
 mod config;
 mod constants;
 mod dex;
 mod error;
 mod fetchers;
 mod grpc;
-mod on_chain_swap_executor;
 mod pool_data_types;
 mod pool_manager;
 mod types;
@@ -18,10 +16,10 @@ mod utils;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use dotenv::dotenv;
 use env_logger::Env;
-use solana_sdk::signature::Signer;
-use solana_sdk::signer::keypair::read_keypair_file;
+use solana_sdk::pubkey::Pubkey;
 use std::env;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -143,26 +141,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let aggregator_clone = aggregator.clone();
 
                 // Load mainnet configuration
-                let rpc_url = env::var("SOLANA_RPC_URL")
-                    .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+                let rpc_url = env::var("SOLANA_RPC_URL").unwrap_or_else(|_| {
+                    "https://sol-rpc.degalabs.fi/jsdh7483-0543-skdjs-84738-d383438e4sdfd"
+                        .to_string()
+                });
                 log::info!("Using Solana RPC: {}", rpc_url);
 
                 // Load keypair for transaction signing
-                let keypair_path = env::var("SOLANA_KEYPAIR_PATH").unwrap_or_else(|_| {
-                    format!(
-                        "{}/.config/solana/id.json",
-                        std::env::var("HOME").unwrap_or_default()
-                    )
-                });
-                let keypair = read_keypair_file(&keypair_path).ok()?;
-                log::info!("Loaded keypair: {}", keypair.pubkey());
+                let payer_pubkey_str = env::var("PAYER_PUBKEY").unwrap();
+                let payer_pubkey =
+                    Pubkey::from_str(&payer_pubkey_str).expect("Invalid PAYER_PUBKEY");
+                log::info!("Loaded keypair: {}", payer_pubkey);
 
                 let monitor = ArbitrageMonitor::new(
                     aggregator_clone,
                     arb_config.clone(),
                     "rocksdb_data/arbitrage_opportunities",
                     &rpc_url,
-                    Arc::new(keypair),
+                    payer_pubkey,
                 )
                 .expect("Failed to create arbitrage monitor");
 
@@ -226,7 +222,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tried.push(requested.clone());
 
         // Fallback inside aggregator-sol directory
-        let fallback1 = (env::current_dir()?)
+        let fallback1 = PathBuf::from(env::current_dir()?)
             .join("aggregator-sol")
             .join(&arb_config_path);
         tried.push(fallback1.clone());
@@ -291,9 +287,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
 
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
 
-    log::info!("Server running on http://0.0.0.0:{}", port);
+    log::info!("Server running on http://127.0.0.1:{}", port);
     log::info!("API endpoints:");
     log::info!("  POST /quote - Get swap quotes");
     log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");

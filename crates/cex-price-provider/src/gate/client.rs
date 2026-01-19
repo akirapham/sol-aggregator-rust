@@ -104,7 +104,7 @@ impl GateClient {
         log::debug!("Currency pairs response length: {}", response_text.len());
 
         let pairs: Vec<CurrencyPair> = serde_json::from_str(&response_text)
-            .context(format!("Failed to parse currency pairs response"))?;
+            .context("Failed to parse currency pairs response".to_string())?;
 
         Ok(pairs)
     }

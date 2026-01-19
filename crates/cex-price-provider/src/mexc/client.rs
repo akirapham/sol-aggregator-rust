@@ -217,7 +217,7 @@ impl MexcClient {
         }
 
         // Sort parameters and build query string
-        query_params.sort_by(|a, b| a.0.cmp(&b.0));
+        query_params.sort_by(|a, b| a.0.cmp(b.0));
         let query_string = query_params
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))

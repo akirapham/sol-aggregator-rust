@@ -58,6 +58,7 @@ pub struct TokenPrice {
     pub fee_tier: Option<u32>,
     pub tick_spacing: Option<i32>,
     pub eth_price_usd: f64,
+    pub hooks: Option<Address>,
 }
 
 /// DEX type identifier
@@ -140,6 +141,7 @@ pub struct TokenPriceUpdate {
     pub fee_tier: Option<u32>,
     pub tick_spacing: Option<i32>,
     pub eth_price_usd: f64,
+    pub hooks: Option<Address>,
 }
 
 impl From<TokenPrice> for TokenPriceUpdate {
@@ -149,7 +151,7 @@ impl From<TokenPrice> for TokenPriceUpdate {
             price_in_eth: price.price_in_eth,
             price_in_usd: price.price_in_usd,
             last_updated: price.last_updated,
-            pool_address: format!("{:?}", price.pool_address),
+            pool_address: format!("{}", price.pool_address),
             dex_version: format!("{:?}", price.dex_version),
             decimals: price.decimals,
             pool_token0: price.pool_token0,
@@ -158,6 +160,7 @@ impl From<TokenPrice> for TokenPriceUpdate {
             fee_tier: price.fee_tier,
             tick_spacing: price.tick_spacing,
             eth_price_usd: price.eth_price_usd,
+            hooks: price.hooks,
         }
     }
 }

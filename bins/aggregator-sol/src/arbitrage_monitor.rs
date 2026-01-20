@@ -2,63 +2,50 @@ use crate::aggregator::{DexAggregator, SwapRoute};
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
-use rocksdb::{Options, DB};
-use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcSimulateTransactionConfig;
 use solana_sdk::pubkey::Pubkey;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-/// Execution status for arbitrage opportunities
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ExecutionStatus {
-    NotYet,
-    Success,
-    Fail,
-}
+use sqlx::{Pool, Postgres};
 
-/// Detected arbitrage opportunity (Profitable only)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// Define arbitrage opportunity structures to match DB schema
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ArbitrageOpportunity {
     pub pair_name: String,
     pub token_a: String,
     pub token_b: String,
-    pub profit_amount: i64,
+    pub profit_amount: u64,
     pub profit_percent: f64,
     pub input_amount: u64,
-    pub forward_output: u64,
-    pub reverse_output: u64,
     pub detected_at: u64,
-    pub execution_status: ExecutionStatus,
+    pub execution_status: String,
     pub error_message: Option<String>,
-    pub forward_dexes: Vec<String>,
-    pub reverse_dexes: Vec<String>,
+    pub details: serde_json::Value,
 }
 
-/// Abnormal arbitrage opportunity (Profit > 5% or < -5%)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AbnormalArbitrageOpportunity {
     pub pair_name: String,
     pub token_a: String,
     pub token_b: String,
-    pub profit_amount: i64,
+    pub profit_amount: u64,
     pub profit_percent: f64,
     pub input_amount: u64,
-    pub forward_output: u64,
-    pub reverse_output: u64,
     pub detected_at: u64,
-    pub forward_dexes: Vec<String>,
-    pub reverse_dexes: Vec<String>,
+    pub routes: Vec<String>,
 }
+
+
+
 
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
 #[derive(Clone)]
 pub struct ArbitrageMonitor {
     aggregator: Arc<DexAggregator>,
     config: ArbitrageConfig,
-    db: Arc<DB>,
+    db: Pool<Postgres>,
     rpc_client: Arc<RpcClient>,
     payer_pubkey: Pubkey,
 }
@@ -68,13 +55,10 @@ impl ArbitrageMonitor {
     pub fn new(
         aggregator: Arc<DexAggregator>,
         config: ArbitrageConfig,
-        db_path: impl AsRef<Path>,
+        db: Pool<Postgres>,
         rpc_url: &str,
         payer_pubkey: Pubkey,
-    ) -> Result<Self, rocksdb::Error> {
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        let db = DB::open(&opts, db_path)?;
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let rpc_client = Arc::new(RpcClient::new(rpc_url.to_string()));
 
         log::info!("🌐 Arbitrage Monitor initialized for mainnet: {}", rpc_url);
@@ -83,7 +67,7 @@ impl ArbitrageMonitor {
         Ok(Self {
             aggregator,
             config,
-            db: Arc::new(db),
+            db,
             rpc_client,
             payer_pubkey,
         })
@@ -222,27 +206,31 @@ impl ArbitrageMonitor {
                         .flat_map(|p| p.steps.iter().map(|s| s.dex.to_string()))
                         .collect();
 
+                    let details = serde_json::json!({
+                        "forward_output": forward_route.output_amount,
+                        "reverse_output": reverse_route.output_amount,
+                        "forward_dexes": forward_dexes,
+                        "reverse_dexes": reverse_dexes
+                    });
+
                     let opportunity = ArbitrageOpportunity {
                         pair_name: format!("{}-{}", token_a, token_b),
                         token_a: token_a.to_string(),
                         token_b: token_b.to_string(),
-                        profit_amount: profit,
+                        profit_amount: profit as u64,
                         profit_percent,
                         input_amount: self.config.settings.base_amount,
-                        forward_output: forward_route.output_amount,
-                        reverse_output: reverse_route.output_amount,
                         detected_at: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs(),
-                        execution_status: ExecutionStatus::NotYet,
+                        execution_status: "NotYet".to_string(),
                         error_message: None,
-                        forward_dexes: forward_dexes.clone(),
-                        reverse_dexes: reverse_dexes.clone(),
+                        details,
                     };
 
                     // Save opportunity with Pending status
-                    if let Err(e) = self.save_opportunity(&opportunity) {
+                    if let Err(e) = self.save_opportunity(&opportunity).await {
                         log::error!("Failed to save arbitrage opportunity: {}", e);
                     }
 
@@ -279,24 +267,24 @@ impl ArbitrageMonitor {
                         .flat_map(|p| p.steps.iter().map(|s| s.dex.to_string()))
                         .collect();
 
+                    let mut routes = forward_dexes.clone();
+                    routes.extend(reverse_dexes.clone());
+
                     let abnormal_opp = AbnormalArbitrageOpportunity {
                         pair_name: format!("{}-{}", token_a, token_b),
                         token_a: token_a.to_string(),
                         token_b: token_b.to_string(),
-                        profit_amount: profit,
+                        profit_amount: profit as u64,
                         profit_percent,
                         input_amount: self.config.settings.base_amount,
-                        forward_output: forward_route.output_amount,
-                        reverse_output: reverse_route.output_amount,
                         detected_at: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs(),
-                        forward_dexes: forward_dexes.clone(),
-                        reverse_dexes: reverse_dexes.clone(),
+                        routes,
                     };
 
-                    if let Err(e) = self.save_abnormal_opportunity(&abnormal_opp) {
+                    if let Err(e) = self.save_abnormal_opportunity(&abnormal_opp).await {
                         log::error!("Failed to save abnormal opportunity: {}", e);
                     }
 
@@ -317,159 +305,156 @@ impl ArbitrageMonitor {
         }
     }
 
-    /// Save an opportunity to RocksDB
-    fn save_opportunity(&self, opportunity: &ArbitrageOpportunity) -> Result<(), String> {
-        let key = format!("opp:{}:{}", opportunity.detected_at, opportunity.pair_name);
-        let value = serde_json::to_vec(opportunity)
-            .map_err(|e| format!("Failed to serialize opportunity: {}", e))?;
-        self.db
-            .put(key.as_bytes(), value)
-            .map_err(|e| format!("Failed to save to DB: {}", e))?;
+    /// Save an arbitrage opportunity to Postgres
+    pub async fn save_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Serialize details to JSONB
+        let details_json = serde_json::to_value(&opp.details)?;
+        
+        sqlx::query(
+            r#"
+            INSERT INTO arbitrage_opportunities (
+                pair_name, token_a, token_b, profit_amount, profit_percent,
+                input_amount, detected_at, execution_status, error_message, details,
+                is_abnormal
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#
+        )
+        .bind(&opp.pair_name)
+        .bind(&opp.token_a)
+        .bind(&opp.token_b)
+        .bind(opp.profit_amount as i64)
+        .bind(opp.profit_percent)
+        .bind(opp.input_amount as i64)
+        .bind(opp.detected_at as i64)
+        .bind(&opp.execution_status)
+        .bind(opp.error_message.as_deref())
+        .bind(details_json)
+        .bind(false) // Not abnormal
+        .execute(&self.db)
+        .await?;
+        
         Ok(())
     }
 
-    /// Save an abnormal opportunity to RocksDB (prefix "abn:")
-    fn save_abnormal_opportunity(
-        &self,
-        opportunity: &AbnormalArbitrageOpportunity,
-    ) -> Result<(), String> {
-        let key = format!("abn:{}:{}", opportunity.detected_at, opportunity.pair_name);
-        let value = serde_json::to_vec(opportunity)
-            .map_err(|e| format!("Failed to serialize abnormal opportunity: {}", e))?;
-        self.db
-            .put(key.as_bytes(), value)
-            .map_err(|e| format!("Failed to save to DB: {}", e))?;
+    /// Save an abnormal arbitrage opportunity to Postgres
+    pub async fn save_abnormal_opportunity(&self, opp: &AbnormalArbitrageOpportunity) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Similar to above, but strict different fields or just flag it?
+        // The schema supports `is_abnormal` flag.
+        // Let's map AbnormalArbitrageOpportunity to the table fields.
+        let details = serde_json::json!({
+            "routes": opp.routes,
+            "reason": "Abnormal Profit"
+        });
+        
+        sqlx::query(
+            r#"
+            INSERT INTO arbitrage_opportunities (
+                pair_name, token_a, token_b, profit_amount, profit_percent,
+                input_amount, detected_at, execution_status, error_message, details,
+                is_abnormal
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "#
+        )
+        .bind(&opp.pair_name)
+        .bind(&opp.token_a)
+        .bind(&opp.token_b)
+        .bind(opp.profit_amount as i64)
+        .bind(opp.profit_percent)
+        .bind(opp.input_amount as i64)
+        .bind(opp.detected_at as i64)
+        .bind("DETECTED") // Status
+        .bind(Option::<String>::None)
+        .bind(details)
+        .bind(true) // Is abnormal
+        .execute(&self.db)
+        .await?;
+
         Ok(())
     }
 
-    /// Get recent opportunities (last N)
-    pub fn get_recent_opportunities(&self, limit: usize) -> Vec<ArbitrageOpportunity> {
-        let mut opportunities = Vec::new();
-        let mut iter = self.db.raw_iterator();
+    /// Get recent opportunities (last N) from Postgres
+    pub async fn get_recent_opportunities(&self, limit: usize) -> Vec<ArbitrageOpportunity> {
+        let rows = sqlx::query(
+            "SELECT * FROM arbitrage_opportunities WHERE is_abnormal = FALSE ORDER BY detected_at DESC LIMIT $1"
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default(); // Return empty on error for now? Or log?
 
-        // Seek to the last key with "opp:" prefix
-        iter.seek_to_last();
-
-        while iter.valid() {
-            if let Some(key) = iter.key() {
-                if let Ok(key_str) = std::str::from_utf8(key) {
-                    if key_str.starts_with("opp:") {
-                        if let Some(value) = iter.value() {
-                            if let Ok(opp) = serde_json::from_slice::<ArbitrageOpportunity>(value) {
-                                opportunities.push(opp);
-                                if opportunities.len() >= limit {
-                                    break;
-                                }
-                            }
-                        }
-                    } else {
-                        break; // No more opportunities
-                    }
-                }
-            }
-            iter.prev();
-        }
-
-        opportunities
+        rows.into_iter().map(|row| {
+             use sqlx::Row;
+             let details_val: serde_json::Value = row.try_get("details").unwrap_or(serde_json::Value::Null); // Handle nulls if any
+             
+             ArbitrageOpportunity {
+                 pair_name: row.get("pair_name"),
+                 token_a: row.get("token_a"),
+                 token_b: row.get("token_b"),
+                 profit_amount: row.get::<i64, _>("profit_amount") as u64,
+                 profit_percent: row.get("profit_percent"),
+                 input_amount: row.get::<i64, _>("input_amount") as u64,
+                 detected_at: row.get::<i64, _>("detected_at") as u64,
+                 execution_status: row.get::<String, _>("execution_status"),
+                 error_message: row.get("error_message"),
+                 details: details_val,
+             }
+        }).collect()
     }
 
-    /// Get recent abnormal opportunities (last N)
-    pub fn get_recent_abnormal_opportunities(
+    /// Get recent abnormal opportunities (last N) from Postgres
+    pub async fn get_recent_abnormal_opportunities(
         &self,
         limit: usize,
     ) -> Vec<AbnormalArbitrageOpportunity> {
-        let mut opportunities = Vec::new();
-        let mut iter = self.db.raw_iterator();
+        let rows = sqlx::query(
+             "SELECT * FROM arbitrage_opportunities WHERE is_abnormal = true ORDER BY detected_at DESC LIMIT $1"
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.db)
+        .await
+        .unwrap_or_default();
 
-        // Strategy to get recent (last added) "abn:" keys:
-        // 1. Seek to "abo" (which is lexicographically > "abn").
-        //    seek() positions at the first key >= target.
-        // 2. If valid (found a key >= "abo", e.g. "opp:..."), call prev() to jump to the last "abn:..." key (assuming no keys between abn:zzz and abo).
-        // 3. If invalid (no keys >= "abo"), it means all keys are smaller, so seek_to_last() should place us at the end of the DB (hopefully "abn:..." if they exist and are the last ones, but safer to assume they might be last).
-        // Actually, if seek("abo") is invalid, it means everything is < "abo".
-        // The last key in DB could be "abn:..." if no "opp:..." exists.
-
-        iter.seek("abo");
-
-        if iter.valid() {
-            iter.prev();
-        } else {
-            iter.seek_to_last();
-        }
-
-        while iter.valid() {
-            if let Some(key) = iter.key() {
-                if let Ok(key_str) = std::str::from_utf8(key) {
-                    if key_str.starts_with("abn:") {
-                        if let Some(value) = iter.value() {
-                            if let Ok(opp) =
-                                serde_json::from_slice::<AbnormalArbitrageOpportunity>(value)
-                            {
-                                opportunities.push(opp);
-                                if opportunities.len() >= limit {
-                                    break;
-                                }
-                            }
-                        }
-                    } else {
-                        // Check strictly if we went past "abn" into smaller prefixes (e.g. "abc")
-                        // But since we are iterating backwards from "abo" (approx), if we hit something not "abn", it must be smaller.
-                        // Unless we started at "opp" because seek failed? No, seek finds >=.
-                        // If we are at "opp", prev would go to "abn" (if exists).
-                        // So if we see "abn", good. If not "abn", it means either:
-                        // 1. We are still at "opp" (logic error above?) -> Nope, we did prev().
-                        // 2. We went past "abn" to "abc". -> Break.
-                        // 3. We were at "abc" to begin with because no "abn" exists. -> Break.
-
-                        // One edge case: what if key is > "abn:" (e.g. we didn't seek correctly)?
-                        // "abo" > "abn". iter.seek("abo") -> >= "abo". iter.prev() -> < "abo".
-                        // So key is guaranteed < "abo" (so <= "abn:zzz").
-                        // If it doesn't start with "abn:", then it must be < "abn:".
-                        break;
-                    }
-                }
-            }
-            iter.prev();
-        }
-
-        opportunities
+        rows.into_iter().map(|row| {
+             use sqlx::Row;
+             let details: serde_json::Value = row.try_get("details").unwrap_or(serde_json::Value::Null);
+             let routes = details.get("routes")
+                 .and_then(|v| v.as_array())
+                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                 .unwrap_or_default();
+                 
+             AbnormalArbitrageOpportunity {
+                 pair_name: row.get("pair_name"),
+                 token_a: row.get("token_a"),
+                 token_b: row.get("token_b"),
+                 profit_amount: row.get::<i64, _>("profit_amount") as u64,
+                 profit_percent: row.get("profit_percent"),
+                 input_amount: row.get::<i64, _>("input_amount") as u64,
+                 detected_at: row.get::<i64, _>("detected_at") as u64,
+                 routes,
+             }
+         }).collect()
     }
 
-    /// Clear old opportunities (older than N seconds)
-    pub fn cleanup_old_opportunities(&self, max_age_seconds: u64) -> Result<usize, String> {
-        let now = std::time::SystemTime::now()
+    /// Cleanup old opportunities older than specified seconds
+    pub async fn cleanup_old_opportunities(&self, max_age_seconds: u64) -> Result<u64, sqlx::Error> {
+        let cutoff_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs();
+            .as_secs()
+            - max_age_seconds;
 
-        let cutoff_time = now - max_age_seconds;
-        let mut deleted_count = 0;
+        let result = sqlx::query(
+            "DELETE FROM arbitrage_opportunities WHERE detected_at < $1"
+        )
+        .bind(cutoff_time as i64)
+        .execute(&self.db)
+        .await?;
 
-        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
-        let mut keys_to_delete = Vec::new();
-
-        for item in iter.flatten() {
-            let (key, value) = item;
-            if let Ok(key_str) = std::str::from_utf8(&key) {
-                if key_str.starts_with("opp:") {
-                    if let Ok(opp) = serde_json::from_slice::<ArbitrageOpportunity>(&value) {
-                        if opp.detected_at < cutoff_time {
-                            keys_to_delete.push(key.to_vec());
-                        }
-                    }
-                }
-            }
-        }
-
-        for key in &keys_to_delete {
-            self.db
-                .delete(key)
-                .map_err(|e| format!("Failed to delete key: {}", e))?;
-            deleted_count += 1;
-        }
-
-        Ok(deleted_count)
+        Ok(result.rows_affected())
     }
+
 
     // Execute an arbitrage opportunity (simulation only)
     async fn execute_arbitrade_opportunity(
@@ -517,7 +502,7 @@ impl ArbitrageMonitor {
                             // Simulation failed
                             let error_msg = format!("Simulation failed: {:?}", err);
                             log::error!("❌ {}", error_msg);
-                            opportunity.execution_status = ExecutionStatus::Fail;
+                            opportunity.execution_status = "Fail".to_string();
                             opportunity.error_message = Some(error_msg);
                         } else {
                             // Simulation succeeded
@@ -525,14 +510,14 @@ impl ArbitrageMonitor {
                                 "✅ Simulation successful - compute units: {:?}",
                                 simulation.value.units_consumed
                             );
-                            opportunity.execution_status = ExecutionStatus::Success;
+                            opportunity.execution_status = "Success".to_string();
                             opportunity.error_message = None;
                         }
                     }
                     Err(e) => {
                         let error_msg = format!("RPC error during simulation: {}", e);
                         log::error!("❌ {}", error_msg);
-                        opportunity.execution_status = ExecutionStatus::Fail;
+                        opportunity.execution_status = "Fail".to_string();
                         opportunity.error_message = Some(error_msg);
                     }
                 }
@@ -540,13 +525,13 @@ impl ArbitrageMonitor {
             Err(e) => {
                 let error_msg = format!("Failed to build transaction: {}", e);
                 log::error!("❌ {}", error_msg);
-                opportunity.execution_status = ExecutionStatus::Fail;
+                opportunity.execution_status = "Fail".to_string();
                 opportunity.error_message = Some(error_msg);
             }
         }
 
         // Save updated opportunity with execution status
-        if let Err(e) = self.save_opportunity(&opportunity) {
+        if let Err(e) = self.save_opportunity(&opportunity).await {
             log::error!("Failed to save opportunity status: {}", e);
         }
     }

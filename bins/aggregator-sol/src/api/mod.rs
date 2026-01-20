@@ -19,13 +19,13 @@ use auth::{auth_middleware, AuthConfig};
 #[derive(Clone)]
 pub struct AppState {
     pub aggregator: Arc<DexAggregator>,
-    pub arbitrage_config: Arc<RwLock<ArbitrageConfig>>,
+    pub arbitrage_config: Option<Arc<RwLock<ArbitrageConfig>>>,
     pub arbitrage_monitor: Option<Arc<ArbitrageMonitor>>,
 }
 
 pub fn create_router(
     aggregator: Arc<DexAggregator>,
-    arbitrage_config: Arc<RwLock<ArbitrageConfig>>,
+    arbitrage_config: Option<Arc<RwLock<ArbitrageConfig>>>,
     arbitrage_monitor: Option<Arc<ArbitrageMonitor>>,
 ) -> Router {
     let state = Arc::new(AppState {

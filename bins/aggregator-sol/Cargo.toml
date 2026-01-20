@@ -79,7 +79,7 @@ spl-token-2022 = { workspace = true}
 solana-commitment-config = { workspace = true}
 yellowstone-grpc-proto = { workspace = true}
 
-axum = { workspace = true}
+axum = { workspace = true, features = ["macros"] }
 uuid = { workspace = true, features = ["v4"] }
 tower = { workspace = true}
 tower-http = { workspace = true, features = ["cors", "trace"] }
@@ -87,6 +87,8 @@ tracing = { workspace = true}
 tracing-subscriber = { workspace = true}
 redis = { workspace = true, optional = true }
 rocksdb = { workspace = true }
+sqlx = { workspace = true }
+dotenvy = { workspace = true }
 bincode = { workspace = true }
 # Anchor program dependencies for specific DEXs
 # These will be added as we implement each DEX

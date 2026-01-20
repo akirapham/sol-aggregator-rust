@@ -167,7 +167,7 @@ pub async fn get_token_with_error(
 
 // === Arbitrage Token Management DTOs ===
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Serialize, Validate)]
 pub struct AddTokenRequest {
     #[validate(length(
         min = 32,
@@ -178,7 +178,7 @@ pub struct AddTokenRequest {
     pub symbol: String,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Serialize, Validate)]
 pub struct RemoveTokenRequest {
     #[validate(length(
         min = 32,

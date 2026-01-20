@@ -223,18 +223,7 @@ pub async fn get_quote(
                     &best_route,
                     ExecutionPriority::Medium,
                     user_wallet,
-                    state
-                        .arbitrage_monitor
-                        .as_ref()
-                        .ok_or_else(|| (
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            Json(ErrorResponse {
-                                error: "Arbitrage monitor is not available".to_string(),
-                                details: vec!["Set ENABLE_ARBITRAGE_DETECTION=true to enable arbitrage features".to_string()],
-                            }),
-                        ))?
-                        .get_rpc_client()
-                        .as_ref(),
+                    &state.rpc_client,
                 )
                 .await
                 .map_err(|e| {
@@ -249,15 +238,8 @@ pub async fn get_quote(
                 })?;
 
             // Validate and serialize transaction
-            let rpc_client = state.arbitrage_monitor.as_ref().ok_or_else(|| (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse {
-                    error: "Arbitrage monitor is not available".to_string(),
-                    details: vec!["Set ENABLE_ARBITRAGE_DETECTION=true to enable arbitrage features".to_string()],
-                }),
-            ))?.get_rpc_client();
             let base64_tx =
-                validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
+                validate_and_serialize_transaction(transaction, state.rpc_client.as_ref()).await?;
 
             let response = QuoteResponse {
                 routes: swap_routes,
@@ -456,13 +438,6 @@ pub async fn check_arbitrage(
             let time_taken_ms = start_time.elapsed().as_millis() as u64;
 
             // Build arbitrage transaction (forward + reverse swaps in one atomic transaction)
-            let rpc_client = state.arbitrage_monitor.as_ref().ok_or_else(|| (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse {
-                    error: "Arbitrage monitor is not available".to_string(),
-                    details: vec!["Set ENABLE_ARBITRAGE_DETECTION=true to enable arbitrage features".to_string()],
-                }),
-            ))?.get_rpc_client();
             let transaction = state
                 .aggregator
                 .build_arbitrage_transaction(
@@ -470,7 +445,7 @@ pub async fn check_arbitrage(
                     &reverse_route,
                     ExecutionPriority::Medium,
                     user_wallet,
-                    rpc_client.as_ref(),
+                    state.rpc_client.as_ref(),
                 )
                 .await
                 .map_err(|e| {
@@ -486,7 +461,7 @@ pub async fn check_arbitrage(
 
             // Validate and serialize arbitrage transaction
             let base64_tx =
-                validate_and_serialize_transaction(transaction, rpc_client.as_ref()).await?;
+                validate_and_serialize_transaction(transaction, state.rpc_client.as_ref()).await?;
 
             let response = ArbitrageResponse {
                 profitable: true,
@@ -527,13 +502,23 @@ pub async fn get_arbitrage_tokens(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ArbitrageTokensResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Get arbitrage config
-    let arb_config = state.arbitrage_config.as_ref().ok_or_else(|| (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(ErrorResponse {
-            error: "Arbitrage detection is disabled".to_string(),
-            details: vec!["Set ENABLE_ARBITRAGE_DETECTION=true to enable arbitrage features".to_string()],
-        }),
-    ))?.read().unwrap();
+    let arb_config = state
+        .arbitrage_config
+        .as_ref()
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Arbitrage detection is disabled".to_string(),
+                    details: vec![
+                        "Set ENABLE_ARBITRAGE_DETECTION=true to enable arbitrage features"
+                            .to_string(),
+                    ],
+                }),
+            )
+        })?
+        .read()
+        .unwrap();
 
     let base_token = arb_config.get_base_token().map_err(|e| {
         (
@@ -594,7 +579,8 @@ pub async fn add_arbitrage_token(
                 error: "Invalid request".to_string(),
                 details,
             }),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Parse token address
@@ -610,35 +596,42 @@ pub async fn add_arbitrage_token(
         .add_arbitrage_token(token_pubkey)
         .await
     {
-         return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "Failed to add token".to_string(),
-                    details: vec![e.to_string()],
-                }),
-            ).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Failed to add token".to_string(),
+                details: vec![e.to_string()],
+            }),
+        )
+            .into_response();
     }
 
     // Also update the config (will be saved to DB by pool manager)
     let monitored_tokens = {
         let mut config = match state.arbitrage_config.as_ref() {
             Some(c) => c.write().unwrap(),
-            None => return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse {
-                    error: "Arbitrage detection is disabled".to_string(),
-                    details: vec!["Set ENABLE_ARBITRAGE_DETECTION=true to enable arbitrage features".to_string()],
-                }),
-            ).into_response(),
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: "Arbitrage detection is disabled".to_string(),
+                        details: vec![
+                            "Set ENABLE_ARBITRAGE_DETECTION=true to enable arbitrage features"
+                                .to_string(),
+                        ],
+                    }),
+                )
+                    .into_response()
+            }
         };
-        
+
         if let Err(e) = config.add_token(request.symbol.clone(), request.address.clone()) {
             log::warn!(
                 "Token added to pool manager but failed to update config: {}",
                 e
             );
         }
-        
+
         config.monitored_tokens.clone()
     }; // config lock is dropped here
 
@@ -658,7 +651,8 @@ pub async fn add_arbitrage_token(
             symbol: request.symbol,
             enabled: true,
         }),
-    }).into_response()
+    })
+    .into_response()
 }
 
 /// Remove a token from arbitrage monitoring
@@ -689,7 +683,8 @@ pub async fn remove_arbitrage_token(
                 error: "Invalid request".to_string(),
                 details,
             }),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Parse token address
@@ -711,22 +706,26 @@ pub async fn remove_arbitrage_token(
                 error: "Failed to remove token".to_string(),
                 details: vec![e.to_string()],
             }),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // Update config
     let (monitored_tokens, removed_token) = {
         let mut config = match state.arbitrage_config.as_ref() {
             Some(c) => c.write().unwrap(),
-            None => return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse {
-                    error: "Arbitrage detection is disabled".to_string(),
-                    details: vec!["Set ENABLE_ARBITRAGE_DETECTION=true".to_string()],
-                }),
-            ).into_response(),
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: "Arbitrage detection is disabled".to_string(),
+                        details: vec!["Set ENABLE_ARBITRAGE_DETECTION=true".to_string()],
+                    }),
+                )
+                    .into_response()
+            }
         };
-        
+
         let removed_token = config.remove_token(&request.address).ok();
         (config.monitored_tokens.clone(), removed_token)
     }; // config lock is dropped here
@@ -750,7 +749,8 @@ pub async fn remove_arbitrage_token(
             symbol: t.symbol,
             enabled: t.enabled,
         }),
-    }).into_response()
+    })
+    .into_response()
 }
 
 pub async fn get_token_pools(

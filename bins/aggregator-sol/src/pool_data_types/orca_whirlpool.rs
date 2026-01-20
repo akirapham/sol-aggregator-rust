@@ -25,6 +25,9 @@ use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde_with::{serde_as, DisplayFromStr};
+
+#[serde_as]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct WhirlpoolPoolState {
     pub slot: u64,
@@ -35,8 +38,10 @@ pub struct WhirlpoolPoolState {
     pub tick_spacing_seed: [u8; 2],
     pub fee_rate: u16,
     pub protocol_fee_rate: u16,
+    #[serde_as(as = "DisplayFromStr")]
     pub liquidity: u128,
     pub liquidity_usd: f64,
+    #[serde_as(as = "DisplayFromStr")]
     pub sqrt_price: u128,
     pub tick_current_index: i32,
     pub token_mint_a: Pubkey,

@@ -1,6 +1,6 @@
+use crate::error::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres};
-use crate::error::Result;
 
 #[derive(Clone)]
 pub struct Database {
@@ -24,7 +24,7 @@ impl Database {
     pub fn get_pool(&self) -> &Pool<Postgres> {
         &self.pool
     }
-    
+
     /// Run migrations located in the migrations directory
     /// Note: In production this might be handled by a separate migration tool
     pub async fn run_migrations(&self) -> Result<()> {
@@ -33,7 +33,7 @@ impl Database {
             .execute(&self.pool)
             .await
             .map_err(|e| format!("Database health check failed: {}", e))?;
-            
+
         Ok(())
     }
 }

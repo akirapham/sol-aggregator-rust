@@ -11,30 +11,32 @@ pub async fn dashboard_page(State(state): State<Arc<AppState>>) -> Html<String> 
 async fn generate_dashboard_html(state: &AppState) -> String {
     // Get real data from state
     let pool_stats = state.aggregator.get_pool_manager().get_stats().await;
-    
+
     // Check if arbitrage is enabled
-    let (monitored_count, tokens_html, settings_html) = if let Some(arb_config_arc) = &state.arbitrage_config {
+    let (monitored_count, tokens_html, settings_html) = if let Some(arb_config_arc) =
+        &state.arbitrage_config
+    {
         let arb_config = arb_config_arc.read().unwrap();
         let monitored_count = arb_config.monitored_tokens.len();
 
-    // Generate Monitored Tokens HTML
-    let mut tokens_html = String::new();
-    for token in &arb_config.monitored_tokens {
-        tokens_html.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td></tr>",
-            token.symbol, token.address
-        ));
-    }
+        // Generate Monitored Tokens HTML
+        let mut tokens_html = String::new();
+        for token in &arb_config.monitored_tokens {
+            tokens_html.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                token.symbol, token.address
+            ));
+        }
 
-    if tokens_html.is_empty() {
-        tokens_html =
-            "<tr><td colspan='2' class='no-data'>No monitored tokens found</td></tr>".to_string();
-    }
+        if tokens_html.is_empty() {
+            tokens_html = "<tr><td colspan='2' class='no-data'>No monitored tokens found</td></tr>"
+                .to_string();
+        }
 
-    // Generate Settings HTML
-    let settings = &arb_config.settings;
-    let settings_html = format!(
-        r#"
+        // Generate Settings HTML
+        let settings = &arb_config.settings;
+        let settings_html = format!(
+            r#"
         <table>
             <tbody>
                 <tr><td><strong>Base Token</strong></td><td>{}</td></tr>
@@ -45,17 +47,19 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             </tbody>
         </table>
         "#,
-        settings.base_token,
-        settings.base_amount,
-        settings.slippage_bps,
-        settings.min_profit_bps,
-        settings.max_concurrent_checks
-    );
+            settings.base_token,
+            settings.base_amount,
+            settings.slippage_bps,
+            settings.min_profit_bps,
+            settings.max_concurrent_checks
+        );
 
         (monitored_count, tokens_html, settings_html)
     } else {
         // Arbitrage is disabled
-        let tokens_html = "<tr><td colspan='2' class='no-data'>Arbitrage detection is disabled</td></tr>".to_string();
+        let tokens_html =
+            "<tr><td colspan='2' class='no-data'>Arbitrage detection is disabled</td></tr>"
+                .to_string();
         let settings_html = "<p>Arbitrage detection is disabled. Set ENABLE_ARBITRAGE_DETECTION=true to enable.</p>".to_string();
         (0, tokens_html, settings_html)
     };
@@ -70,7 +74,6 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         settings_html,
         monitored_tokens_html,
     ) = if let Some(monitor) = &state.arbitrage_monitor {
-
         let all_opportunities = monitor.get_recent_opportunities(1000).await;
         let total = all_opportunities.len();
         let recent_profit: u64 = all_opportunities
@@ -124,9 +127,23 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             // Format dexes string from details JSON
             let fwd_dex_val = opp.details.get("forward_dexes").and_then(|v| v.as_array());
             let rev_dex_val = opp.details.get("reverse_dexes").and_then(|v| v.as_array());
-            
-            let fwd_dex_str = fwd_dex_val.map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
-            let rev_dex_str = rev_dex_val.map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+
+            let fwd_dex_str = fwd_dex_val
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let rev_dex_str = rev_dex_val
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
 
             let route_display = if fwd_dex_str.is_empty() && rev_dex_str.is_empty() {
                 "-".to_string()

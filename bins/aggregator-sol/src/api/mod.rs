@@ -12,6 +12,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use solana_client::nonblocking::rpc_client::RpcClient;
 use std::sync::{Arc, RwLock};
 
 use auth::{auth_middleware, AuthConfig};
@@ -19,17 +20,20 @@ use auth::{auth_middleware, AuthConfig};
 #[derive(Clone)]
 pub struct AppState {
     pub aggregator: Arc<DexAggregator>,
+    pub rpc_client: Arc<RpcClient>,
     pub arbitrage_config: Option<Arc<RwLock<ArbitrageConfig>>>,
     pub arbitrage_monitor: Option<Arc<ArbitrageMonitor>>,
 }
 
 pub fn create_router(
     aggregator: Arc<DexAggregator>,
+    rpc_client: Arc<RpcClient>,
     arbitrage_config: Option<Arc<RwLock<ArbitrageConfig>>>,
     arbitrage_monitor: Option<Arc<ArbitrageMonitor>>,
 ) -> Router {
     let state = Arc::new(AppState {
         aggregator: aggregator.clone(),
+        rpc_client,
         arbitrage_config,
         arbitrage_monitor,
     });
@@ -57,9 +61,9 @@ pub fn create_router(
     Router::new()
         .route("/health", get(handlers::health_check))
         .route("/quote", post(handlers::get_quote))
-        .route("/pools/:token0/:token1", get(handlers::get_pools))
+        .route("/pools/{token0}/{token1}", get(handlers::get_pools))
         .route(
-            "/token/:token_address/pools",
+            "/token/{token_address}/pools",
             get(handlers::get_token_pools),
         )
         .route("/stats", get(handlers::get_pool_stats))

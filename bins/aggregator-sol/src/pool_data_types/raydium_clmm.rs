@@ -32,18 +32,22 @@ struct SwapV2Args {
     is_base_input: bool,
 }
 
-#[derive(Clone, Debug, Copy, Default)]
+#[serde_as]
+#[derive(Clone, Debug, Copy, Default, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct TickState {
     pub tick: i32,
     pub liquidity_net: i128,
+    #[serde_as(as = "DisplayFromStr")]
     pub liquidity_gross: u128,
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug)]
+#[serde_as]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TickArrayState {
     pub start_tick_index: i32,
+    #[serde_as(as = "[_; 60]")]
     pub ticks: [TickState; 60],
     pub initialized_tick_count: u8,
 }
@@ -114,6 +118,9 @@ pub struct RaydiumClmmPoolReservePart {
     pub token1_reserve: u64,
 }
 
+use serde_with::{serde_as, DisplayFromStr};
+
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaydiumClmmPoolState {
     pub slot: u64,
@@ -126,8 +133,10 @@ pub struct RaydiumClmmPoolState {
     pub token_vault1: Pubkey,
     pub observation_key: Pubkey,
     pub tick_spacing: u16,
+    #[serde_as(as = "DisplayFromStr")]
     pub liquidity: u128,
     pub liquidity_usd: f64,
+    #[serde_as(as = "DisplayFromStr")]
     pub sqrt_price_x64: u128,
     pub tick_current_index: i32,
     pub status: u8,

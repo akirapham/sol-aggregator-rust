@@ -8,14 +8,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     build-essential \
     git \
-    clang \
-    cmake \
-    libgflags-dev \
-    libsnappy-dev \
-    zlib1g-dev \
-    libbz2-dev \
-    liblz4-dev \
-  libzstd-dev \
+  clang \
   ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -29,18 +22,18 @@ COPY bins ./bins
 
 # Build dependencies first (this layer caches dependencies)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
+  --mount=type=cache,target=/usr/src/app/target \
     cargo build --release --bin aggregator-sol && \
-    cp /app/target/release/aggregator-sol /aggregator-sol
+  cp /usr/src/app/target/release/aggregator-sol /aggregator-sol
 
 # Stage 2: Create the runtime image
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 WORKDIR /app
 
 # Install runtime dependencies including curl for health checks
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    libssl3 \
+  libssl3t64 \
   curl \
     && rm -rf /var/lib/apt/lists/*
 

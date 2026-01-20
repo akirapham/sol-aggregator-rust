@@ -37,9 +37,6 @@ pub struct AbnormalArbitrageOpportunity {
     pub routes: Vec<String>,
 }
 
-
-
-
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
 #[derive(Clone)]
 pub struct ArbitrageMonitor {
@@ -306,10 +303,13 @@ impl ArbitrageMonitor {
     }
 
     /// Save an arbitrage opportunity to Postgres
-    pub async fn save_opportunity(&self, opp: &ArbitrageOpportunity) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn save_opportunity(
+        &self,
+        opp: &ArbitrageOpportunity,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Serialize details to JSONB
         let details_json = serde_json::to_value(&opp.details)?;
-        
+
         sqlx::query(
             r#"
             INSERT INTO arbitrage_opportunities (
@@ -318,7 +318,7 @@ impl ArbitrageMonitor {
                 is_abnormal
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            "#
+            "#,
         )
         .bind(&opp.pair_name)
         .bind(&opp.token_a)
@@ -333,12 +333,15 @@ impl ArbitrageMonitor {
         .bind(false) // Not abnormal
         .execute(&self.db)
         .await?;
-        
+
         Ok(())
     }
 
     /// Save an abnormal arbitrage opportunity to Postgres
-    pub async fn save_abnormal_opportunity(&self, opp: &AbnormalArbitrageOpportunity) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn save_abnormal_opportunity(
+        &self,
+        opp: &AbnormalArbitrageOpportunity,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Similar to above, but strict different fields or just flag it?
         // The schema supports `is_abnormal` flag.
         // Let's map AbnormalArbitrageOpportunity to the table fields.
@@ -346,7 +349,7 @@ impl ArbitrageMonitor {
             "routes": opp.routes,
             "reason": "Abnormal Profit"
         });
-        
+
         sqlx::query(
             r#"
             INSERT INTO arbitrage_opportunities (
@@ -355,7 +358,7 @@ impl ArbitrageMonitor {
                 is_abnormal
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            "#
+            "#,
         )
         .bind(&opp.pair_name)
         .bind(&opp.token_a)
@@ -384,23 +387,26 @@ impl ArbitrageMonitor {
         .await
         .unwrap_or_default(); // Return empty on error for now? Or log?
 
-        rows.into_iter().map(|row| {
-             use sqlx::Row;
-             let details_val: serde_json::Value = row.try_get("details").unwrap_or(serde_json::Value::Null); // Handle nulls if any
-             
-             ArbitrageOpportunity {
-                 pair_name: row.get("pair_name"),
-                 token_a: row.get("token_a"),
-                 token_b: row.get("token_b"),
-                 profit_amount: row.get::<i64, _>("profit_amount") as u64,
-                 profit_percent: row.get("profit_percent"),
-                 input_amount: row.get::<i64, _>("input_amount") as u64,
-                 detected_at: row.get::<i64, _>("detected_at") as u64,
-                 execution_status: row.get::<String, _>("execution_status"),
-                 error_message: row.get("error_message"),
-                 details: details_val,
-             }
-        }).collect()
+        rows.into_iter()
+            .map(|row| {
+                use sqlx::Row;
+                let details_val: serde_json::Value =
+                    row.try_get("details").unwrap_or(serde_json::Value::Null); // Handle nulls if any
+
+                ArbitrageOpportunity {
+                    pair_name: row.get("pair_name"),
+                    token_a: row.get("token_a"),
+                    token_b: row.get("token_b"),
+                    profit_amount: row.get::<i64, _>("profit_amount") as u64,
+                    profit_percent: row.get("profit_percent"),
+                    input_amount: row.get::<i64, _>("input_amount") as u64,
+                    detected_at: row.get::<i64, _>("detected_at") as u64,
+                    execution_status: row.get::<String, _>("execution_status"),
+                    error_message: row.get("error_message"),
+                    details: details_val,
+                }
+            })
+            .collect()
     }
 
     /// Get recent abnormal opportunities (last N) from Postgres
@@ -416,45 +422,53 @@ impl ArbitrageMonitor {
         .await
         .unwrap_or_default();
 
-        rows.into_iter().map(|row| {
-             use sqlx::Row;
-             let details: serde_json::Value = row.try_get("details").unwrap_or(serde_json::Value::Null);
-             let routes = details.get("routes")
-                 .and_then(|v| v.as_array())
-                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                 .unwrap_or_default();
-                 
-             AbnormalArbitrageOpportunity {
-                 pair_name: row.get("pair_name"),
-                 token_a: row.get("token_a"),
-                 token_b: row.get("token_b"),
-                 profit_amount: row.get::<i64, _>("profit_amount") as u64,
-                 profit_percent: row.get("profit_percent"),
-                 input_amount: row.get::<i64, _>("input_amount") as u64,
-                 detected_at: row.get::<i64, _>("detected_at") as u64,
-                 routes,
-             }
-         }).collect()
+        rows.into_iter()
+            .map(|row| {
+                use sqlx::Row;
+                let details: serde_json::Value =
+                    row.try_get("details").unwrap_or(serde_json::Value::Null);
+                let routes = details
+                    .get("routes")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                AbnormalArbitrageOpportunity {
+                    pair_name: row.get("pair_name"),
+                    token_a: row.get("token_a"),
+                    token_b: row.get("token_b"),
+                    profit_amount: row.get::<i64, _>("profit_amount") as u64,
+                    profit_percent: row.get("profit_percent"),
+                    input_amount: row.get::<i64, _>("input_amount") as u64,
+                    detected_at: row.get::<i64, _>("detected_at") as u64,
+                    routes,
+                }
+            })
+            .collect()
     }
 
     /// Cleanup old opportunities older than specified seconds
-    pub async fn cleanup_old_opportunities(&self, max_age_seconds: u64) -> Result<u64, sqlx::Error> {
+    pub async fn cleanup_old_opportunities(
+        &self,
+        max_age_seconds: u64,
+    ) -> Result<u64, sqlx::Error> {
         let cutoff_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
             - max_age_seconds;
 
-        let result = sqlx::query(
-            "DELETE FROM arbitrage_opportunities WHERE detected_at < $1"
-        )
-        .bind(cutoff_time as i64)
-        .execute(&self.db)
-        .await?;
+        let result = sqlx::query("DELETE FROM arbitrage_opportunities WHERE detected_at < $1")
+            .bind(cutoff_time as i64)
+            .execute(&self.db)
+            .await?;
 
         Ok(result.rows_affected())
     }
-
 
     // Execute an arbitrage opportunity (simulation only)
     async fn execute_arbitrade_opportunity(

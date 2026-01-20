@@ -197,7 +197,6 @@ dependencies = [
  "prost",
  "redis",
  "reqwest 0.12.24",
- "rocksdb",
  "rug",
  "rust-sdk",
  "rust_decimal",

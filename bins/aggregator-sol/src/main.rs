@@ -2,9 +2,10 @@ mod aggregator;
 pub mod api;
 pub mod arbitrage_config;
 pub mod arbitrage_monitor;
-// pub mod common; 
+// pub mod common;
 pub mod config;
 pub mod constants;
+pub mod db;
 pub mod dex;
 pub mod error;
 pub mod fetchers;
@@ -13,10 +14,9 @@ pub mod pool_data_types;
 pub mod pool_manager;
 pub mod types;
 pub mod utils;
-pub mod db;
 
-use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use crate::pool_manager::ArbitragePoolUpdate;
+use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use tokio::sync::broadcast;
 
@@ -51,8 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 0. Initialize Database
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let database = db::Database::new(&database_url).await.expect("Failed to connect to database");
-    
+    let database = db::Database::new(&database_url)
+        .await
+        .expect("Failed to connect to database");
+
     // Run migrations (optional, better to use sqlx-cli in prod)
     // database.run_migrations().await.expect("Failed to run migrations"); // Implement if needed
 
@@ -118,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         aggregator: Arc<aggregator::DexAggregator>,
         // The database pool is obtained from pool_manager inside, so no need to pass it explicitly if we use pool_manager.get_db()
         // BUT the previous call site passed it, which caused the error "expected 3 arguments, found 4".
-        // Let's REMOVE the 4th argument from the CALL SITE in the `if let Some` block, 
+        // Let's REMOVE the 4th argument from the CALL SITE in the `if let Some` block,
         // OR add it here. Adding it here is cleaner if we want to be explicit, but `pool_manager` has it.
         // Let's use `pool_manager.get_db()` inside.
     ) -> Option<(
@@ -255,44 +257,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Note: functionality of try_setup_arb needs update too
         // But for now let's assume we update the manual construction if valid
         // Actually try_setup_arb is a helper function. We need to check it.
-        // Assuming we replace it or update it. 
+        // Assuming we replace it or update it.
         if let Some((cfg, mon)) =
             try_setup_arb(requested.clone(), pool_manager.clone(), aggregator.clone()).await
         {
             arb_config_arc = Some(cfg);
             arbitrage_monitor = Some(mon);
         } else {
-        // If the file wasn't found at the requested path, try common fallbacks
-        let mut tried = Vec::new();
-        tried.push(requested.clone());
+            // If the file wasn't found at the requested path, try common fallbacks
+            let mut tried = Vec::new();
+            tried.push(requested.clone());
 
-        // Fallback inside aggregator-sol directory
-        let fallback1 = PathBuf::from(env::current_dir()?)
-            .join("aggregator-sol")
-            .join(&arb_config_path);
-        tried.push(fallback1.clone());
+            // Fallback inside aggregator-sol directory
+            let fallback1 = PathBuf::from(env::current_dir()?)
+                .join("aggregator-sol")
+                .join(&arb_config_path);
+            tried.push(fallback1.clone());
 
-        // Fallback to repo root's config directory
-        let fallback2 = PathBuf::from("config").join(&arb_config_path);
-        tried.push(fallback2.clone());
+            // Fallback to repo root's config directory
+            let fallback2 = PathBuf::from("config").join(&arb_config_path);
+            tried.push(fallback2.clone());
 
-        let mut found = false;
-        for p in tried.into_iter() {
-            if p.exists() {
-                if let Some((cfg, mon)) =
-                    try_setup_arb(p, pool_manager.clone(), aggregator.clone()).await
-                {
-                    arb_config_arc = Some(cfg);
-                    arbitrage_monitor = Some(mon);
-                    found = true;
-                    break;
+            let mut found = false;
+            for p in tried.into_iter() {
+                if p.exists() {
+                    if let Some((cfg, mon)) =
+                        try_setup_arb(p, pool_manager.clone(), aggregator.clone()).await
+                    {
+                        arb_config_arc = Some(cfg);
+                        arbitrage_monitor = Some(mon);
+                        found = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        if !found {
-            // Informative warn with working dir to help debugging
-            match env::current_dir() {
+            if !found {
+                // Informative warn with working dir to help debugging
+                match env::current_dir() {
                 Ok(cwd) => log::warn!(
                     "Arbitrage configuration not found at {} (cwd: {}). Arbitrage monitoring disabled. Set ARBITRAGE_CONFIG_PATH to point to the file.",
                     arb_config_path,
@@ -303,8 +305,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     arb_config_path
                 ),
             }
+            }
         }
-    }
     } // End of arbitrage_enabled check
 
     // read port from env or default to 3000
@@ -312,29 +314,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Starting REST API server on port {}...", port);
 
     // Create router with aggregator and arbitrage config
-    let app = api::create_router(aggregator, arb_config_arc, arbitrage_monitor);
+    let app = api::create_router(aggregator, rpc_client, arb_config_arc, arbitrage_monitor);
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
-    log::info!("Server running on http://127.0.0.1:{}", port);
+    log::info!("Server running on http://0.0.0.0:{}", port);
     log::info!("API endpoints:");
     log::info!("  POST /quote - Get swap quotes");
     log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");
     log::info!("  GET  /health - Health check");
 
     // 4. Start serving with graceful shutdown
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel(1);
 
     // Setup signal handlers for graceful shutdown
     let shutdown_tx_ctrl_c = shutdown_tx.clone();
     tokio::spawn(async move {
+        println!("SIGINT handler registered and waiting...");
         match signal::ctrl_c().await {
             Ok(()) => {
-                log::info!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
+                println!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
                 let _ = shutdown_tx_ctrl_c.send(());
             }
             Err(err) => {
-                log::error!("Failed to listen for SIGINT: {}", err);
+                eprintln!("Failed to listen for SIGINT: {}", err);
             }
         }
     });
@@ -342,42 +345,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup signal handlers for SIGTERM
     let shutdown_tx_sigterm = shutdown_tx.clone();
     tokio::spawn(async move {
+        println!("SIGTERM handler registered and waiting...");
         match signal::unix::signal(signal::unix::SignalKind::terminate()) {
             Ok(mut signal) => {
                 signal.recv().await;
-                log::info!("Received SIGTERM, initiating graceful shutdown...");
+                println!("Received SIGTERM, initiating graceful shutdown...");
                 let _ = shutdown_tx_sigterm.send(());
             }
             Err(err) => {
-                log::error!("Failed to listen for SIGTERM: {}", err);
+                eprintln!("Failed to listen for SIGTERM: {}", err);
             }
         }
     });
 
-    // Create a task that listens for shutdown signal
-    let pool_manager_shutdown = pool_manager.clone();
-    let shutdown_handle = tokio::spawn(async move {
-        let mut rx = shutdown_rx;
-        rx.recv().await.ok();
+    // Create a oneshot channel to signal when data is saved
+    let (save_complete_tx, save_complete_rx) = tokio::sync::oneshot::channel();
 
-        log::info!("Saving pools to database before shutdown...");
+    // Create a task that listens for shutdown signal and saves data
+    let pool_manager_shutdown = pool_manager.clone();
+    let mut shutdown_rx_handler = shutdown_tx.subscribe();
+    tokio::spawn(async move {
+        shutdown_rx_handler.recv().await.ok();
+
+        println!("Saving pools to database before shutdown...");
+        // Add a small delay to simulate work and ensure logs are seen if it was too fast
+        // tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
         if let Err(e) = pool_manager_shutdown.save_pools().await {
-            log::error!("Failed to save pools: {}", e);
+            eprintln!("Failed to save pools: {}", e);
         } else {
-            log::info!("Pools saved successfully");
+            println!("Pools saved successfully");
         }
+
+        // Signal that save is complete
+        let _ = save_complete_tx.send(());
     });
 
-    // Run the server
+    // Run the server with graceful shutdown that waits for data save
     let server_result = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let mut rx = shutdown_tx.subscribe();
             rx.recv().await.ok();
+
+            // Wait for data save to complete before shutting down server
+            log::info!("Waiting for data save to complete...");
+            let _ =
+                tokio::time::timeout(tokio::time::Duration::from_secs(30), save_complete_rx).await;
+            log::info!("Data save complete, shutting down server...");
         })
         .await;
-
-    // Wait for shutdown handler to complete
-    let _ = tokio::time::timeout(tokio::time::Duration::from_secs(30), shutdown_handle).await;
 
     server_result?;
 

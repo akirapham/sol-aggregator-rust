@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS tokens (
     symbol VARCHAR(32),
     name VARCHAR(64),
     decimals SMALLINT NOT NULL,
+    is_token2022 BOOLEAN NOT NULL DEFAULT FALSE,
     logo_uri TEXT,
     data JSONB, -- Full serialized token data
     created_at TIMESTAMPTZ DEFAULT NOW(),

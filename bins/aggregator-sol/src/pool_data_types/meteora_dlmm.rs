@@ -4,6 +4,7 @@ use crate::pool_data_types::dlmm::functions;
 use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
 use meteora_dlmm_sdk::{BinArrayExtension, BinExtension, LbPairExtension};
 use serde::{Deserialize, Serialize};
+use serde_with::{json::JsonString, serde_as};
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::{
     parser::METEORA_DLMM_PROGRAM_ID,
@@ -11,11 +12,13 @@ use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::{
 };
 
 /// Meteora DLMM Pool State
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeteoraDlmmPoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
+    #[serde_as(as = "JsonString")]
     pub lbpair: LbPair,
     #[serde(skip)]
     pub bin_arrays: HashMap<i32, BinArray>,

@@ -29,7 +29,7 @@ pub async fn fetch_token(
             address: *mint,
             decimals: 6,
             is_token_2022: false,
-            symbol: Some("USDC".to_string()), // Assuming base token is typically USDC/USDT 
+            symbol: Some("USDC".to_string()), // Assuming base token is typically USDC/USDT
             name: None,
             logo_uri: None,
         });

@@ -1,4 +1,3 @@
-
 use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
 use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
@@ -29,18 +28,17 @@ use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
 };
 use std::collections::{HashMap, HashSet};
 
-use std::time::{Duration, SystemTime};
-use tokio::sync::{broadcast, Mutex, RwLock};
-use sqlx::{Pool, Postgres};
-use tokio::time::interval;
-use std::str::FromStr;
-use tokio::sync::mpsc;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig;
-use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use solana_streamer_sdk::streaming::event_parser::protocols::{
-    meteora_dlmm::types::LbPair,
-    orca_whirlpools,
+    meteora_dlmm::types::LbPair, orca_whirlpools,
 };
+use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
+use sqlx::{Pool, Postgres};
+use std::str::FromStr;
+use std::time::{Duration, SystemTime};
+use tokio::sync::mpsc;
+use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::time::interval;
 /// Event broadcasted to arbitrage monitors with pool data and token prices
 #[allow(unused)]
 #[derive(Debug, Clone)]
@@ -137,7 +135,7 @@ impl PoolStateManager {
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
         let (chain_state_update_tx, chain_state_update_rx) =
             mpsc::unbounded_channel::<ChainStateUpdate>();
-            broadcast::channel::<ArbitragePoolUpdate>(1000);
+        broadcast::channel::<ArbitragePoolUpdate>(1000);
 
         let mut manager = Self {
             grpc_service,
@@ -169,13 +167,15 @@ impl PoolStateManager {
 
         // Load data from Postgres on startup
         manager.load_from_db().await;
-        
+
         // Start periodic save to Postgres (every 15 minutes)
         // Note: The original code started this background task here.
         // We should ensure we spawn a task for saving.
         // It seems `start_pool_update_event_processing` is a method.
         // Let me verify if I mangled it.
-        manager.start_pool_update_event_processing(pool_update_rx).await;
+        manager
+            .start_pool_update_event_processing(pool_update_rx)
+            .await;
 
         manager
             .start_chain_state_update_event_processing(chain_state_update_rx)
@@ -188,13 +188,14 @@ impl PoolStateManager {
         let db_clone = manager.get_db();
         let pools_clone = manager.pools.clone();
         let token_cache_clone = manager.token_cache.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
             loop {
                 interval.tick().await;
                 log::info!("Starting periodic save to Postgres...");
-                if let Err(e) = Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await {
+                if let Err(e) = Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
+                {
                     log::error!("Failed to save to Postgres: {}", e);
                 }
             }
@@ -307,7 +308,10 @@ impl PoolStateManager {
     }
 
     /// Save arbitrage monitored token addresses to DB
-    async fn save_arbitrage_tokens_to_db(db: &Pool<Postgres>, tokens: &HashSet<Pubkey>) -> Result<(), String> {
+    async fn save_arbitrage_tokens_to_db(
+        db: &Pool<Postgres>,
+        tokens: &HashSet<Pubkey>,
+    ) -> Result<(), String> {
         let addrs: Vec<String> = tokens.iter().map(|p| p.to_string()).collect();
         let value = serde_json::to_value(&addrs)
             .map_err(|e| format!("Failed to serialize token addresses: {}", e))?;
@@ -325,7 +329,9 @@ impl PoolStateManager {
     }
 
     /// Load arbitrage monitored token addresses from DB
-    pub async fn load_arbitrage_tokens_from_db(db: &Pool<Postgres>) -> Result<HashSet<Pubkey>, String> {
+    pub async fn load_arbitrage_tokens_from_db(
+        db: &Pool<Postgres>,
+    ) -> Result<HashSet<Pubkey>, String> {
         let row = sqlx::query("SELECT value FROM app_settings WHERE key = $1")
             .bind("arbitrage_monitored_token_addresses")
             .fetch_optional(db)
@@ -333,14 +339,17 @@ impl PoolStateManager {
             .map_err(|e| format!("Failed to fetch tokens from DB: {}", e))?;
 
         if let Some(row) = row {
-             use sqlx::Row;
-             let value: serde_json::Value = row.try_get("value").map_err(|e| format!("Navlue error: {}",e))?;
-             let addrs: Vec<String> = serde_json::from_value(value).map_err(|e| format!("Json err: {}",e))?;
-             let mut set = HashSet::new();
-             for s in addrs {
-                  set.insert(Pubkey::from_str(&s).map_err(|e| format!("Invalid pubkey: {}", e))?);
-             }
-             Ok(set)
+            use sqlx::Row;
+            let value: serde_json::Value = row
+                .try_get("value")
+                .map_err(|e| format!("Navlue error: {}", e))?;
+            let addrs: Vec<String> =
+                serde_json::from_value(value).map_err(|e| format!("Json err: {}", e))?;
+            let mut set = HashSet::new();
+            for s in addrs {
+                set.insert(Pubkey::from_str(&s).map_err(|e| format!("Invalid pubkey: {}", e))?);
+            }
+            Ok(set)
         } else {
             Ok(HashSet::new())
         }
@@ -364,7 +373,7 @@ impl PoolStateManager {
         let token_cache_clone = Arc::clone(&self.token_cache);
 
         tokio::spawn(async move {
-            let mut save_ticker = interval(Duration::from_secs(6 * 60 * 60)); // 6h
+            let mut save_ticker = interval(Duration::from_secs(30 * 60)); // 30 min
             loop {
                 save_ticker.tick().await;
                 // measure time to save
@@ -554,6 +563,7 @@ impl PoolStateManager {
                                                     // send to pool update event processor
                                                     let _ = pool_update_tx_clone.send(vec![tick_array_state_event]);
                                                 });
+                                                log::info!("Tick arrays fetched for Orca Whirlpool {:?}", whirlpool_pool_state.address);
                                             }
                                             Err(e) => {
                                                 log::warn!(
@@ -1448,15 +1458,15 @@ impl PoolStateManager {
     /// Load data from Postgres into in-memory structures
     async fn load_from_db(&mut self) {
         log::info!("Loading pool state from Postgres...");
-        
+
         // 1. Load Pools
-        // We use a stream or fetch_all. Given memory constraints, maybe stream, 
-        // but populating HashMap requires all anyway. 
+        // We use a stream or fetch_all. Given memory constraints, maybe stream,
+        // but populating HashMap requires all anyway.
         // Let's fetch all - if it crashes we need bigger machine or pagination.
-        
+
         // We select the JSONB 'data' field which contains the serialized PoolState
         let pools_query = sqlx::query("SELECT data FROM pools");
-        
+
         match pools_query.fetch_all(&self.db).await {
             Ok(rows) => {
                 let mut pools_write = self.pools.write().await;
@@ -1464,10 +1474,10 @@ impl PoolStateManager {
                     use sqlx::Row;
                     let data: serde_json::Value = row.try_get("data").unwrap_or_default();
                     let pool_state: PoolState = serde_json::from_value(data).unwrap_or_else(|e| {
-                         log::error!("Failed to deserialize pool state from DB: {}", e);
-                         panic!("Critical: DB data corruption"); 
+                        log::error!("Failed to deserialize pool state from DB: {}", e);
+                        panic!("Critical: DB data corruption");
                     });
-                    
+
                     pools_write.insert(pool_state.address(), Arc::new(Mutex::new(pool_state)));
                 }
                 log::info!("Loaded {} pools from Postgres", pools_write.len());
@@ -1483,35 +1493,35 @@ impl PoolStateManager {
             Ok(rows) => {
                 let mut token_write = self.token_cache.write().await;
                 for row in rows {
-                     use sqlx::Row;
-                     // data is nullable/Option in Postgres usually, though we defined it. 
-                     // try_get handles the mapping.
-                     let json_val: Option<serde_json::Value> = row.try_get("data").ok();
-                     if let Some(json_val) = json_val { 
-                         let token: Token = serde_json::from_value(json_val).unwrap_or_else(|e| {
-                             log::error!("Failed to deserialize token from DB: {}", e);
-                             panic!("Critical: DB data corruption (token)");
+                    use sqlx::Row;
+                    // data is nullable/Option in Postgres usually, though we defined it.
+                    // try_get handles the mapping.
+                    let json_val: Option<serde_json::Value> = row.try_get("data").ok();
+                    if let Some(json_val) = json_val {
+                        let token: Token = serde_json::from_value(json_val).unwrap_or_else(|e| {
+                            log::error!("Failed to deserialize token from DB: {}", e);
+                            panic!("Critical: DB data corruption (token)");
                         });
                         token_write.insert(token.address, token);
                     }
                 }
                 log::info!("Loaded {} tokens from Postgres", token_write.len());
             }
-             Err(e) => {
+            Err(e) => {
                 log::error!("Failed to load tokens from Postgres: {}", e);
             }
         }
-        
+
         // 3. Load Arbitrage Tokens (if we persist them in specific table or config)
         // Previous impl loaded from ArbitrageConfig logic, but here we might want to consolidate.
         // For now, let's keep it simple - ArbitrageMonitor handles its own config usually.
-        // But the previous code had `load_arbitrage_tokens_from_db`. 
-        // If that logic resides in PoolManager, we need to adapt it. 
+        // But the previous code had `load_arbitrage_tokens_from_db`.
+        // If that logic resides in PoolManager, we need to adapt it.
         // Checking previous code: `Self::load_arbitrage_tokens_from_db(&self.db)`
         // We should implement `load_arbitrage_tokens_from_db` separately in ArbitrageConfig using Postgres?
-        // Actually, let's skip for a moment and focus on pools/tokens. 
+        // Actually, let's skip for a moment and focus on pools/tokens.
         // The arbitrage monitored tokens are usually loaded from file or DB.
-        
+
         // Rebuild pair_to_pools and dex_pools mappings from loaded pools
         self.rebuild_mappings_from_pools().await;
     }
@@ -1735,7 +1745,9 @@ impl PoolStateManager {
 
     /// Save in-memory data to RocksDB
     pub async fn save_pools(&self) -> Result<(), Box<dyn std::error::Error>> {
-        log::info!("Saving pools to database...");
+        let msg = "Saving pools to database...";
+        log::info!("{}", msg);
+        println!("{}", msg);
         Self::save_to_db(&self.db, &self.pools, &self.token_cache).await?;
         Ok(())
     }
@@ -1745,20 +1757,58 @@ impl PoolStateManager {
         pools: &PoolStorage,
         token_cache: &Arc<RwLock<HashMap<Pubkey, Token>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. Save Pools
+        // 1. Save Tokens (Must come before pools due to FK constraints)
+        let token_read = token_cache.read().await;
+        // ... (Similar logic for tokens)
+        let tokens: Vec<Token> = token_read.values().cloned().collect();
+        drop(token_read);
+
+        for chunk in tokens.chunks(500) {
+            let mut query_builder = sqlx::QueryBuilder::new(
+                "INSERT INTO tokens (address, symbol, name, decimals, is_token2022, logo_uri, data) "
+            );
+
+            query_builder.push_values(chunk, |mut b, token| {
+                b.push_bind(token.address.to_string())
+                    .push_bind(token.symbol.clone())
+                    .push_bind(token.name.clone())
+                    .push_bind(token.decimals as i16)
+                    .push_bind(token.is_token_2022)
+                    .push_bind(token.logo_uri.clone())
+                    .push_bind(sqlx::types::Json(token));
+            });
+
+            query_builder.push(
+                " ON CONFLICT (address) DO UPDATE SET 
+                symbol = EXCLUDED.symbol,
+                name = EXCLUDED.name,
+                decimals = EXCLUDED.decimals,
+                is_token2022 = EXCLUDED.is_token2022,
+                logo_uri = EXCLUDED.logo_uri,
+                data = EXCLUDED.data,
+                updated_at = NOW()",
+            );
+
+            let query = query_builder.build();
+            query.execute(db).await?;
+        }
+
+        log::info!("Saved {} tokens to Postgres", tokens.len());
+
+        // 2. Save Pools
         let pools_read = pools.read().await;
         let mut pool_count = 0;
-        
+
         // Convert to vector for batch processing if needed, OR just loop insert
         // For 1000s of pools, batching is recommended, but let's do simple loop first or chunks
         // Creating a large JSONB object might be heavy, so we can iterate.
         // However, converting PoolState to JSON is the key here.
-        
+
         let pool_entries: Vec<PoolState> = {
             let mut entries = Vec::with_capacity(pools_read.len());
             for v in pools_read.values() {
-               let guard = v.lock().await;
-               entries.push((*guard).clone());
+                let guard = v.lock().await;
+                entries.push((*guard).clone());
             }
             entries
         };
@@ -1768,70 +1818,38 @@ impl PoolStateManager {
             // We can't easily use UNNEST with heterogeneous JSON types unless we serialize to a specific struct
             // So we loop for now, or use a specific bulk insert query.
             // Let's use loop with spawn for now to avoid complexity, or query builder.
-            
+
             // Using QueryBuilder for bulk insert is efficient in sqlx
             let mut query_builder = sqlx::QueryBuilder::new(
-                "INSERT INTO pools (address, dex_type, token_a, token_b, data, last_updated_ts) "
+                "INSERT INTO pools (address, dex_type, token_a, token_b, data, last_updated_ts) ",
             );
-            
+
             query_builder.push_values(chunk, |mut b, pool| {
                 let (token_a, token_b) = pool.get_tokens();
                 b.push_bind(pool.address().to_string())
-                 .push_bind(pool.dex().to_string())
-                 .push_bind(token_a.to_string())
-                 .push_bind(token_b.to_string())
-                 .push_bind(sqlx::types::Json(pool)) // This requires PoolState to deserialize to JSON which implies Serialize
-                 .push_bind(pool.last_updated() as i64); 
+                    .push_bind(pool.dex().to_string())
+                    .push_bind(token_a.to_string())
+                    .push_bind(token_b.to_string())
+                    .push_bind(sqlx::types::Json(pool)) // This requires PoolState to deserialize to JSON which implies Serialize
+                    .push_bind(pool.last_updated() as i64);
             });
-            
-            query_builder.push(" ON CONFLICT (address) DO UPDATE SET 
+
+            query_builder.push(
+                " ON CONFLICT (address) DO UPDATE SET 
                 dex_type = EXCLUDED.dex_type,
                 token_a = EXCLUDED.token_a,
                 token_b = EXCLUDED.token_b,
                 data = EXCLUDED.data,
                 last_updated_ts = EXCLUDED.last_updated_ts,
-                updated_at = NOW()");
-                
+                updated_at = NOW()",
+            );
+
             let query = query_builder.build();
             query.execute(db).await?;
             pool_count += chunk.len();
         }
 
         log::info!("Saved {} pools to Postgres", pool_count);
-
-        // 2. Save Tokens
-        let token_read = token_cache.read().await;
-        // ... (Similar logic for tokens)
-        let tokens: Vec<Token> = token_read.values().cloned().collect();
-        drop(token_read);
-        
-        for chunk in tokens.chunks(500) {
-             let mut query_builder = sqlx::QueryBuilder::new(
-                "INSERT INTO tokens (address, symbol, name, decimals, logo_uri, data) "
-            );
-            
-            query_builder.push_values(chunk, |mut b, token| {
-                b.push_bind(token.address.to_string())
-                 .push_bind(token.symbol.clone())
-                 .push_bind(token.name.clone())
-                 .push_bind(token.decimals as i16)
-                 .push_bind(token.logo_uri.clone())
-                 .push_bind(sqlx::types::Json(token));
-            });
-            
-            query_builder.push(" ON CONFLICT (address) DO UPDATE SET 
-                symbol = EXCLUDED.symbol,
-                name = EXCLUDED.name,
-                decimals = EXCLUDED.decimals,
-                logo_uri = EXCLUDED.logo_uri,
-                data = EXCLUDED.data,
-                updated_at = NOW()");
-                
-            let query = query_builder.build();
-            query.execute(db).await?;
-        }
-        
-        log::info!("Saved {} tokens to Postgres", tokens.len());
 
         Ok(())
     }

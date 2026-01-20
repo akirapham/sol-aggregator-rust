@@ -8,11 +8,15 @@ pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dammv2:
 use std::str::FromStr;
 use std::sync::Arc;
 
+use serde_with::{json::JsonString, serde_as, DisplayFromStr};
+
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeteoraDammV2PoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
+    #[serde_as(as = "JsonString")]
     pub pool_fees: PoolFeesStruct,
     pub token_a_mint: Pubkey,
     pub token_b_mint: Pubkey,
@@ -20,13 +24,17 @@ pub struct MeteoraDammV2PoolState {
     pub token_b_vault: Pubkey,
     pub whitelisted_vault: Pubkey,
     pub partner: Pubkey,
+    #[serde_as(as = "DisplayFromStr")]
     pub liquidity: u128,
     pub protocol_a_fee: u64,
     pub protocol_b_fee: u64,
     pub partner_a_fee: u64,
     pub partner_b_fee: u64,
+    #[serde_as(as = "DisplayFromStr")]
     pub sqrt_min_price: u128,
+    #[serde_as(as = "DisplayFromStr")]
     pub sqrt_max_price: u128,
+    #[serde_as(as = "DisplayFromStr")]
     pub sqrt_price: u128,
     pub activation_point: u64,
     pub activation_type: u8,
@@ -38,9 +46,12 @@ pub struct MeteoraDammV2PoolState {
     pub version: u8,
     pub fee_a_per_liquidity: [u8; 32],
     pub fee_b_per_liquidity: [u8; 32],
+    #[serde_as(as = "DisplayFromStr")]
     pub permanent_lock_liquidity: u128,
+    #[serde_as(as = "JsonString")]
     pub metrics: PoolMetrics,
     pub creator: Pubkey,
+    #[serde_as(as = "JsonString")]
     pub reward_infos: [RewardInfo; 2],
     pub liquidity_usd: f64,
     pub last_updated: u64,

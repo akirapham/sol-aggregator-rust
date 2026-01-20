@@ -11,8 +11,11 @@ pub async fn dashboard_page(State(state): State<Arc<AppState>>) -> Html<String> 
 async fn generate_dashboard_html(state: &AppState) -> String {
     // Get real data from state
     let pool_stats = state.aggregator.get_pool_manager().get_stats().await;
-    let arb_config = state.arbitrage_config.read().unwrap();
-    let monitored_count = arb_config.monitored_tokens.len();
+    
+    // Check if arbitrage is enabled
+    let (monitored_count, tokens_html, settings_html) = if let Some(arb_config_arc) = &state.arbitrage_config {
+        let arb_config = arb_config_arc.read().unwrap();
+        let monitored_count = arb_config.monitored_tokens.len();
 
     // Generate Monitored Tokens HTML
     let mut tokens_html = String::new();
@@ -49,6 +52,14 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         settings.max_concurrent_checks
     );
 
+        (monitored_count, tokens_html, settings_html)
+    } else {
+        // Arbitrage is disabled
+        let tokens_html = "<tr><td colspan='2' class='no-data'>Arbitrage detection is disabled</td></tr>".to_string();
+        let settings_html = "<p>Arbitrage detection is disabled. Set ENABLE_ARBITRAGE_DETECTION=true to enable.</p>".to_string();
+        (0, tokens_html, settings_html)
+    };
+
     // Get arbitrage stats
     let (
         total_opportunities,
@@ -59,9 +70,10 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         settings_html,
         monitored_tokens_html,
     ) = if let Some(monitor) = &state.arbitrage_monitor {
-        let all_opportunities = monitor.get_recent_opportunities(1000);
+
+        let all_opportunities = monitor.get_recent_opportunities(1000).await;
         let total = all_opportunities.len();
-        let recent_profit: i64 = all_opportunities
+        let recent_profit: u64 = all_opportunities
             .iter()
             .take(10)
             .map(|o| o.profit_amount)
@@ -69,7 +81,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         let profit_usdc = recent_profit as f64 / 1_000_000.0;
 
         // Calculate all-time profit
-        let all_time_profit: i64 = all_opportunities.iter().map(|o| o.profit_amount).sum();
+        let all_time_profit: u64 = all_opportunities.iter().map(|o| o.profit_amount).sum();
         let all_time_profit_usdc = all_time_profit as f64 / 1_000_000.0;
 
         // Generate opportunities table
@@ -89,14 +101,14 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             };
 
             // Format status badge
-            let status_html = match opp.execution_status {
-                crate::arbitrage_monitor::ExecutionStatus::NotYet => {
+            let status_html = match opp.execution_status.as_str() {
+                "NotYet" => {
                     "<span class='status-badge status-pending'>⏳ Pending</span>".to_string()
                 }
-                crate::arbitrage_monitor::ExecutionStatus::Success => {
+                "Success" => {
                     "<span class='status-badge status-success'>✅ Success</span>".to_string()
                 }
-                crate::arbitrage_monitor::ExecutionStatus::Fail => {
+                "Fail" | _ => {
                     let error_text = opp.error_message.as_deref().unwrap_or("Unknown error");
                     let escaped_error = error_text.replace("'", "\\'");
                     format!(
@@ -109,13 +121,17 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 }
             };
 
-            // Format dexes string
-            let fwd_dex = opp.forward_dexes.join(", ");
-            let rev_dex = opp.reverse_dexes.join(", ");
-            let route_display = if fwd_dex.is_empty() && rev_dex.is_empty() {
+            // Format dexes string from details JSON
+            let fwd_dex_val = opp.details.get("forward_dexes").and_then(|v| v.as_array());
+            let rev_dex_val = opp.details.get("reverse_dexes").and_then(|v| v.as_array());
+            
+            let fwd_dex_str = fwd_dex_val.map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+            let rev_dex_str = rev_dex_val.map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+
+            let route_display = if fwd_dex_str.is_empty() && rev_dex_str.is_empty() {
                 "-".to_string()
             } else {
-                format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex)
+                format!("Fwd: {} | Rev: {}", fwd_dex_str, rev_dex_str)
             };
 
             opp_html.push_str(&format!(
@@ -137,7 +153,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
         }
 
         // Generate Abnormal Cases Table
-        let abnormal_opportunities = monitor.get_recent_abnormal_opportunities(50);
+        let abnormal_opportunities = monitor.get_recent_abnormal_opportunities(50).await;
         let mut abn_html = String::new();
         for opp in abnormal_opportunities {
             use chrono::{DateTime, Utc};
@@ -154,9 +170,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
             };
 
             // Format dexes string
-            let fwd_dex = opp.forward_dexes.join(", ");
-            let rev_dex = opp.reverse_dexes.join(", ");
-            let route_display = format!("Fwd: {} | Rev: {}", fwd_dex, rev_dex);
+            let route_display = opp.routes.join(", ");
 
             abn_html.push_str(&format!(
                     "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}→{}</td><td>${:.4}</td><td class='{}'>{:.2}%</td></tr>",

@@ -17,6 +17,9 @@ pub struct Token {
     pub address: Pubkey,
     pub decimals: u8,
     pub is_token_2022: bool,
+    pub symbol: Option<String>,
+    pub name: Option<String>,
+    pub logo_uri: Option<String>,
 }
 
 /// Represents a swap route through a specific DEX

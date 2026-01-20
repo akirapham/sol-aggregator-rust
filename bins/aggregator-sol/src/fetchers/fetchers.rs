@@ -18,6 +18,9 @@ pub async fn fetch_token(
             address: *mint,
             decimals: 9,
             is_token_2022: false,
+            symbol: Some("SOL".to_string()),
+            name: Some("Solana".to_string()),
+            logo_uri: None,
         });
     }
 
@@ -26,6 +29,9 @@ pub async fn fetch_token(
             address: *mint,
             decimals: 6,
             is_token_2022: false,
+            symbol: Some("USDC".to_string()), // Assuming base token is typically USDC/USDT 
+            name: None,
+            logo_uri: None,
         });
     }
     // Implement your token fetching logic here
@@ -44,6 +50,9 @@ pub async fn fetch_token(
                     address: *mint,
                     decimals: mint_extentions.base.decimals,
                     is_token_2022,
+                    symbol: None,
+                    name: None,
+                    logo_uri: None,
                 }),
                 Err(_) => Err(DexAggregatorError::RpcError(
                     "Failed to unpack mint account data".to_string(),

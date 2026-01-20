@@ -9,7 +9,7 @@ use solana_sdk::pubkey::Pubkey;
 pub fn parse_pubkey(address: &str) -> Result<Pubkey> {
     address
         .parse()
-        .map_err(|_| DexAggregatorError::InvalidTokenAddress(address.to_string()))
+        .map_err(|_| DexAggregatorError::InvalidTokenAddress(address.to_string()).into())
 }
 
 /// Calculate minimum output amount with slippage tolerance

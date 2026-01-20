@@ -1,19 +1,26 @@
 mod aggregator;
-mod api;
-mod arbitrage_config;
-mod arbitrage_monitor;
-mod config;
-mod constants;
-mod dex;
-mod error;
-mod fetchers;
-mod grpc;
-mod pool_data_types;
-mod pool_manager;
-mod types;
-mod utils;
+pub mod api;
+pub mod arbitrage_config;
+pub mod arbitrage_monitor;
+// pub mod common; 
+pub mod config;
+pub mod constants;
+pub mod dex;
+pub mod error;
+pub mod fetchers;
+pub mod grpc;
+pub mod pool_data_types;
+pub mod pool_manager;
+pub mod types;
+pub mod utils;
+pub mod db;
 
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
+use crate::pool_manager::ArbitragePoolUpdate;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use tokio::sync::broadcast;
+
+use crate::config::ConfigLoader; // Ensure ConfigLoader is imported
 use dotenv::dotenv;
 use env_logger::Env;
 use solana_sdk::pubkey::Pubkey;
@@ -26,7 +33,6 @@ use tokio::signal;
 
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
-use crate::config::ConfigLoader;
 use crate::grpc::create_grpc_service;
 use crate::pool_manager::PoolStateManager;
 
@@ -43,11 +49,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let _ = price_service.start().await;
 
+    // 0. Initialize Database
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let database = db::Database::new(&database_url).await.expect("Failed to connect to database");
+    
+    // Run migrations (optional, better to use sqlx-cli in prod)
+    // database.run_migrations().await.expect("Failed to run migrations"); // Implement if needed
+
     // 1. Start the pool manager and gRPC streaming
     log::info!("Starting pool manager and gRPC streaming...");
     let (grpc_service, batch_rx) = create_grpc_service(50, 100).await?;
-    let pool_manager = Arc::new(PoolStateManager::new(grpc_service, price_service.clone()).await);
 
+    log::info!("Creating DEX aggregator...");
+    let config = ConfigLoader::load().expect("Failed to load config");
+
+    let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
+    let (arbitrage_pool_tx, _arbitrage_pool_rx) = broadcast::channel::<ArbitragePoolUpdate>(1000);
+
+    let pool_manager = Arc::new(
+        pool_manager::PoolStateManager::new(
+            grpc_service.clone(),
+            config.clone(),
+            rpc_client.clone(),
+            price_service.clone(),
+            arbitrage_pool_tx.clone(),
+            database.get_pool().clone(),
+        )
+        .await,
+    );
     // Start background event processing
     let pool_update_sender = pool_manager.get_pool_update_sender().clone();
     let chain_state_update_sender = pool_manager.get_chain_state_update_sender().clone();
@@ -65,11 +94,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 2. Create and configure the aggregator
-    log::info!("Creating DEX aggregator...");
-    let config = ConfigLoader::load().unwrap();
+    // Config already loaded above
     let aggregator = Arc::new(aggregator::DexAggregator::new(config, pool_manager.clone()));
 
     // 2.5. Load arbitrage configuration and start monitoring (optional)
+    // Check if arbitrage detection is enabled via environment variable
+    let arbitrage_enabled = env::var("ENABLE_ARBITRAGE_DETECTION")
+        .unwrap_or_else(|_| "false".to_string())
+        .to_lowercase()
+        == "true";
+
+    if !arbitrage_enabled {
+        log::info!("Arbitrage detection is disabled (ENABLE_ARBITRAGE_DETECTION=false)");
+    }
+
     let arb_config_path =
         env::var("ARBITRAGE_CONFIG_PATH").unwrap_or_else(|_| "arbitrage_config.toml".to_string());
 
@@ -78,6 +116,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arb_path: PathBuf,
         pool_manager: Arc<PoolStateManager>,
         aggregator: Arc<aggregator::DexAggregator>,
+        // The database pool is obtained from pool_manager inside, so no need to pass it explicitly if we use pool_manager.get_db()
+        // BUT the previous call site passed it, which caused the error "expected 3 arguments, found 4".
+        // Let's REMOVE the 4th argument from the CALL SITE in the `if let Some` block, 
+        // OR add it here. Adding it here is cleaner if we want to be explicit, but `pool_manager` has it.
+        // Let's use `pool_manager.get_db()` inside.
     ) -> Option<(
         Arc<std::sync::RwLock<ArbitrageConfig>>,
         Arc<ArbitrageMonitor>,
@@ -92,10 +135,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Load tokens from DB and merge with TOML config
                 let db = pool_manager.get_db();
-                if let Ok(db_tokens) = ArbitrageConfig::load_tokens_from_db(&db) {
+                if let Ok(db_tokens) = ArbitrageConfig::load_tokens_from_db(&db).await {
                     if !db_tokens.is_empty() {
                         log::info!(
-                            "Loaded {} tokens from RocksDB, merging with TOML config",
+                            "Loaded {} tokens from Postgres, merging with TOML config",
                             db_tokens.len()
                         );
                         arb_config = arb_config.merge_with_db_tokens(db_tokens);
@@ -141,10 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let aggregator_clone = aggregator.clone();
 
                 // Load mainnet configuration
-                let rpc_url = env::var("SOLANA_RPC_URL").unwrap_or_else(|_| {
-                    "https://sol-rpc.degalabs.fi/jsdh7483-0543-skdjs-84738-d383438e4sdfd"
-                        .to_string()
-                });
+                let rpc_url = env::var("SOLANA_RPC_URL").unwrap_or_else(|_| "".to_string());
                 log::info!("Using Solana RPC: {}", rpc_url);
 
                 // Load keypair for transaction signing
@@ -156,7 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let monitor = ArbitrageMonitor::new(
                     aggregator_clone,
                     arb_config.clone(),
-                    "rocksdb_data/arbitrage_opportunities",
+                    db.clone(), // Pass the PgPool directly
                     &rpc_url,
                     payer_pubkey,
                 )
@@ -177,7 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Every hour
                     loop {
                         interval.tick().await;
-                        match monitor_for_cleanup.cleanup_old_opportunities(86400) {
+                        match monitor_for_cleanup.cleanup_old_opportunities(86400).await {
                             // Keep last 24 hours
                             Ok(count) => {
                                 if count > 0 {
@@ -209,14 +249,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arb_config_arc = None;
     let mut arbitrage_monitor = None;
 
-    let requested = PathBuf::from(&arb_config_path);
-    // If the requested path exists, try to load it
-    if let Some((cfg, mon)) =
-        try_setup_arb(requested.clone(), pool_manager.clone(), aggregator.clone()).await
-    {
-        arb_config_arc = Some(cfg);
-        arbitrage_monitor = Some(mon);
-    } else {
+    if arbitrage_enabled {
+        let requested = PathBuf::from(&arb_config_path);
+        // If the requested path exists, try to load it
+        // Note: functionality of try_setup_arb needs update too
+        // But for now let's assume we update the manual construction if valid
+        // Actually try_setup_arb is a helper function. We need to check it.
+        // Assuming we replace it or update it. 
+        if let Some((cfg, mon)) =
+            try_setup_arb(requested.clone(), pool_manager.clone(), aggregator.clone()).await
+        {
+            arb_config_arc = Some(cfg);
+            arbitrage_monitor = Some(mon);
+        } else {
         // If the file wasn't found at the requested path, try common fallbacks
         let mut tried = Vec::new();
         tried.push(requested.clone());
@@ -260,32 +305,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    } // End of arbitrage_enabled check
 
     // read port from env or default to 3000
     let port = std::env::var("API_PORT").unwrap_or_else(|_| "3000".into());
     log::info!("Starting REST API server on port {}...", port);
 
     // Create router with aggregator and arbitrage config
-    let app = if let Some(arb_config) = arb_config_arc {
-        api::create_router(aggregator, arb_config, arbitrage_monitor)
-    } else {
-        // Create a default empty config if not available
-        let default_config = ArbitrageConfig {
-            settings: crate::arbitrage_config::ArbitrageSettings {
-                min_profit_bps: 50,
-                base_token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".to_string(), // USDC
-                base_amount: 100_000_000,                                               // 100 USDC
-                slippage_bps: 50,
-                max_concurrent_checks: 10,
-            },
-            monitored_tokens: vec![],
-        };
-        api::create_router(
-            aggregator,
-            Arc::new(std::sync::RwLock::new(default_config)),
-            None,
-        )
-    };
+    let app = api::create_router(aggregator, arb_config_arc, arbitrage_monitor);
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
 

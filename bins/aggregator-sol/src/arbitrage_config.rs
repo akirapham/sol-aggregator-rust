@@ -1,10 +1,10 @@
-use rocksdb::DB;
+use sqlx::{Pool, Postgres};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashSet;
 use std::fs;
 use std::str::FromStr;
-use std::sync::Arc;
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArbitrageConfig {
@@ -136,33 +136,63 @@ impl ArbitrageConfig {
         Ok(())
     }
 
-    /// Save monitored tokens to RocksDB
-    pub fn save_tokens_to_db(db: &Arc<DB>, tokens: &[MonitoredToken]) -> Result<(), String> {
-        const ARBITRAGE_TOKENS_KEY: &[u8] = b"arbitrage_monitored_tokens";
-
-        let json = serde_json::to_string(tokens)
+    /// Save monitored tokens to Postgres
+    /// We can use a dedicated table or a single JSONB row in a 'configs' table.
+    /// Given the previous implementation used a key-value store, let's create a simplified table
+    /// or reuse the `arbitrage_monitored_tokens` concept.
+    /// For simplicity and to match the schema, let's assume we can store this as a JSON blob 
+    /// within a generic 'app_config' table or similar, OR just use the `tokens` table with a flag?
+    /// The `tokens` table is for metadata. This is "which tokens are monitored".
+    /// A simple key-value table `app_settings` (key, value) is best for this migration.
+    /// Or we can just create a file, but ensuring DB persistence is the goal.
+    /// Let's use `app_settings` table (we'll need to create it) or just use a specific query.
+    /// Let's CREATE the table if not exists here (or in init.sql).
+    pub async fn save_tokens_to_db(db: &Pool<Postgres>, tokens: &[MonitoredToken]) -> Result<(), String> {
+        let json = serde_json::to_value(tokens)
             .map_err(|e| format!("Failed to serialize tokens: {}", e))?;
 
-        db.put(ARBITRAGE_TOKENS_KEY, json.as_bytes())
+        // Using a simple KV table pattern on the fly or assuming existence.
+        // Let's assume we add `app_settings` to init.sql or create it here.
+        // Creating here is safer for immediate migration correctness.
+        sqlx::query("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value JSONB)")
+            .execute(db)
+            .await
+            .map_err(|e| format!("Failed to ensure settings table: {}", e))?;
+
+        sqlx::query("INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2")
+            .bind("arbitrage_monitored_tokens")
+            .bind(json)
+            .execute(db)
+            .await
             .map_err(|e| format!("Failed to save tokens to DB: {}", e))?;
 
         Ok(())
     }
 
-    /// Load monitored tokens from RocksDB
-    pub fn load_tokens_from_db(db: &Arc<DB>) -> Result<Vec<MonitoredToken>, String> {
-        const ARBITRAGE_TOKENS_KEY: &[u8] = b"arbitrage_monitored_tokens";
+    /// Load monitored tokens from Postgres
+    pub async fn load_tokens_from_db(db: &Pool<Postgres>) -> Result<Vec<MonitoredToken>, String> {
+         // Ensure table exists first to avoid error on fresh start
+         sqlx::query("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value JSONB)")
+            .execute(db)
+            .await
+            .map_err(|e| format!("Failed to ensure settings table: {}", e))?;
+            
+        let row = sqlx::query("SELECT value FROM app_settings WHERE key = $1")
+            .bind("arbitrage_monitored_tokens")
+            .fetch_optional(db)
+            .await
+            .map_err(|e| format!("Failed to load tokens from DB: {}", e))?;
 
-        match db.get(ARBITRAGE_TOKENS_KEY) {
-            Ok(Some(bytes)) => {
-                let json = String::from_utf8(bytes.to_vec())
-                    .map_err(|e| format!("Invalid UTF-8 in DB: {}", e))?;
-
-                serde_json::from_str(&json)
-                    .map_err(|e| format!("Failed to deserialize tokens: {}", e))
-            }
-            Ok(None) => Ok(Vec::new()), // No tokens saved yet
-            Err(e) => Err(format!("Failed to load tokens from DB: {}", e)),
+        if let Some(row) = row {
+             use sqlx::Row;
+             let json: serde_json::Value = row.try_get("value").unwrap_or(serde_json::Value::Null);
+             if json.is_null() {
+                 return Ok(Vec::new());
+             }
+             serde_json::from_value(json)
+                .map_err(|e| format!("Failed to deserialize tokens: {}", e))
+        } else {
+            Ok(Vec::new())
         }
     }
 

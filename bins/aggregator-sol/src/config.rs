@@ -98,7 +98,7 @@ impl ConfigLoader {
             _ => Err(DexAggregatorError::SerializationError(format!(
                 "Invalid commitment level: {}",
                 level
-            ))),
+            )).into()),
         }
     }
 
@@ -114,7 +114,7 @@ impl ConfigLoader {
             _ => Err(DexAggregatorError::SerializationError(format!(
                 "Invalid MEV risk level: {}",
                 value
-            ))),
+            )).into()),
         }
     }
 
@@ -132,7 +132,7 @@ impl ConfigLoader {
                 _ => Err(DexAggregatorError::SerializationError(format!(
                     "Invalid boolean value for {}: {}",
                     key, value
-                ))),
+                )).into()),
             },
             Err(_) => Ok(default),
         }
@@ -145,7 +145,7 @@ impl ConfigLoader {
                 DexAggregatorError::SerializationError(format!(
                     "Invalid usize value for {}: {}",
                     key, value
-                ))
+                )).into()
             }),
             Err(_) => Ok(default),
         }
@@ -158,7 +158,7 @@ impl ConfigLoader {
                 DexAggregatorError::SerializationError(format!(
                     "Invalid u64 value for {}: {}",
                     key, value
-                ))
+                )).into()
             }),
             Err(_) => Ok(default),
         }
@@ -171,7 +171,7 @@ impl ConfigLoader {
                 DexAggregatorError::SerializationError(format!(
                     "Invalid decimal value for {}: {}",
                     key, value
-                ))
+                )).into()
             }),
             Err(_) => Ok(default),
         }

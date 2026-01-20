@@ -46,6 +46,8 @@ thiserror = "2.0.16"
 # Math and decimal handling
 rust_decimal = "1.32"
 num-traits = "0.2"
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "json", "chrono", "uuid"] }
+dotenvy = "0.15"
 
 # Futures for async operations
 futures = "0.3"
@@ -74,7 +76,7 @@ solana-compute-budget = "3.0.0"
 solana-compute-budget-interface = "3.0.0"
 yellowstone-grpc-proto = { version = "9.0.0" }
 
-axum = "0.7"
+axum = "0.8"
 uuid = { version = "1.0", features = ["v4"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }

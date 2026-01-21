@@ -14,6 +14,8 @@ pub mod pool_data_types;
 pub mod pool_manager;
 pub mod types;
 pub mod utils;
+#[cfg(test)]
+pub mod tests;
 
 use crate::pool_manager::ArbitragePoolUpdate;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
@@ -34,7 +36,7 @@ use tokio::signal;
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
 use crate::grpc::create_grpc_service;
-use crate::pool_manager::PoolStateManager;
+use crate::pool_manager::{PoolDataProvider, PoolStateManager};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -97,7 +99,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Create and configure the aggregator
     // Config already loaded above
-    let aggregator = Arc::new(aggregator::DexAggregator::new(config, pool_manager.clone()));
+    let aggregator = Arc::new(aggregator::DexAggregator::new(
+        config,
+        pool_manager.clone() as Arc<dyn PoolDataProvider>,
+    ));
 
     // 2.5. Load arbitrage configuration and start monitoring (optional)
     // Check if arbitrage detection is enabled via environment variable

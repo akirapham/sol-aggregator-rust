@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
     constants::is_base_token,
@@ -176,7 +176,7 @@ impl RaydiumClmmPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        amm_config_fetcher: &dyn GetAmmConfig,
     ) -> u64 {
         if input_amount == 0 {
             return 0;
@@ -205,7 +205,7 @@ impl RaydiumClmmPoolState {
         input_amount: u64,
         input_token: &Pubkey,
         _sqrt_price_limit_x64: u128,
-        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        amm_config_fetcher: &dyn GetAmmConfig,
     ) -> u64 {
         let amm_config = match amm_config_fetcher
             .get_raydium_clmm_amm_config(&self.amm_config)
@@ -294,7 +294,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        amm_config_fetcher: &dyn GetAmmConfig,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // 1. Determine direction (zero_for_one)
         let zero_for_one = params.input_token.address == self.token_mint0;

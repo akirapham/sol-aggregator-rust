@@ -6,7 +6,6 @@ pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dammv2:
     PoolFeesStruct, PoolMetrics, RewardInfo,
 };
 use std::str::FromStr;
-use std::sync::Arc;
 
 use serde_with::{json::JsonString, serde_as, DisplayFromStr};
 
@@ -110,7 +109,7 @@ impl MeteoraDammV2PoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _: Arc<dyn GetAmmConfig>,
+        _: &dyn GetAmmConfig,
     ) -> u64 {
         let to_anchor_pubkey = |p: Pubkey| anchor_lang::prelude::Pubkey::from(p.to_bytes());
 
@@ -284,8 +283,8 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<Vec<Instruction>, String> {
+        amm_config_fetcher: &dyn GetAmmConfig,
+    ) -> std::result::Result<Vec<Instruction>, String> {
         let input_mint = params.input_token.address;
 
         // Determine swap direction (a_to_b = true if input is token A)
@@ -340,7 +339,7 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
         let estimated_output = self.calculate_output_amount(
             &input_mint,
             params.input_amount,
-            _amm_config_fetcher.clone(),
+            amm_config_fetcher,
         );
 
         let minimum_amount_out =

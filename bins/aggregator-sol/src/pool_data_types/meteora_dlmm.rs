@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::pool_data_types::dlmm::functions;
 use crate::pool_data_types::{GetAmmConfig, PoolUpdateEventType};
@@ -56,7 +56,7 @@ impl MeteoraDlmmPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        _amm_config_fetcher: &dyn GetAmmConfig,
     ) -> u64 {
         if input_amount == 0 {
             return 0;
@@ -296,8 +296,8 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<Vec<Instruction>, String> {
+        amm_config_fetcher: &dyn GetAmmConfig,
+    ) -> std::result::Result<Vec<Instruction>, String> {
         let input_mint = params.input_token.address;
 
         // Determine swap direction
@@ -343,7 +343,7 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         let estimated_output = self.calculate_output_amount(
             &input_mint,
             params.input_amount,
-            _amm_config_fetcher.clone(),
+            amm_config_fetcher,
         );
 
         let min_amount_out =

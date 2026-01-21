@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sol_trade_sdk::utils::calc::bonk::{
@@ -73,7 +72,7 @@ impl BonkPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _: Arc<dyn GetAmmConfig>,
+        _: &dyn GetAmmConfig,
     ) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
         if is_buy {

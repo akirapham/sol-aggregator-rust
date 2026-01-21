@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use crate::types::SwapParams;
 use crate::{
@@ -260,44 +259,44 @@ impl PoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        amm_confi_fetcher: Arc<dyn GetAmmConfig>,
+        amm_config_fetcher: &dyn GetAmmConfig,
     ) -> u64 {
         match self {
             PoolState::Pumpfun(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
             PoolState::PumpSwap(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
             PoolState::RaydiumAmmV4(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
             PoolState::RaydiumCpmm(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
             PoolState::Bonk(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
             PoolState::RadyiumClmm(state) => {
                 let output_amount = state
-                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .calculate_output_amount(input_token, input_amount, amm_config_fetcher)
                     .await;
                 output_amount
             }
             PoolState::MeteoraDbc(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
             PoolState::OrcaWhirlpool(state) => {
                 let output_amount = state
-                    .calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                    .calculate_output_amount(input_token, input_amount, amm_config_fetcher)
                     .await;
                 output_amount
             }
             PoolState::MeteoraDammV2(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
             PoolState::MeteoraDlmm(state) => {
-                state.calculate_output_amount(input_token, input_amount, amm_confi_fetcher)
+                state.calculate_output_amount(input_token, input_amount, amm_config_fetcher)
             }
         }
     }
@@ -348,7 +347,7 @@ impl BuildSwapInstruction for PoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        amm_config_fetcher: &dyn GetAmmConfig,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // Validation
         if params.input_amount == 0 {

@@ -1,6 +1,6 @@
 use crate::constants::BASE_TOKENS;
-use crate::pool_data_types::{traits::BuildSwapInstruction, DexType, GetAmmConfig, PoolState};
-use crate::pool_manager::PoolStateManager;
+use crate::pool_data_types::{traits::BuildSwapInstruction, DexType, PoolState};
+use crate::pool_manager::PoolDataProvider;
 use crate::types::{AggregatorConfig, ExecutionPriority, SwapParams};
 use crate::utils::{calculate_min_output_amount, tokens_equal};
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
     config: AggregatorConfig,
-    pool_manager: Arc<PoolStateManager>,
+    pool_manager: Arc<dyn PoolDataProvider>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,14 +53,14 @@ pub struct SwapRoute {
 
 impl DexAggregator {
     /// Create a new DEX aggregator with the given configuration
-    pub fn new(config: AggregatorConfig, pool_manager: Arc<PoolStateManager>) -> Self {
+    pub fn new(config: AggregatorConfig, pool_manager: Arc<dyn PoolDataProvider>) -> Self {
         Self::new_with_pool_manager(config, pool_manager)
     }
 
     /// Create a new DEX aggregator with a specific pool manager
     pub fn new_with_pool_manager(
         config: AggregatorConfig,
-        pool_manager: Arc<PoolStateManager>,
+        pool_manager: Arc<dyn PoolDataProvider>,
     ) -> Self {
         Self {
             config,
@@ -69,7 +69,7 @@ impl DexAggregator {
     }
 
     /// Get access to the pool manager
-    pub fn get_pool_manager(&self) -> &Arc<PoolStateManager> {
+    pub fn get_pool_manager(&self) -> &Arc<dyn PoolDataProvider> {
         &self.pool_manager
     }
 
@@ -87,7 +87,7 @@ impl DexAggregator {
         exclude_pools: &HashSet<Pubkey>,
         direct_only: bool,
     ) -> Option<SwapRoute> {
-        let self_arc: Arc<dyn GetAmmConfig> = self.pool_manager.clone();
+        let amm_config_fetcher = self.pool_manager.as_ref();
         let min_liquidity_usd = 1000.0_f64;
         // First, direct path
         let direct_pool_addresses = self
@@ -201,7 +201,7 @@ impl DexAggregator {
                     .calculate_output_amount(
                         &swap_param.input_token.address,
                         swap_param.input_amount,
-                        self_arc.clone(),
+                        amm_config_fetcher,
                     )
                     .await;
 
@@ -288,7 +288,7 @@ impl DexAggregator {
                             .calculate_output_amount(
                                 &swap_param.input_token.address,
                                 swap_param.input_amount,
-                                self_arc.clone(),
+                                amm_config_fetcher,
                             )
                             .await;
 
@@ -301,7 +301,7 @@ impl DexAggregator {
                             .calculate_output_amount(
                                 &base_token_key,
                                 intermediate_amount,
-                                self_arc.clone(),
+                                amm_config_fetcher,
                             )
                             .await;
 
@@ -383,7 +383,7 @@ impl DexAggregator {
                         .calculate_output_amount(
                             &swap_param.input_token.address,
                             input_amount,
-                            self_arc.clone(),
+                            amm_config_fetcher,
                         )
                         .await;
                     splits_with_distributions[0][i] = Some(SwapPath {
@@ -412,7 +412,7 @@ impl DexAggregator {
                         .calculate_output_amount(
                             &swap_param.input_token.address,
                             input_amount,
-                            self_arc.clone(),
+                            amm_config_fetcher,
                         )
                         .await;
                     let output_amount = swap_step_2
@@ -420,7 +420,7 @@ impl DexAggregator {
                         .calculate_output_amount(
                             &swap_step_1.output_token,
                             intermediate_amount,
-                            self_arc.clone(),
+                            amm_config_fetcher,
                         )
                         .await;
                     splits_with_distributions[split_index][i] = Some(SwapPath {
@@ -842,7 +842,7 @@ impl DexAggregator {
         priority: ExecutionPriority,
         payer: Pubkey,
     ) -> Result<Vec<Instruction>, String> {
-        let self_arc: Arc<dyn GetAmmConfig> = self.pool_manager.clone();
+        let amm_config_fetcher = self.pool_manager.as_ref();
         let token_a = self.pool_manager.get_token(&step.input_token).await;
         let token_b = self.pool_manager.get_token(&step.output_token).await;
 
@@ -856,7 +856,7 @@ impl DexAggregator {
         };
 
         step.pool_state
-            .build_swap_instruction(&params, self_arc)
+            .build_swap_instruction(&params, amm_config_fetcher)
             .await
             .map_err(|e| {
                 log::error!(

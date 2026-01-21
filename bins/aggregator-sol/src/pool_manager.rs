@@ -78,7 +78,30 @@ pub struct PoolForTickFetching {
     pub dex_type: DexType,
 }
 /// Type alias for pending pools to fetch tick arrays (pool address + DEX type)
+/// Pending pools for tick fetching
 type PendingPoolsForTickFetching = Arc<Mutex<HashSet<PoolForTickFetching>>>;
+
+#[async_trait]
+pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
+    async fn get_pool_addresses_for_pair(
+        &self,
+        token_a: &Pubkey,
+        token_b: &Pubkey,
+    ) -> HashSet<Pubkey>;
+    async fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState>;
+    async fn is_pool_tick_synced(&self, pool_address: &Pubkey) -> bool;
+
+    // Added methods
+    async fn get_token(&self, token_address: &Pubkey) -> Option<Token>;
+    fn get_sol_price(&self) -> f64;
+    async fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState>;
+    async fn get_pools_for_token(&self, token_address: &Pubkey) -> Vec<PoolState>;
+    async fn get_stats(&self) -> PoolManagerStats;
+    fn get_db(&self) -> Pool<Postgres>;
+    async fn add_arbitrage_token(&self, token: Pubkey) -> Result<(), String>;
+    async fn remove_arbitrage_token(&self, token: &Pubkey) -> Result<(), String>;
+    async fn get_chain_state(&self) -> ChainStateUpdate;
+}
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
@@ -1942,10 +1965,65 @@ impl GetAmmConfig for PoolStateManager {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PoolManagerStats {
     pub total_pools: usize,
     pub total_pairs: usize,
     pub total_tokens: usize,
     pub pools_by_dex: HashMap<DexType, usize>,
+}
+
+#[async_trait]
+impl PoolDataProvider for PoolStateManager {
+    async fn get_pool_addresses_for_pair(
+        &self,
+        token_a: &Pubkey,
+        token_b: &Pubkey,
+    ) -> HashSet<Pubkey> {
+        self.get_pool_addresses_for_pair(token_a, token_b).await
+    }
+
+    async fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState> {
+        self.get_pool_state_by_address(pool_address).await
+    }
+
+    async fn is_pool_tick_synced(&self, pool_address: &Pubkey) -> bool {
+        self.is_pool_tick_synced(pool_address).await
+    }
+
+    async fn get_token(&self, token_address: &Pubkey) -> Option<Token> {
+        self.get_token(token_address).await
+    }
+
+    fn get_sol_price(&self) -> f64 {
+        self.get_sol_price()
+    }
+
+    async fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState> {
+        self.get_pools_for_pair(token_a, token_b).await
+    }
+
+    async fn get_pools_for_token(&self, token_address: &Pubkey) -> Vec<PoolState> {
+        self.get_pools_for_token(token_address).await
+    }
+
+    async fn get_stats(&self) -> PoolManagerStats {
+        self.get_stats().await
+    }
+
+    fn get_db(&self) -> Pool<Postgres> {
+        self.get_db()
+    }
+
+    async fn add_arbitrage_token(&self, token: Pubkey) -> Result<(), String> {
+        self.add_arbitrage_token(token).await
+    }
+
+    async fn remove_arbitrage_token(&self, token: &Pubkey) -> Result<(), String> {
+        self.remove_arbitrage_token(token).await
+    }
+
+    async fn get_chain_state(&self) -> ChainStateUpdate {
+        self.get_chain_state().await
+    }
 }

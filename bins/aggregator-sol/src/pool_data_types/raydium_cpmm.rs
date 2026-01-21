@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use crate::{
     pool_data_types::{common::functions, GetAmmConfig, PoolUpdateEventType},
@@ -87,7 +86,7 @@ impl RaydiumCpmmPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _: Arc<dyn GetAmmConfig>,
+        _: &dyn GetAmmConfig,
     ) -> u64 {
         let (base_token, _) = (self.token0, self.token1);
         let input_is_base = tokens_equal(input_token, &base_token);
@@ -127,7 +126,7 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        amm_config_fetcher: &dyn GetAmmConfig,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // 1. Determine direction
         // In Raydium CPMM, we need to know if we are swapping Token 0 -> Token 1 or Token 1 -> Token 0
@@ -141,7 +140,7 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         let amount_out = self.calculate_output_amount(
             &params.input_token.address,
             params.input_amount,
-            amm_config_fetcher.clone(),
+            amm_config_fetcher,
         );
 
         // 3. Calculate minimum output amount (slippage)

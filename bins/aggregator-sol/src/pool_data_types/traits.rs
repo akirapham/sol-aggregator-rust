@@ -3,7 +3,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::PoolConfig;
-use std::sync::Arc;
 
 #[allow(unused)]
 #[async_trait]
@@ -28,6 +27,6 @@ pub trait BuildSwapInstruction: Send + Sync {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        amm_config_fetcher: &dyn GetAmmConfig,
     ) -> std::result::Result<Vec<Instruction>, String>;
 }

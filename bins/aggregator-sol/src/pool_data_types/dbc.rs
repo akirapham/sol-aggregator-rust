@@ -6,7 +6,6 @@ pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::ty
     PoolConfig, VolatilityTracker,
 };
 use std::str::FromStr;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbcPoolState {
@@ -149,7 +148,7 @@ impl DbcPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _: Arc<dyn GetAmmConfig>,
+        _: &dyn GetAmmConfig,
     ) -> u64 {
         // Ensure we have necessary config data
         if self.pool_config.is_none() {
@@ -368,8 +367,8 @@ impl BuildSwapInstruction for DbcPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<Vec<Instruction>, String> {
+        amm_config_fetcher: &dyn GetAmmConfig,
+    ) -> std::result::Result<Vec<Instruction>, String> {
         // Determine input/output mints based on trade direction
         let base_mint = self.base_mint;
         let quote_mint = self
@@ -461,7 +460,7 @@ impl BuildSwapInstruction for DbcPoolState {
         let estimated_output = self.calculate_output_amount(
             &input_mint,
             params.input_amount,
-            _amm_config_fetcher.clone(),
+            amm_config_fetcher,
         );
 
         let minimum_amount_out =

@@ -23,7 +23,6 @@ use solana_streamer_sdk::streaming::event_parser::protocols::orca_whirlpools::{
     parser::ORCA_WHIRLPOOL_PROGRAM_ID, types::OracleState, types::TickArrayState,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use serde_with::{serde_as, DisplayFromStr};
 
@@ -105,7 +104,7 @@ impl WhirlpoolPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        _amm_config_fetcher: &dyn GetAmmConfig,
     ) -> u64 {
         if input_amount == 0 {
             return 0;
@@ -327,7 +326,7 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
+        _amm_config_fetcher: &dyn GetAmmConfig,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // 1. Determine swap direction
         let specified_token_a = tokens_equal(&params.input_token.address, &self.token_mint_a);

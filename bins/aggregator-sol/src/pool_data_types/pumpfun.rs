@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
@@ -69,7 +68,7 @@ impl PumpfunPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _: Arc<dyn GetAmmConfig>,
+        _: &dyn GetAmmConfig,
     ) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
         if is_buy {
@@ -119,8 +118,8 @@ impl BuildSwapInstruction for PumpfunPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<Vec<Instruction>, String> {
+        _amm_config_fetcher: &dyn GetAmmConfig,
+    ) -> std::result::Result<Vec<Instruction>, String> {
         // Determine if this is a buy (SOL -> Token) or sell (Token -> SOL)
         let is_buy = tokens_equal(&params.input_token.address, &get_sol_mint());
 

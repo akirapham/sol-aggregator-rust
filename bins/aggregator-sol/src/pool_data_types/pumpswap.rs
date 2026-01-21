@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use crate::{
     pool_data_types::{
@@ -16,7 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
-use anyhow::Result;
 use async_trait::async_trait;
 use sol_trade_sdk::utils::calc::pumpswap::{buy_quote_input_internal, sell_base_input_internal};
 use solana_sdk::instruction::{AccountMeta, Instruction};
@@ -78,7 +76,7 @@ impl PumpSwapPoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _: Arc<dyn GetAmmConfig>,
+        _: &dyn GetAmmConfig,
     ) -> u64 {
         let (base_token, _quote_token) = (self.base_mint, self.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);
@@ -118,8 +116,8 @@ impl BuildSwapInstruction for PumpSwapPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<Vec<Instruction>, String> {
+        _amm_config_fetcher: &dyn GetAmmConfig,
+    ) -> std::result::Result<Vec<Instruction>, String> {
         let pool = self.address;
         let base_mint = self.base_mint;
         let quote_mint = self.quote_mint;

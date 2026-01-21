@@ -14,7 +14,6 @@ use solana_sdk::{
     pubkey::Pubkey,
 };
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaydiumAmmV4PoolState {
@@ -82,7 +81,7 @@ impl RaydiumAmmV4PoolState {
         &self,
         input_token: &Pubkey,
         input_amount: u64,
-        _: Arc<dyn GetAmmConfig>,
+        _: &dyn GetAmmConfig,
     ) -> u64 {
         let (base_token, _) = (self.base_mint, self.quote_mint);
         let input_is_base = tokens_equal(input_token, &base_token);
@@ -122,8 +121,8 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: Arc<dyn GetAmmConfig>,
-    ) -> Result<Vec<Instruction>, String> {
+        _amm_config_fetcher: &dyn GetAmmConfig,
+    ) -> std::result::Result<Vec<Instruction>, String> {
         // Determine if this is a buy (WSOL/USDC -> Token) or sell (Token -> WSOL/USDC)
         let is_wsol = self.base_mint == constants::WSOL_TOKEN_ACCOUNT
             || self.quote_mint == constants::WSOL_TOKEN_ACCOUNT;
@@ -141,7 +140,7 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         let output_amount = self.calculate_output_amount(
             &params.input_token.address,
             params.input_amount,
-            _amm_config_fetcher.clone(),
+            _amm_config_fetcher,
         );
 
         // Apply slippage tolerance

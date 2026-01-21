@@ -328,7 +328,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumCpmmSwap,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -356,7 +356,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumCpmmDeposit,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -384,7 +384,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumCpmmInitialize,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -412,7 +412,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumCpmmWithdraw,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -608,7 +608,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4Swap,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::Raydium(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::Raydium(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -644,7 +644,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4Deposit,
                             additional_event_type: 0
                         };
-                        pool_update_events.push(PoolUpdateEvent::Raydium(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::Raydium(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -679,7 +679,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4Initialize2,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::Raydium(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::Raydium(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -714,7 +714,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4Withdraw,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::Raydium(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::Raydium(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -749,7 +749,7 @@ pub fn handle_dex_event(
                             pool_update_event_type: PoolUpdateEventType::RaydiumAmmV4WithdrawPnl,
                             additional_event_type: 0,
                         };
-                        pool_update_events.push(PoolUpdateEvent::Raydium(raydium_pool_update));
+                        pool_update_events.push(PoolUpdateEvent::Raydium(Box::new(raydium_pool_update)));
                     }
                 }
             },
@@ -1040,7 +1040,7 @@ pub fn handle_dex_event(
             },
             // -------------------------- account -----------------------
             BonkPoolStateAccountEvent => |e: BonkPoolStateAccountEvent| {
-                pool_update_events.push(PoolUpdateEvent::Bonk(
+                pool_update_events.push(PoolUpdateEvent::Bonk(Box::new(
                     BonkPoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
@@ -1064,7 +1064,7 @@ pub fn handle_dex_event(
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::BonkPoolStateAccount,
                         additional_event_type: 0,
-                    }));
+                    })));
             },
             BonkGlobalConfigAccountEvent => |e: BonkGlobalConfigAccountEvent| {
                 // println!("BonkGlobalConfigAccountEvent: {e:?}");
@@ -1226,7 +1226,7 @@ pub fn handle_dex_event(
                     pool_update_event_type: PoolUpdateEventType::RaydiumCpmmPoolStateAccount,
                     additional_event_type: 0, // for tick array index tracking, 0 for others
                 };
-                pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(raydium_pool_update));
+                pool_update_events.push(PoolUpdateEvent::RaydiumCpmm(Box::new(raydium_pool_update)));
             },
             TokenAccountEvent => |e: TokenAccountEvent| {
                 // do nothing for now
@@ -1300,7 +1300,7 @@ pub fn handle_dex_event(
                     })));
             },
             DbcVirtualPoolAccountEvent => |e: DbcVirtualPoolAccountEvent| {
-                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
+                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(Box::new(
                     DbcPoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
@@ -1340,10 +1340,10 @@ pub fn handle_dex_event(
 
                         // Volatility Tracker
                         volatility_tracker: Some(e.virtual_pool.volatility_tracker),
-                    }));
+                    })));
             },
             DbcPoolConfigAccountEvent => |e: DbcPoolConfigAccountEvent| {
-                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(
+                pool_update_events.push(PoolUpdateEvent::MeteoraDbc(Box::new(
                     DbcPoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
@@ -1385,10 +1385,10 @@ pub fn handle_dex_event(
                         pool_update_event_type: PoolUpdateEventType::DbcPoolConfigAccount,
                         additional_event_type: 0,
                         last_updated: e.metadata.recv_us as u64,
-                    }));
+                    })));
             },
             MeteoraDammV2PoolAccountEvent => |e: MeteoraDammV2PoolAccountEvent| {
-                pool_update_events.push(PoolUpdateEvent::MeteoraDammV2(
+                pool_update_events.push(PoolUpdateEvent::MeteoraDammV2(Box::new(
                     MeteoraDammV2PoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
@@ -1426,14 +1426,14 @@ pub fn handle_dex_event(
                         pool_update_event_type: PoolUpdateEventType::MeteoraDammV2PoolStateAccount,
                         additional_event_type: 0,
                         last_updated: e.metadata.recv_us as u64,
-                    }));
-                },
+                    })));
+            },
             MeteoraDlmmSwapEvent => |e: MeteoraDlmmSwapEvent| {
                 let reserve_x_balance = post_token_balances.get(e.reserve_x.to_string().as_str());
                 let reserve_y_balance = post_token_balances.get(e.reserve_y.to_string().as_str());
 
                 if let (Some(rx_b), Some(ry_b)) = (reserve_x_balance, reserve_y_balance) {
-                    pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                    pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(Box::new(
                         MeteoraDlmmPoolUpdate {
                             slot: e.metadata.slot,
                             transaction_index: e.metadata.transaction_index,
@@ -1447,12 +1447,12 @@ pub fn handle_dex_event(
                             last_updated: e.metadata.recv_us as u64,
                             reserve_x: Some(rx_b.amount),
                             reserve_y: Some(ry_b.amount),
-                        }
+                        })
                     ));
                 }
             },
             MeteoraDlmmLbPairAccountEvent => |e: MeteoraDlmmLbPairAccountEvent| {
-                pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
+                pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(Box::new(
                     MeteoraDlmmPoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
@@ -1466,14 +1466,14 @@ pub fn handle_dex_event(
                         last_updated: e.metadata.recv_us as u64,
                         reserve_x: None,
                         reserve_y: None,
-                    }));
+                    })));
             },
             MeteoraDlmmBinArrayAccountEvent => |e: MeteoraDlmmBinArrayAccountEvent| {
                 let mut bin_arrays_map = std::collections::HashMap::new();
                 let lb_pair = e.bin_array.lb_pair;
                 bin_arrays_map.insert(e.bin_array.index as i32, e.bin_array);
                 pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
-                    MeteoraDlmmPoolUpdate {
+                    Box::new(MeteoraDlmmPoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         address: lb_pair,
@@ -1486,11 +1486,11 @@ pub fn handle_dex_event(
                         last_updated: e.metadata.recv_us as u64,
                         reserve_x: None,
                         reserve_y: None,
-                    }));
+                    })));
             },
             MeteoraDlmmBinArrayBitmapExtensionAccountEvent => |e: MeteoraDlmmBinArrayBitmapExtensionAccountEvent| {
                 pool_update_events.push(PoolUpdateEvent::MeteoraDlmm(
-                    MeteoraDlmmPoolUpdate {
+                    Box::new(MeteoraDlmmPoolUpdate {
                         slot: e.metadata.slot,
                         transaction_index: e.metadata.transaction_index,
                         address: e.pubkey,
@@ -1503,7 +1503,7 @@ pub fn handle_dex_event(
                         last_updated: e.metadata.recv_us as u64,
                         reserve_x: None,
                         reserve_y: None,
-                    }));
+                    })));
             },
         });
     }

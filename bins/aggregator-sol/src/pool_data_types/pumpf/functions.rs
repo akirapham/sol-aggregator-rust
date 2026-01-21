@@ -123,7 +123,7 @@ pub fn compute_fee(amount: u128, fee_basis_points: u128) -> u128 {
 }
 
 pub fn ceil_div(a: u128, b: u128) -> u128 {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
 
 pub fn get_bonding_curve_pda(mint: &Pubkey) -> Option<Pubkey> {
@@ -166,8 +166,8 @@ pub enum PdaCacheKey {
 
 pub fn get_user_volume_accumulator_pda(user: &Pubkey) -> Option<Pubkey> {
     get_cached_pda(PdaCacheKey::PumpSwapUserVolume(*user), || {
-        let seeds: &[&[u8]; 2] = &[&seeds::USER_VOLUME_ACCUMULATOR_SEED, user.as_ref()];
-        let program_id: &Pubkey = &&accounts::AMM_PROGRAM;
+        let seeds: &[&[u8]; 2] = &[seeds::USER_VOLUME_ACCUMULATOR_SEED, user.as_ref()];
+        let program_id: &Pubkey = &accounts::AMM_PROGRAM;
         let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
         pda.map(|pubkey| pubkey.0)
     })
@@ -208,8 +208,7 @@ pub fn coin_creator_vault_ata(coin_creator: Pubkey, quote_mint: Pubkey) -> Pubke
             &quote_mint_old,
             &token_program_old,
         );
-    let associated_token_creator_vault_authority = solana_sdk::pubkey::Pubkey::new_from_array(
+    solana_sdk::pubkey::Pubkey::new_from_array(
         associated_token_creator_vault_authority_old.to_bytes(),
-    );
-    associated_token_creator_vault_authority
+    )
 }

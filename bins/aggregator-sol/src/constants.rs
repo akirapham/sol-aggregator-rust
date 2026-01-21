@@ -22,3 +22,13 @@ pub static BASE_TOKENS: LazyLock<HashSet<String>> = LazyLock::new(|| {
 pub fn is_base_token(mint: &str) -> bool {
     BASE_TOKENS.contains(mint)
 }
+
+pub fn get_base_token_symbol(mint: Pubkey) -> String {
+    match mint.to_string().as_str() {
+        WSOL_MINT => "WSOL".to_string(),
+        USDC_MINT => "USDC".to_string(),
+        USDT_MINT => "USDT".to_string(),
+        USD1_MINT => "USD1".to_string(),
+        _ => "UNKNOWN".to_string(),
+    }
+}

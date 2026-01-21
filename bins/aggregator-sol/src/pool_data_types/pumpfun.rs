@@ -154,7 +154,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
 
             let bonding_curve_addr = if self.address == Pubkey::default() {
                 pumpf_functions::get_bonding_curve_pda(&params.output_token.address)
-                    .ok_or(format!("Failed to get bonding curve PDA"))?
+                    .ok_or("Failed to get bonding curve PDA".to_string())?
             } else {
                 self.address
             };
@@ -244,7 +244,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             // Get bonding curve PDA
             let bonding_curve_addr = if self.address == Pubkey::default() {
                 pumpf_functions::get_bonding_curve_pda(&params.input_token.address)
-                    .ok_or(format!("Failed to get bonding curve PDA"))?
+                    .ok_or("Failed to get bonding curve PDA".to_string())?
             } else {
                 self.address
             };

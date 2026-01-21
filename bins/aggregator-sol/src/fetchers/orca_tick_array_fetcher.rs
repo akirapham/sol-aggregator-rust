@@ -207,7 +207,7 @@ impl DynamicOrcaTickArrayState {
 /// Enum to represent either fixed or dynamic tick array
 #[derive(Clone, Debug)]
 pub enum OrcaTickArrayState {
-    Fixed(FixedOrcaTickArrayState),
+    Fixed(Box<FixedOrcaTickArrayState>),
     Dynamic(DynamicOrcaTickArrayState),
 }
 
@@ -262,11 +262,32 @@ impl OrcaTickArrayFetcher {
 
     /// Fetch a single tick array by address
     pub async fn fetch_tick_array(&self, address: Pubkey) -> Result<OrcaTickArrayState> {
-        let account = self
-            .rpc_client
-            .get_account(&address)
-            .await
-            .map_err(|e| anyhow!("Failed to fetch tick array account: {}", e))?;
+        const MAX_RETRIES: u32 = 3;
+        const INITIAL_BACKOFF: u64 = 200;
+
+        let mut attempt = 0;
+        let account = loop {
+            match self.rpc_client.get_account(&address).await {
+                Ok(account) => break account,
+                Err(e) => {
+                    if attempt >= MAX_RETRIES {
+                        return Err(anyhow!("Failed to fetch tick array account after {} retries: {}", MAX_RETRIES, e));
+                    }
+                    log::warn!(
+                        "Failed to fetch tick array account {}, retrying... ({}/{}): {}",
+                        address,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        INITIAL_BACKOFF * 2u64.pow(attempt),
+                    ))
+                    .await;
+                    attempt += 1;
+                }
+            }
+        };
 
         if account.owner != self.program_id {
             return Err(anyhow!("Account not owned by Orca Whirlpool program"));
@@ -287,7 +308,7 @@ impl OrcaTickArrayFetcher {
         if discriminator == fixed_discriminator {
             let tick_array: FixedOrcaTickArrayState =
                 BorshDeserialize::deserialize(&mut &account.data[..])?;
-            Ok(OrcaTickArrayState::Fixed(tick_array))
+            Ok(OrcaTickArrayState::Fixed(Box::new(tick_array)))
         } else if discriminator == dynamic_discriminator {
             let tick_array =
                 DynamicOrcaTickArrayState::deserialize_from_account_data(&account.data)?;
@@ -302,11 +323,31 @@ impl OrcaTickArrayFetcher {
         &self,
         addresses: Vec<Pubkey>,
     ) -> Result<Vec<OrcaTickArrayState>> {
-        let accounts = self
-            .rpc_client
-            .get_multiple_accounts(&addresses)
-            .await
-            .map_err(|e| anyhow!("Failed to fetch multiple tick array accounts: {}", e))?;
+        const MAX_RETRIES: u32 = 3;
+        const INITIAL_BACKOFF: u64 = 200;
+
+        let mut attempt = 0;
+        let accounts = loop {
+            match self.rpc_client.get_multiple_accounts(&addresses).await {
+                Ok(accounts) => break accounts,
+                Err(e) => {
+                    if attempt >= MAX_RETRIES {
+                         return Err(anyhow!("Failed to fetch multiple tick array accounts after {} retries: {}", MAX_RETRIES, e));
+                    }
+                    log::warn!(
+                        "Failed to fetch multiple tick array accounts, retrying... ({}/{}): {}",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        e
+                    );
+                     tokio::time::sleep(std::time::Duration::from_millis(
+                        INITIAL_BACKOFF * 2u64.pow(attempt),
+                    ))
+                    .await;
+                    attempt += 1;
+                }
+            }
+        };
 
         let mut tick_arrays = Vec::new();
 
@@ -333,7 +374,7 @@ impl OrcaTickArrayFetcher {
                     if discriminator == fixed_discriminator {
                         match BorshDeserialize::deserialize(&mut &account.data[..]) {
                             Ok(tick_array) => {
-                                tick_arrays.push(OrcaTickArrayState::Fixed(tick_array));
+                                tick_arrays.push(OrcaTickArrayState::Fixed(Box::new(tick_array)));
                             }
                             Err(e) => {
                                 log::warn!(
@@ -392,7 +433,7 @@ impl OrcaTickArrayFetcher {
         Ok((pda, bump))
     }
 
-    /// Get initialized tick indices from a tick array
+    /// Get initialized ticks from a tick array
     pub fn get_initialized_ticks(tick_array: &OrcaTickArrayState) -> Vec<(i32, OrcaTickState)> {
         let start_tick = tick_array.start_tick_index();
         let mut initialized_ticks = Vec::new();
@@ -514,7 +555,34 @@ impl OrcaTickArrayFetcher {
             return Ok(None);
         }
         let oracle_address = get_oracle_address(whirlpool).0;
-        let oracle_info = self.rpc_client.get_account(&oracle_address).await?;
+
+        const MAX_RETRIES: u32 = 3;
+        const INITIAL_BACKOFF: u64 = 200;
+
+        let mut attempt = 0;
+        let oracle_info = loop {
+             match self.rpc_client.get_account(&oracle_address).await {
+                Ok(info) => break info,
+                Err(e) => {
+                    if attempt >= MAX_RETRIES {
+                         return Err(anyhow!("Failed to fetch oracle account after {} retries: {}", MAX_RETRIES, e));
+                    }
+                    log::warn!(
+                        "Failed to fetch oracle account {}, retrying... ({}/{}): {}",
+                        oracle_address,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        INITIAL_BACKOFF * 2u64.pow(attempt),
+                    ))
+                    .await;
+                    attempt += 1;
+                }
+            }
+        };
+
         // Ok(Some(Oracle::from_bytes(&oracle_info.data)?))
 
         let oracle = Oracle::try_from_slice(&oracle_info.data)
@@ -551,7 +619,7 @@ mod tests {
             whirlpool: Pubkey::new_unique(),
         };
 
-        let tick_array = OrcaTickArrayState::Fixed(fixed_array.clone());
+        let tick_array = OrcaTickArrayState::Fixed(Box::new(fixed_array.clone()));
         assert_eq!(tick_array.start_tick_index(), 100);
         assert_eq!(tick_array.whirlpool(), fixed_array.whirlpool);
         assert!(!tick_array.is_dynamic());

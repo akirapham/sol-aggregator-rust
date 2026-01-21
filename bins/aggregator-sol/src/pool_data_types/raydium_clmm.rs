@@ -445,26 +445,24 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
             data,
         };
 
-        let mut instructions = Vec::new();
-
-        // Create input token ATA instruction (idempotent - creates if doesn't exist)
-        instructions.push(functions::create_ata_instruction(
-            params.user_wallet,
-            user_input_token,
-            input_mint,
-            params.input_token.is_token_2022,
-        ));
-
-        // Create output token ATA instruction (idempotent - creates if doesn't exist)
-        instructions.push(functions::create_ata_instruction(
-            params.user_wallet,
-            user_output_token,
-            output_mint,
-            params.output_token.is_token_2022,
-        ));
-
-        // Add swap instruction
-        instructions.push(swap_instruction);
+        let instructions = vec![
+            // Create input token ATA instruction (idempotent - creates if doesn't exist)
+            functions::create_ata_instruction(
+                params.user_wallet,
+                user_input_token,
+                input_mint,
+                params.input_token.is_token_2022,
+            ),
+            // Create output token ATA instruction (idempotent - creates if doesn't exist)
+            functions::create_ata_instruction(
+                params.user_wallet,
+                user_output_token,
+                output_mint,
+                params.output_token.is_token_2022,
+            ),
+            // Add swap instruction
+            swap_instruction,
+        ];
 
         Ok(instructions)
     }

@@ -1,4 +1,4 @@
-use crate::fetchers::fetchers::{fetch_account_data, fetch_token};
+use crate::fetchers::common::{fetch_account_data, fetch_token};
 use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
@@ -595,7 +595,7 @@ impl PoolStateManager {
                                                 bin_arrays.iter().for_each(|bin_array| {
                                                     let mut bin_arrays_map = HashMap::new();
                                                     bin_arrays_map.insert(bin_array.index as i32, bin_array.clone());
-                                                    let event = PoolUpdateEvent::MeteoraDlmm(MeteoraDlmmPoolUpdate {
+                                                    let event = PoolUpdateEvent::MeteoraDlmm(Box::new(MeteoraDlmmPoolUpdate {
                                                         slot: 0,
                                                         transaction_index: None,
                                                         address: pool_id,
@@ -608,7 +608,7 @@ impl PoolStateManager {
                                                         last_updated: recv_us as u64,
                                                         reserve_x: None,
                                                         reserve_y: None,
-                                                    });
+                                                    }));
                                                     let _ = pool_update_tx_clone.send(vec![event]);
                                                 });
                                             }

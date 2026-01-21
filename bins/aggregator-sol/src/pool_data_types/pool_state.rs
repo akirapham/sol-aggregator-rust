@@ -40,11 +40,11 @@ pub enum PoolState {
     RaydiumAmmV4(RaydiumAmmV4PoolState),
     RaydiumCpmm(RaydiumCpmmPoolState),
     Bonk(BonkPoolState),
-    RadyiumClmm(RaydiumClmmPoolState),
-    MeteoraDbc(DbcPoolState),
-    MeteoraDammV2(MeteoraDammV2PoolState),
+    RadyiumClmm(Box<RaydiumClmmPoolState>),
+    MeteoraDbc(Box<DbcPoolState>),
+    MeteoraDammV2(Box<MeteoraDammV2PoolState>),
     OrcaWhirlpool(WhirlpoolPoolState),
-    MeteoraDlmm(MeteoraDlmmPoolState),
+    MeteoraDlmm(Box<MeteoraDlmmPoolState>),
 }
 
 #[allow(dead_code)]
@@ -229,17 +229,17 @@ impl PoolState {
             PoolState::MeteoraDammV2(state) => {
                 // Calculate reserves from DAMM V2 state
                 let delta_sqrt_price_b = state.sqrt_price.saturating_sub(state.sqrt_min_price);
-                let product_b = (state.liquidity as u128).saturating_mul(delta_sqrt_price_b);
+                let product_b = state.liquidity.saturating_mul(delta_sqrt_price_b);
                 let reserve_b = if product_b > 0 {
                     (product_b / (1u128 << 64) / (1u128 << 64)) as u64
                 } else {
                     0
                 };
 
-                let numerator = (state.liquidity as u128)
+                let numerator = state.liquidity
                     .saturating_mul(state.sqrt_max_price.saturating_sub(state.sqrt_price));
                 let denominator =
-                    (state.sqrt_max_price as u128).saturating_mul(state.sqrt_price as u128);
+                    state.sqrt_max_price.saturating_mul(state.sqrt_price);
                 let reserve_a = if denominator > 0 {
                     (numerator / denominator) as u64
                 } else {

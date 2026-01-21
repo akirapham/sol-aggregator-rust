@@ -114,7 +114,7 @@ impl MeteoraDlmmBinArrayFetcher {
 
         const BATCH_SIZE: usize = 100;
         const MAX_RETRIES: usize = 3;
-        const RETRY_DELAY: Duration = Duration::from_secs(1);
+        const INITIAL_BACKOFF: u64 = 200;
 
         for chunk in addresses.chunks(BATCH_SIZE) {
             let mut attempts = 0;
@@ -144,13 +144,15 @@ impl MeteoraDlmmBinArrayFetcher {
                             return Err(e.into());
                         }
                         log::debug!(
-                            "Failed to fetch accounts (attempt {}/{}), retrying in {:?}: {:?}",
+                            "Failed to fetch accounts (attempt {}/{}), retrying...: {:?}",
                             attempts,
                             MAX_RETRIES,
-                            RETRY_DELAY,
                             e
                         );
-                        sleep(RETRY_DELAY).await;
+                        sleep(Duration::from_millis(
+                            INITIAL_BACKOFF * 2u64.pow((attempts - 1) as u32),
+                        ))
+                        .await;
                     }
                 }
             }

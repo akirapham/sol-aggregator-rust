@@ -76,7 +76,7 @@ impl BonkPoolState {
         _: Arc<dyn GetAmmConfig>,
     ) -> u64 {
         let is_buy = tokens_equal(input_token, &get_sol_mint());
-        let output = if is_buy {
+        if is_buy {
             get_buy_token_amount_from_sol_amount(
                 input_amount,
                 self.base_reserve as u128,
@@ -94,8 +94,7 @@ impl BonkPoolState {
                 self.real_quote as u128,
                 0,
             )
-        };
-        output
+        }
     }
 
     pub fn calculate_token_prices(

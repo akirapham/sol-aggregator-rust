@@ -1,3 +1,4 @@
+#![allow(clippy::manual_div_ceil)]
 use std::collections::HashMap;
 
 use solana_sdk::pubkey::Pubkey;
@@ -327,7 +328,7 @@ pub fn pool_update_event_to_pool_state(
                     raydium_clmm_pool_update.tick_array_bitmap_extension.clone();
             }
 
-            (Some(PoolState::RadyiumClmm(pool_state)), true)
+            (Some(PoolState::RadyiumClmm(Box::new(pool_state))), true)
         }
         PoolUpdateEvent::Whirlpool(whirlpool_update) => {
             let mut pool_state = WhirlpoolPoolState {
@@ -404,7 +405,7 @@ pub fn pool_update_event_to_pool_state(
             };
 
             (
-                Some(PoolState::MeteoraDbc(DbcPoolState {
+                Some(PoolState::MeteoraDbc(Box::new(DbcPoolState {
                     slot: dbc_pool_update.slot,
                     transaction_index: dbc_pool_update.transaction_index,
                     address: dbc_pool_update.address,
@@ -440,7 +441,7 @@ pub fn pool_update_event_to_pool_state(
 
                     // Volatility Tracker
                     volatility_tracker: dbc_pool_update.volatility_tracker.clone(),
-                })),
+                }))),
                 false,
             )
         }
@@ -471,7 +472,7 @@ pub fn pool_update_event_to_pool_state(
             };
 
             (
-                Some(PoolState::MeteoraDammV2(MeteoraDammV2PoolState {
+                Some(PoolState::MeteoraDammV2(Box::new(MeteoraDammV2PoolState {
                     slot: meteora_dammv2_pool_update.slot,
                     transaction_index: meteora_dammv2_pool_update.transaction_index,
                     address: meteora_dammv2_pool_update.address,
@@ -506,7 +507,7 @@ pub fn pool_update_event_to_pool_state(
                     reward_infos: meteora_dammv2_pool_update.reward_infos.clone(),
                     liquidity_usd,
                     last_updated: meteora_dammv2_pool_update.last_updated,
-                })),
+                }))),
                 false,
             )
         }
@@ -527,7 +528,7 @@ pub fn pool_update_event_to_pool_state(
             };
 
             (
-                Some(PoolState::MeteoraDlmm(MeteoraDlmmPoolState {
+                Some(PoolState::MeteoraDlmm(Box::new(MeteoraDlmmPoolState {
                     slot: meteora_dlmm_pool_update.slot,
                     transaction_index: meteora_dlmm_pool_update.transaction_index,
                     address: meteora_dlmm_pool_update.address,
@@ -542,7 +543,7 @@ pub fn pool_update_event_to_pool_state(
                     reserve_y: meteora_dlmm_pool_update.reserve_y,
                     liquidity_usd,
                     last_updated: meteora_dlmm_pool_update.last_updated,
-                })),
+                }))),
                 false,
             )
         }

@@ -236,21 +236,19 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
             data,
         };
 
-        let mut instructions = Vec::new();
-
-        // Compute Budget
-        instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(1_400_000));
-
-        // Create Output ATA (Idempotent)
-        instructions.push(functions::create_ata_instruction(
-            params.user_wallet,
-            user_output_token,
-            output_mint,
-            params.output_token.is_token_2022,
-        ));
-
-        // Swap Instruction
-        instructions.push(swap_instruction);
+        let instructions = vec![
+            // Compute Budget
+            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
+            // Create Output ATA (Idempotent)
+            functions::create_ata_instruction(
+                params.user_wallet,
+                user_output_token,
+                output_mint,
+                params.output_token.is_token_2022,
+            ),
+            // Swap Instruction
+            swap_instruction,
+        ];
 
         Ok(instructions)
     }

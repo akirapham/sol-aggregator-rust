@@ -320,13 +320,7 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             AccountMeta::new(coin_creator_vault_ata, false), // coin_creator_vault_ata
             AccountMeta::new_readonly(coin_creator_vault_authority, false), // coin_creator_vault_authority (readonly)
         ]);
-        if is_buy && quote_is_wsol_or_usdc {
-            accounts.push(constants::PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR_META);
-            accounts.push(AccountMeta::new(
-                get_user_volume_accumulator_pda(&params.user_wallet).unwrap(),
-                false,
-            ));
-        } else if !is_buy && !quote_is_wsol_or_usdc {
+        if (is_buy && quote_is_wsol_or_usdc) || (!is_buy && !quote_is_wsol_or_usdc) {
             accounts.push(constants::PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR_META);
             accounts.push(AccountMeta::new(
                 get_user_volume_accumulator_pda(&params.user_wallet).unwrap(),
@@ -352,20 +346,18 @@ impl BuildSwapInstruction for PumpSwapPoolState {
                 // min_quote_amount_out
                 data[16..24].copy_from_slice(&token_amount.to_le_bytes());
             }
+        } else if quote_is_wsol_or_usdc {
+            data[..8].copy_from_slice(&SELL_DISCRIMINATOR);
+            // base_amount_in
+            data[8..16].copy_from_slice(&token_amount.to_le_bytes());
+            // min_quote_amount_out
+            data[16..24].copy_from_slice(&sol_amount.to_le_bytes());
         } else {
-            if quote_is_wsol_or_usdc {
-                data[..8].copy_from_slice(&SELL_DISCRIMINATOR);
-                // base_amount_in
-                data[8..16].copy_from_slice(&token_amount.to_le_bytes());
-                // min_quote_amount_out
-                data[16..24].copy_from_slice(&sol_amount.to_le_bytes());
-            } else {
-                data[..8].copy_from_slice(&BUY_DISCRIMINATOR);
-                // base_amount_out
-                data[8..16].copy_from_slice(&sol_amount.to_le_bytes());
-                // max_quote_amount_in
-                data[16..24].copy_from_slice(&token_amount.to_le_bytes());
-            }
+            data[..8].copy_from_slice(&BUY_DISCRIMINATOR);
+            // base_amount_out
+            data[8..16].copy_from_slice(&sol_amount.to_le_bytes());
+            // max_quote_amount_in
+            data[16..24].copy_from_slice(&token_amount.to_le_bytes());
         }
 
         let instruction = Instruction {

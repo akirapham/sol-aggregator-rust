@@ -77,7 +77,7 @@ impl MeteoraDlmmPoolState {
         let mut total_fee: u64 = 0;
 
         // Create Clock using anchor types
-        let current_timestamp = self.last_updated as u64;
+        let current_timestamp = self.last_updated;
 
         // Update references
         if let Err(e) = lb_pair.update_references(current_timestamp as i64) {
@@ -145,14 +145,12 @@ impl MeteoraDlmmPoolState {
                     {
                         lb_pair.active_id = upper_bin_id;
                     }
-                } else {
-                    if let Ok((lower_bin_id, _)) =
-                        meteora_dlmm_sdk::dlmm::accounts::BinArray::get_bin_array_lower_upper_bin_id(
-                            active_bin_array.index as i32,
-                        )
-                    {
-                        lb_pair.active_id = lower_bin_id;
-                    }
+                } else if let Ok((lower_bin_id, _)) =
+                    meteora_dlmm_sdk::dlmm::accounts::BinArray::get_bin_array_lower_upper_bin_id(
+                        active_bin_array.index as i32,
+                    )
+                {
+                    lb_pair.active_id = lower_bin_id;
                 }
             }
 
@@ -256,7 +254,7 @@ impl MeteoraDlmmPoolState {
         // Price formula: price = (1 + bin_step / BASIS_POINT_MAX) ^ active_id
         let basis_point_max: f64 = 10_000.0;
         let bin_step = self.lbpair.bin_step as f64;
-        let active_id = self.lbpair.active_id as i32;
+        let active_id = self.lbpair.active_id;
         let price_x_in_y = (1.0 + bin_step / basis_point_max).powi(active_id);
         // Adjust for token decimals difference
         let decimal_scale = 10_f64.powi(_token_x_decimals as i32 - _token_y_decimals as i32);

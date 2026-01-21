@@ -121,7 +121,7 @@ pub fn get_commons_bin_arrays(
                     amount_x: bin.amount_x,
                     amount_y: bin.amount_y,
                     price: bin.price,
-                    liquidity_supply: bin.liquidity_supply as u128,
+                    liquidity_supply: bin.liquidity_supply,
                     reward_per_token_stored: bin.reward_per_token_stored,
                     fee_amount_x_per_token_stored: bin.fee_amount_x_per_token_stored,
                     fee_amount_y_per_token_stored: bin.fee_amount_y_per_token_stored,
@@ -132,7 +132,7 @@ pub fn get_commons_bin_arrays(
         }
 
         let bin_array = meteora_dlmm_sdk::dlmm::accounts::BinArray {
-            index: state.index as i64,
+            index: state.index,
             version: 0,
             lb_pair: to_anchor_pubkey(pool.address),
             bins,

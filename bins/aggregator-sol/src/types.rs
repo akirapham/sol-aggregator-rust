@@ -146,13 +146,13 @@ pub struct SmartRoutingConfig {
 pub enum PoolUpdateEvent {
     Pumpfun(PumpfunPoolUpdate),
     PumpSwap(PumpSwapPoolUpdate),
-    Raydium(RaydiumAmmV4PoolUpdate),
-    RaydiumCpmm(RaydiumCpmmPoolUpdate),
-    Bonk(BonkPoolUpdate),
+    Raydium(Box<RaydiumAmmV4PoolUpdate>),
+    RaydiumCpmm(Box<RaydiumCpmmPoolUpdate>),
+    Bonk(Box<BonkPoolUpdate>),
     RaydiumClmm(Box<RaydiumClmmPoolUpdate>),
-    MeteoraDbc(DbcPoolUpdate),
-    MeteoraDammV2(MeteoraDammV2PoolUpdate),
-    MeteoraDlmm(MeteoraDlmmPoolUpdate),
+    MeteoraDbc(Box<DbcPoolUpdate>),
+    MeteoraDammV2(Box<MeteoraDammV2PoolUpdate>),
+    MeteoraDlmm(Box<MeteoraDlmmPoolUpdate>),
     Whirlpool(Box<WhirlpoolPoolUpdate>),
 }
 

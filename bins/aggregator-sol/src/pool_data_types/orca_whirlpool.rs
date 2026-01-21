@@ -187,7 +187,7 @@ impl WhirlpoolPoolState {
         // We need a sequence of tick arrays. Let's try to get 5 arrays centered around current.
         let mut tick_arrays: [Option<TickArrayFacade>; 5] = [None, None, None, None, None];
 
-        for i in 0..5 {
+        for (i, tick_array_slot) in tick_arrays.iter_mut().enumerate() {
             let index = start_tick_index + (i as i32 - 2) * offset;
             if let Some(state) = self.tick_array_state.get(&index) {
                 // Convert TickArrayState to TickArrayFacade
@@ -206,7 +206,7 @@ impl WhirlpoolPoolState {
                     };
                 }
 
-                tick_arrays[i] = Some(TickArrayFacade {
+                *tick_array_slot = Some(TickArrayFacade {
                     start_tick_index: state.start_tick_index,
                     ticks,
                 });
@@ -483,26 +483,25 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         };
 
         // 9. Build instruction list
-        let mut instructions = Vec::new();
-
-        // Create ATA for token A if needed
-        instructions.push(functions::create_ata_instruction(
-            params.user_wallet,
-            token_owner_account_a,
-            self.token_mint_a,
-            token_program_a == constants::TOKEN_PROGRAM_2022,
-        ));
-
-        // Create ATA for token B if needed
-        instructions.push(functions::create_ata_instruction(
-            params.user_wallet,
-            token_owner_account_b,
-            self.token_mint_b,
-            token_program_b == constants::TOKEN_PROGRAM_2022,
-        ));
-
-        // Add swap instruction
-        instructions.push(swap_instruction);
+        // 9. Build instruction list
+        let instructions = vec![
+            // Create ATA for token A if needed
+            functions::create_ata_instruction(
+                params.user_wallet,
+                token_owner_account_a,
+                self.token_mint_a,
+                token_program_a == constants::TOKEN_PROGRAM_2022,
+            ),
+            // Create ATA for token B if needed
+            functions::create_ata_instruction(
+                params.user_wallet,
+                token_owner_account_b,
+                self.token_mint_b,
+                token_program_b == constants::TOKEN_PROGRAM_2022,
+            ),
+            // Add swap instruction
+            swap_instruction,
+        ];
 
         Ok(instructions)
     }
@@ -513,7 +512,7 @@ fn get_tick_array_pda(whirlpool: &Pubkey, start_tick_index: i32, program_id: &Pu
     let seeds = &[
         b"tick_array",
         whirlpool.as_ref(),
-        &start_tick_index_str.as_bytes(),
+        start_tick_index_str.as_bytes(),
     ];
     let (pda, _) = Pubkey::find_program_address(seeds, program_id);
     pda

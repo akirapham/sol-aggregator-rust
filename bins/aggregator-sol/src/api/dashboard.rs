@@ -111,7 +111,7 @@ async fn generate_dashboard_html(state: &AppState) -> String {
                 "Success" => {
                     "<span class='status-badge status-success'>✅ Success</span>".to_string()
                 }
-                "Fail" | _ => {
+                _ => {
                     let error_text = opp.error_message.as_deref().unwrap_or("Unknown error");
                     let escaped_error = error_text.replace("'", "\\'");
                     format!(

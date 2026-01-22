@@ -59,6 +59,7 @@ impl BatchProcessor {
             event_tx,
         };
 
+        log::info!("Spawning BatchProcessor task with size {}", batch_size);
         // Start the batch processing task
         tokio::spawn(Self::process_batches(
             event_rx,
@@ -101,13 +102,15 @@ impl BatchProcessor {
                 event = event_rx.recv() => {
                     match event {
                         Some(e) => {
-                            // log::info!("BatchProcessor received event"); 
+                            log::info!("BatchProcessor received event"); 
                             current_batch.push(e);
 
                             // If batch is full, process it immediately
                             if current_batch.len() >= batch_size {
                                 let batch_to_send = std::mem::take(&mut current_batch);
-                                let _ = batch_tx.send(batch_to_send);
+                                if let Err(e) = batch_tx.send(batch_to_send) {
+                                    log::error!("Failed to send batch: {}", e);
+                                }
                                 timeout_interval.reset(); // Reset timer for next batch
                             }
                         }
@@ -122,16 +125,21 @@ impl BatchProcessor {
                 _ = timeout_interval.tick() => {
                     if !current_batch.is_empty() {
                         let batch_to_send = std::mem::take(&mut current_batch);
-                        let _ = batch_tx.send(batch_to_send);
+                        if let Err(e) = batch_tx.send(batch_to_send) {
+                            log::error!("Failed to send timed-out batch: {}", e);
+                        }
                     }
                     // Timer automatically resets
                 }
             }
         }
+        log::info!("BatchProcessor scanning loop ended");
 
         // Process any remaining events when shutting down
         if !current_batch.is_empty() {
-            let _ = batch_tx.send(current_batch);
+             if let Err(e) = batch_tx.send(current_batch) {
+                log::error!("Failed to send final batch: {}", e);
+            }
         }
     }
 

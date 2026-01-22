@@ -59,7 +59,7 @@ impl BatchProcessor {
             event_tx,
         };
 
-        log::info!("Spawning BatchProcessor task with size {}", batch_size);
+
         // Start the batch processing task
         tokio::spawn(Self::process_batches(
             event_rx,
@@ -78,7 +78,7 @@ impl BatchProcessor {
         post_balances: Vec<u64>,
         post_token_balances: HashMap<String, SimplifiedTokenBalance>,
     ) {
-        log::info!("BatchProcessor::send_event called with {} events", events.len());
+
         let _ = self
             .event_tx
             .send((events, accounts, post_balances, post_token_balances));
@@ -94,7 +94,7 @@ impl BatchProcessor {
         let mut timeout_interval = interval(timeout_duration);
         timeout_interval.tick().await; // Start the timer
 
-        log::info!("BatchProcessor scanning loop started");
+
 
         loop {
             tokio::select! {
@@ -102,7 +102,7 @@ impl BatchProcessor {
                 event = event_rx.recv() => {
                     match event {
                         Some(e) => {
-                            log::info!("BatchProcessor received event"); 
+ 
                             current_batch.push(e);
 
                             // If batch is full, process it immediately
@@ -133,7 +133,7 @@ impl BatchProcessor {
                 }
             }
         }
-        log::info!("BatchProcessor scanning loop ended");
+
 
         // Process any remaining events when shutting down
         if !current_batch.is_empty() {
@@ -148,9 +148,7 @@ impl BatchProcessor {
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
-        if !batch.is_empty() {
-             log::info!("Processing batch of {} events", batch.len());
-        }
+
 
         // Process events concurrently within the batch
         let tasks: Vec<_> = batch
@@ -223,9 +221,7 @@ impl GrpcService {
                              accounts,
                              post_balances,
                              post_token_balances| {
-            if !events.is_empty() {
-                log::info!("GrpcService callback triggered with {} events", events.len());
-            }
+
             batch_processor.send_event(events, accounts, post_balances, post_token_balances);
         };
 
@@ -266,34 +262,38 @@ impl GrpcServiceTrait for GrpcService {
         pool_update_sender: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_sender: mpsc::UnboundedSender<ChainStateUpdate>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        log::info!("GrpcService::subscribe_pool_updates called");
+
+
+        // Spawn consumer loop FIRST to ensure it's ready to handle events
+        // even if start() blocks or events arrive immediately.
+        {
+            let mut rx_guard = self.batch_rx.lock().await;
+            if let Some(mut rx) = rx_guard.take() {
+
+                // Spawn consumer loop
+                tokio::spawn(async move {
+
+                    while let Some(batch) = rx.recv().await {
+                        // log::info!("Consumer loop received batch of size {}", batch.len());
+                        BatchProcessor::process_batch(
+                            batch,
+                            pool_update_sender.clone(),
+                            chain_state_sender.clone(),
+                        )
+                        .await;
+                    }
+                    log::warn!("Consumer loop exited - channel closed");
+                });
+            } else {
+                log::error!("FAILED TO TAKE BATCH RX - Already taken?");
+            }
+        }
         
-        // Start gRPC subscription
+        // THEN Start gRPC subscription
+        // If this blocks, it's fine because the consumer is already running in a separate task.
         if let Err(e) = self.start().await {
             log::error!("GrpcService failed to start: {}", e);
             return Err(e.into());
-        }
-
-        // Take the batch receiver
-        let mut rx_guard = self.batch_rx.lock().await;
-        if let Some(mut rx) = rx_guard.take() {
-            log::info!("Consumer loop spawning - RX taken successfully");
-            // Spawn consumer loop
-            tokio::spawn(async move {
-                log::info!("Consumer loop started running");
-                while let Some(batch) = rx.recv().await {
-                    // log::info!("Consumer loop received batch of size {}", batch.len());
-                    BatchProcessor::process_batch(
-                        batch,
-                        pool_update_sender.clone(),
-                        chain_state_sender.clone(),
-                    )
-                    .await;
-                }
-                log::warn!("Consumer loop exited - channel closed");
-            });
-        } else {
-            log::error!("FAILED TO TAKE BATCH RX - Already taken?");
         }
         Ok(())
     }
@@ -302,6 +302,7 @@ impl GrpcServiceTrait for GrpcService {
         self.stop().await;
     }
 }
+
 pub async fn create_grpc_service(
     batch_size: usize,
     batch_timeout_ms: u64,

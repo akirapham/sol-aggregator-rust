@@ -237,9 +237,15 @@ pub async fn get_quote(
                     )
                 })?;
 
-            // Validate and serialize transaction
-            let base64_tx =
-                validate_and_serialize_transaction(transaction, state.rpc_client.as_ref()).await?;
+            // Serialize transaction to base64 directly (skip simulation)
+            let mut tx_bytes = Vec::new();
+            tx_bytes.push(transaction.signatures.len() as u8);
+            for sig in &transaction.signatures {
+                tx_bytes.extend_from_slice(sig.as_ref());
+            }
+            let message_bytes = transaction.message.serialize();
+            tx_bytes.extend_from_slice(&message_bytes);
+            let base64_tx = STANDARD.encode(&tx_bytes);
 
             let response = QuoteResponse {
                 routes: swap_routes,

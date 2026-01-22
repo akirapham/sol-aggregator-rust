@@ -1,0 +1,302 @@
+warning: unused variable: `user_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:323:18
+    |
+323 | ...        let (user_volume_accumulator, _) = Pubkey::fin...
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_volume_accumulator`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `global_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:329:18
+    |
+329 | ...      let (global_volume_accumulator, _) = Pubkey::fin...
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_global_volume_accumulator`
+
+    Checking aggregator-sol v0.1.0 (/Users/campv/Documents/Projects/sol-agg-rust/bins/aggregator-sol)
+warning: `aggregator-sol` (bin "aggregator-sol") generated 2 warnings
+warning: unused import: `crate::pool_data_types::*`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:2:5
+  |
+2 | use crate::pool_data_types::*;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `solana_sdk::pubkey`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:6:5
+  |
+6 | use solana_sdk::pubkey;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `QuoteResponse`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:3:37
+  |
+3 | use crate::api::dto::{QuoteRequest, QuoteResponse};
+  |                                     ^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:5:5
+  |
+5 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `BorshSerialize`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:9:31
+  |
+9 | use borsh::{BorshDeserialize, BorshSerialize};
+  |                               ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> bins/aggregator-sol/src/tests/quotes/meteora.rs:12:5
+   |
+12 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0560]: struct `AggregatorConfig` has no field named `enabled_protocols`
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:70:9
+   |
+70 |         enabled_protocols: flags,
+   |         ^^^^^^^^^^^^^^^^^ `AggregatorConfig` does not have this field
+   |
+   = note: available fields are: `rpc_url`, `yellowstone_grpc_url`, `backup_grpc_url`, `max_routes`, `smart_routing` ... and 13 others
+
+error[E0560]: struct `AggregatorConfig` has no field named `default_slippage_bps`
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:71:9
+   |
+71 |         default_slippage_bps: 50,
+   |         ^^^^^^^^^^^^^^^^^^^^ `AggregatorConfig` does not have this field
+   |
+   = note: available fields are: `rpc_url`, `yellowstone_grpc_url`, `backup_grpc_url`, `max_routes`, `smart_routing` ... and 13 others
+
+error[E0560]: struct `AggregatorConfig` has no field named `enable_jito`
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:72:9
+   |
+72 |         enable_jito: false,
+   |         ^^^^^^^^^^^ `AggregatorConfig` does not have this field
+   |
+   = note: available fields are: `rpc_url`, `yellowstone_grpc_url`, `backup_grpc_url`, `max_routes`, `smart_routing` ... and 13 others
+
+error[E0560]: struct `AggregatorConfig` has no field named `jito_tip_bps`
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:73:9
+   |
+73 |         jito_tip_bps: 0,
+   |         ^^^^^^^^^^^^ `AggregatorConfig` does not have this field
+   |
+   = note: available fields are: `rpc_url`, `yellowstone_grpc_url`, `backup_grpc_url`, `max_routes`, `smart_routing` ... and 13 others
+
+error[E0560]: struct `AggregatorConfig` has no field named `max_hops`
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:74:9
+   |
+74 |         max_hops: 2,
+   |         ^^^^^^^^ `AggregatorConfig` does not have this field
+   |
+   = note: available fields are: `rpc_url`, `yellowstone_grpc_url`, `backup_grpc_url`, `max_routes`, `smart_routing` ... and 13 others
+
+error[E0061]: this function takes 6 arguments but 1 argument was supplied
+   --> bins/aggregator-sol/src/tests/quotes/common.rs:77:33
+    |
+ 77 |     let pool_manager = Arc::new(PoolStateManager::new(&config).await);
+    |                                 ^^^^^^^^^^^^^^^^^^^^^--------- multiple arguments are missing
+    |
+note: expected `Arc<dyn GrpcServiceTrait>`, found `&AggregatorConfig`
+   --> bins/aggregator-sol/src/tests/quotes/common.rs:77:55
+    |
+ 77 |     let pool_manager = Arc::new(PoolStateManager::new(&config).await);
+    |                                                       ^^^^^^^
+    = note: expected struct `Arc<(dyn grpc::traits::GrpcServiceTrait + 'static)>`
+            found reference `&AggregatorConfig`
+note: associated function defined here
+   --> bins/aggregator-sol/src/pool_manager.rs:153:18
+    |
+153 |     pub async fn new(
+    |                  ^^^
+154 |         grpc_service: Arc<dyn GrpcServiceTrait>,
+    |         ---------------------------------------
+155 |         config: AggregatorConfig,
+    |         ------------------------
+156 |         _rpc_client: Arc<RpcClient>,
+    |         ---------------------------
+157 |         price_service: Arc<dyn PriceServiceTrait>,
+    |         -----------------------------------------
+158 |         arbitrage_pool_tx: broadcast::Sender<ArbitragePoolUpdate>,
+    |         ---------------------------------------------------------
+159 |         db: Arc<dyn DatabaseTrait>,
+    |         --------------------------
+help: provide the arguments
+    |
+ 77 -     let pool_manager = Arc::new(PoolStateManager::new(&config).await);
+ 77 +     let pool_manager = Arc::new(PoolStateManager::new(/* Arc<(dyn grpc::traits::GrpcServiceTrait + 'static)> */, /* AggregatorConfig */, /* Arc<solana_client::nonblocking::rpc_client::RpcClient> */, /* Arc<(dyn PriceServiceTrait + 'static)> */, /* tokio::sync::broadcast::Sender<ArbitragePoolUpdate> */, /* Arc<(dyn DatabaseTrait + 'static)> */).await);
+    |
+
+error[E0308]: mismatched types
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:97:22
+   |
+97 |         input_token: input_token.address,
+   |                      ^^^^^^^^^^^^^^^^^^^ expected `Token`, found `Address`
+   |
+help: consider removing the tuple struct field `address`
+   |
+97 -         input_token: input_token.address,
+97 +         input_token: input_token,
+   |
+
+error[E0308]: mismatched types
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:98:23
+   |
+98 |         output_token: output_token.address,
+   |                       ^^^^^^^^^^^^^^^^^^^^ expected `Token`, found `Address`
+   |
+help: consider removing the tuple struct field `address`
+   |
+98 -         output_token: output_token.address,
+98 +         output_token: output_token,
+   |
+
+error[E0560]: struct `types::SwapParams` has no field named `amount`
+  --> bins/aggregator-sol/src/tests/quotes/common.rs:99:9
+   |
+99 |         amount: input_amount,
+   |         ^^^^^^ `types::SwapParams` does not have this field
+   |
+   = note: available fields are: `input_amount`, `user_wallet`, `priority`
+
+error[E0560]: struct `types::SwapParams` has no field named `user_public_key`
+   --> bins/aggregator-sol/src/tests/quotes/common.rs:101:9
+    |
+101 |         user_public_key: Pubkey::new_unique(),
+    |         ^^^^^^^^^^^^^^^ `types::SwapParams` does not have this field
+    |
+    = note: available fields are: `input_amount`, `user_wallet`, `priority`
+
+error[E0560]: struct `types::SwapParams` has no field named `execution_priority`
+   --> bins/aggregator-sol/src/tests/quotes/common.rs:102:9
+    |
+102 |         execution_priority: ExecutionPriority::Fast,
+    |         ^^^^^^^^^^^^^^^^^^ `types::SwapParams` does not have this field
+    |
+    = note: available fields are: `input_amount`, `user_wallet`, `priority`
+
+error[E0599]: no variant or associated item named `Fast` found for enum `ExecutionPriority` in the current scope
+   --> bins/aggregator-sol/src/tests/quotes/common.rs:102:48
+    |
+102 |         execution_priority: ExecutionPriority::Fast,
+    |                                                ^^^^ variant or associated item not found in `ExecutionPriority`
+    |
+   ::: bins/aggregator-sol/src/types.rs:88:1
+    |
+ 88 | pub enum ExecutionPriority {
+    | -------------------------- variant or associated item `Fast` not found for this enum
+
+error[E0599]: no method named `find_best_route` found for struct `DexAggregator` in the current scope
+   --> bins/aggregator-sol/src/tests/quotes/common.rs:105:29
+    |
+105 |     let result = aggregator.find_best_route(params).await;
+    |                             ^^^^^^^^^^^^^^^ method not found in `DexAggregator`
+    |
+   ::: bins/aggregator-sol/src/aggregator.rs:16:1
+    |
+ 16 | pub struct DexAggregator {
+    | ------------------------ method `find_best_route` not found for this struct
+
+error[E0062]: field `token_vault0` specified more than once
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:248:9
+    |
+246 |         token_vault0: clmm_state.token_vault0,
+    |         ------------------------------------- first use of `token_vault0`
+247 |         token_vault1: clmm_state.token_vault1,
+248 |         token_vault0: clmm_state.token_vault0,
+    |         ^^^^^^^^^^^^ used more than once
+
+error[E0062]: field `token_vault1` specified more than once
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:249:9
+    |
+247 |         token_vault1: clmm_state.token_vault1,
+    |         ------------------------------------- first use of `token_vault1`
+248 |         token_vault0: clmm_state.token_vault0,
+249 |         token_vault1: clmm_state.token_vault1,
+    |         ^^^^^^^^^^^^ used more than once
+
+error[E0062]: field `token_vault0` specified more than once
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:526:9
+    |
+524 |         token_vault0: clmm_state.token_vault0,
+    |         ------------------------------------- first use of `token_vault0`
+525 |         token_vault1: clmm_state.token_vault1,
+526 |         token_vault0: clmm_state.token_vault0,
+    |         ^^^^^^^^^^^^ used more than once
+
+error[E0062]: field `token_vault1` specified more than once
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:527:9
+    |
+525 |         token_vault1: clmm_state.token_vault1,
+    |         ------------------------------------- first use of `token_vault1`
+526 |         token_vault0: clmm_state.token_vault0,
+527 |         token_vault1: clmm_state.token_vault1,
+    |         ^^^^^^^^^^^^ used more than once
+
+warning: unused variable: `user_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:323:18
+    |
+323 |             let (user_volume_accumulator, _) = Pubkey::find_program_address(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_volume_accumulator`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `global_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:329:18
+    |
+329 |             let (global_volume_accumulator, _) = Pubkey::find_program_address(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_global_volume_accumulator`
+
+Some errors have detailed explanations: E0061, E0062, E0308, E0560, E0599.
+For more information about an error, try `rustc --explain E0061`.
+warning: `aggregator-sol` (bin "aggregator-sol" test) generated 16 warnings
+error: could not compile `aggregator-sol` (bin "aggregator-sol" test) due to 17 previous errors; 16 warnings emitted

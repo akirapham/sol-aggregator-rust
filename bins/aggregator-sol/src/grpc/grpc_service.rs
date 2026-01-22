@@ -133,7 +133,9 @@ impl BatchProcessor {
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
-        log::trace!("Processing batch of {} events", batch.len());
+        if !batch.is_empty() {
+             log::info!("Processing batch of {} events", batch.len());
+        }
 
         // Process events concurrently within the batch
         let tasks: Vec<_> = batch

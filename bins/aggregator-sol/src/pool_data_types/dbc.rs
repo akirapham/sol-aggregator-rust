@@ -457,11 +457,8 @@ impl BuildSwapInstruction for DbcPoolState {
         let config_pubkey = self.config;
 
         // Calculate minimum output based on slippage
-        let estimated_output = self.calculate_output_amount(
-            &input_mint,
-            params.input_amount,
-            amm_config_fetcher,
-        );
+        let estimated_output =
+            self.calculate_output_amount(&input_mint, params.input_amount, amm_config_fetcher);
 
         let minimum_amount_out =
             common_functions::calculate_slippage(estimated_output, params.slippage_bps)?;

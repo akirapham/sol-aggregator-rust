@@ -607,7 +607,7 @@ pub async fn add_arbitrage_token(
     }
 
     // Also update the config (will be saved to DB by pool manager)
-    let monitored_tokens = {
+    let _monitored_tokens = {
         let mut config = match state.arbitrage_config.as_ref() {
             Some(c) => c.write().unwrap(),
             None => {
@@ -635,12 +635,23 @@ pub async fn add_arbitrage_token(
         config.monitored_tokens.clone()
     }; // config lock is dropped here
 
-    // Save updated config to DB
-    let db = state.aggregator.get_pool_manager().get_db();
-    if let Err(e) =
-        crate::arbitrage_config::ArbitrageConfig::save_tokens_to_db(&db, &monitored_tokens).await
-    {
-        log::error!("Failed to save config to DB: {}", e);
+    // Add to pool manager (which saves to DB)
+    let token_pubkey = parse_pubkey_with_error(&request.address, "token address");
+    if let Ok(key) = token_pubkey {
+        if let Err(e) = state
+            .aggregator
+            .get_pool_manager()
+            .add_arbitrage_token(key)
+            .await
+        {
+            log::error!("Failed to persist token to pool manager DB: {}", e);
+            // Verify if we should return error or just warn, since config is updated
+        }
+    } else {
+        log::error!(
+            "Invalid token address for pool manager persistence: {}",
+            request.address
+        );
     }
 
     Json(TokenOperationResponse {
@@ -711,7 +722,7 @@ pub async fn remove_arbitrage_token(
     }
 
     // Update config
-    let (monitored_tokens, removed_token) = {
+    let (_monitored_tokens, removed_token) = {
         let mut config = match state.arbitrage_config.as_ref() {
             Some(c) => c.write().unwrap(),
             None => {
@@ -729,14 +740,6 @@ pub async fn remove_arbitrage_token(
         let removed_token = config.remove_token(&request.address).ok();
         (config.monitored_tokens.clone(), removed_token)
     }; // config lock is dropped here
-
-    // Save updated config to DB
-    let db = state.aggregator.get_pool_manager().get_db();
-    if let Err(e) =
-        crate::arbitrage_config::ArbitrageConfig::save_tokens_to_db(&db, &monitored_tokens).await
-    {
-        log::error!("Failed to save config to DB: {}", e);
-    }
 
     Json(TokenOperationResponse {
         success: true,

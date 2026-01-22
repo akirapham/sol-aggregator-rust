@@ -340,11 +340,8 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
             Pubkey::find_program_address(&[b"__event_authority"], &program_id);
 
         // Calculate minimum output with slippage
-        let estimated_output = self.calculate_output_amount(
-            &input_mint,
-            params.input_amount,
-            amm_config_fetcher,
-        );
+        let estimated_output =
+            self.calculate_output_amount(&input_mint, params.input_amount, amm_config_fetcher);
 
         let min_amount_out =
             common_functions::calculate_slippage(estimated_output, params.slippage_bps)?;

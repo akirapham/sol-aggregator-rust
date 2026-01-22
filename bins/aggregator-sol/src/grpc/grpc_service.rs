@@ -181,6 +181,7 @@ impl BatchProcessor {
 }
 
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct GrpcService {
     grpc: YellowstoneGrpc,
@@ -188,11 +189,15 @@ pub struct GrpcService {
     transaction_filter: TransactionFilter,
     account_filter: AccountFilter,
     protocols: Vec<Protocol>,
+    batch_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<Vec<EventBatch>>>>>,
 }
+
+use crate::grpc::traits::GrpcServiceTrait;
+use async_trait::async_trait;
 
 impl GrpcService {
     /// Start the gRPC service with batch processing
-    pub async fn start(self: Arc<Self>) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Clone Arc for the callback
         let batch_processor = Arc::clone(&self.batch_processor);
 
@@ -233,11 +238,45 @@ impl GrpcService {
         log::info!("gRPC subscription stopped.");
     }
 }
+
+#[async_trait]
+impl GrpcServiceTrait for GrpcService {
+    async fn subscribe_pool_updates(
+        &self,
+        pool_update_sender: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
+        chain_state_sender: mpsc::UnboundedSender<ChainStateUpdate>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Start gRPC subscription
+        if let Err(e) = self.start().await {
+            return Err(e.into());
+        }
+
+        // Take the batch receiver
+        let mut rx_guard = self.batch_rx.lock().await;
+        if let Some(mut rx) = rx_guard.take() {
+            // Spawn consumer loop
+            tokio::spawn(async move {
+                while let Some(batch) = rx.recv().await {
+                    BatchProcessor::process_batch(
+                        batch,
+                        pool_update_sender.clone(),
+                        chain_state_sender.clone(),
+                    )
+                    .await;
+                }
+            });
+        }
+        Ok(())
+    }
+
+    async fn stop(&self) {
+        self.stop().await;
+    }
+}
 pub async fn create_grpc_service(
     batch_size: usize,
     batch_timeout_ms: u64,
-) -> Result<(Arc<GrpcService>, mpsc::UnboundedReceiver<Vec<EventBatch>>), Box<dyn std::error::Error>>
-{
+) -> Result<Arc<GrpcService>, Box<dyn std::error::Error>> {
     let agg_config = AggregatorConfig::from_env().unwrap();
 
     // Create low-latency configuration
@@ -326,14 +365,12 @@ pub async fn create_grpc_service(
     log::info!("Enabled DEXes: {:?}", protocols);
     log::info!("Monitoring programs: {:?}", account_include);
 
-    Ok((
-        Arc::new(GrpcService {
-            grpc,
-            batch_processor,
-            transaction_filter,
-            account_filter,
-            protocols,
-        }),
-        batch_rx,
-    ))
+    Ok(Arc::new(GrpcService {
+        grpc,
+        batch_processor,
+        transaction_filter,
+        account_filter,
+        protocols,
+        batch_rx: Arc::new(Mutex::new(Some(batch_rx))),
+    }))
 }

@@ -1,4 +1,3 @@
-
 use crate::{
     pool_data_types::{common::functions, GetAmmConfig, PoolUpdateEventType},
     utils::tokens_equal,

@@ -1,4 +1,3 @@
-
 use crate::types::SwapParams;
 use crate::{
     constants::wsol,
@@ -235,10 +234,10 @@ impl PoolState {
                     0
                 };
 
-                let numerator = state.liquidity
+                let numerator = state
+                    .liquidity
                     .saturating_mul(state.sqrt_max_price.saturating_sub(state.sqrt_price));
-                let denominator =
-                    state.sqrt_max_price.saturating_mul(state.sqrt_price);
+                let denominator = state.sqrt_max_price.saturating_mul(state.sqrt_price);
                 let reserve_a = if denominator > 0 {
                     (numerator / denominator) as u64
                 } else {

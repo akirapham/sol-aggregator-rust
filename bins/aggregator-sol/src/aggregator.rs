@@ -88,7 +88,7 @@ impl DexAggregator {
         direct_only: bool,
     ) -> Option<SwapRoute> {
         let amm_config_fetcher = self.pool_manager.as_ref();
-        let min_liquidity_usd = 1000.0_f64;
+        let min_liquidity_usd = 500.0_f64;
         // First, direct path
         let direct_pool_addresses = self
             .pool_manager
@@ -107,34 +107,38 @@ impl DexAggregator {
         let mut base_to_output_pool_addresses_by_pair: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> =
             HashMap::new();
 
-        // Loop over BASE_TOKENS to find hop routes
-        for base_token in BASE_TOKENS.iter() {
-            let base_token_key = Pubkey::from_str(base_token).unwrap();
-            // Skip if base token is same as input or output
-            if tokens_equal(&base_token_key, &swap_param.input_token.address)
-                || tokens_equal(&base_token_key, &swap_param.output_token.address)
-            {
-                continue;
+        if direct_only {
+            // Loop over BASE_TOKENS to find hop routes
+            for base_token in BASE_TOKENS.iter() {
+                let base_token_key = Pubkey::from_str(base_token).unwrap();
+                // Skip if base token is same as input or output
+                if tokens_equal(&base_token_key, &swap_param.input_token.address)
+                    || tokens_equal(&base_token_key, &swap_param.output_token.address)
+                {
+                    continue;
+                }
+
+                // Find pools: input -> base
+                let pools = self
+                    .pool_manager
+                    .get_pool_addresses_for_pair(&swap_param.input_token.address, &base_token_key)
+                    .await;
+                input_to_base_pools.extend(pools.clone());
+                input_to_base_pool_addresses_by_pair
+                    .insert((swap_param.input_token.address, base_token_key), pools);
+
+                // Find pools: base -> output
+                let pools = self
+                    .pool_manager
+                    .get_pool_addresses_for_pair(&base_token_key, &swap_param.output_token.address)
+                    .await;
+                base_to_output_pools.extend(pools.clone());
+                base_to_output_pool_addresses_by_pair
+                    .insert((base_token_key, swap_param.output_token.address), pools);
             }
-
-            // Find pools: input -> base
-            let pools = self
-                .pool_manager
-                .get_pool_addresses_for_pair(&swap_param.input_token.address, &base_token_key)
-                .await;
-            input_to_base_pools.extend(pools.clone());
-            input_to_base_pool_addresses_by_pair
-                .insert((swap_param.input_token.address, base_token_key), pools);
-
-            // Find pools: base -> output
-            let pools = self
-                .pool_manager
-                .get_pool_addresses_for_pair(&base_token_key, &swap_param.output_token.address)
-                .await;
-            base_to_output_pools.extend(pools.clone());
-            base_to_output_pool_addresses_by_pair
-                .insert((base_token_key, swap_param.output_token.address), pools);
         }
+
+        println!("Direct pool addresses: {:#?}", direct_pool_addresses);
 
         // Collect all pool states we need
         let mut all_pool_state: HashMap<Pubkey, Arc<PoolState>> = HashMap::new();
@@ -161,7 +165,8 @@ impl DexAggregator {
                     || matches!(pool_state.dex(), DexType::PumpFunSwap)
                     || matches!(pool_state.dex(), DexType::Raydium)
                     || matches!(pool_state.dex(), DexType::MeteoraDbc)
-                    || matches!(pool_state.dex(), DexType::MeteoraDammV2);
+                    || matches!(pool_state.dex(), DexType::MeteoraDammV2)
+                    || matches!(pool_state.dex(), DexType::Bonk);
                 if !no_needs_tick_sync && !self.pool_manager.is_pool_tick_synced(pool_address).await
                 {
                     continue;

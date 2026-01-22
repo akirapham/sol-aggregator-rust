@@ -304,42 +304,283 @@ async fn test_raydium_cpmm_quote() {
 }
 
 #[tokio::test]
+async fn test_pumpfun_quote_simulation() {
+    use crate::api::dto::{QuoteRequest, QuoteResponse};
+    use crate::api::AppState;
+    use base64::Engine;
+    use borsh::{BorshDeserialize, BorshSerialize};
+    use solana_sdk::transaction::Transaction;
+
+    // Define the raw on-chain layout matching the IDL
+    #[derive(BorshDeserialize, Debug)]
+    struct BondingCurveRaw {
+        virtual_token_reserves: u64,
+        virtual_sol_reserves: u64,
+        real_token_reserves: u64,
+        real_sol_reserves: u64,
+        token_total_supply: u64,
+        complete: bool,
+        creator: Pubkey,
+        is_mayhem_mode: bool,
+    }
+
+    let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    // Real Data
+    let bonding_curve_address =
+        Pubkey::from_str("9Exw9tyEYPEv5wz7WsUZZVQEG262csVyHEKYcgNeEaf1").unwrap();
+    let token_mint_address =
+        Pubkey::from_str("BuaDPEf3AN4Lty7Ge1xgk9sFBwLXLP1J5uxGsBdDpump").unwrap();
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    // Debug: Check Mint Owner
+    let mint_account = rpc_client
+        .get_account(&token_mint_address)
+        .await
+        .expect("Failed to fetch Mint account");
+    println!("Mint Owner: {:?}", mint_account.owner);
+    // assert_eq!(mint_account.owner.to_string(), "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "Mint is not owned by Standard Token Program");
+
+    // Fetch real bonding curve state
+    let account = rpc_client
+        .get_account(&bonding_curve_address)
+        .await
+        .expect("Failed to fetch bonding curve account from mainnet");
+
+    // Deserialize (skip 8 byte discriminator)
+    // Note: try_from_slice expects exact length match. We use try_from_slice but catch the error or slice responsibly.
+    // However, Borsh deserialization for structs is strict.
+    // We should use a reader that allows trailing bytes or just slice the exact size of the struct if known.
+    // The struct has 8 u64s + 1 bool + 32 bytes + 1 bool = 64 + 1 + 32 + 1 = 98 bytes?
+    // Let's actually check expected size or just deserialize what we need.
+    // Safer way: Use `BorshDeserialize::deserialize(&mut &data[..])` which reads what it needs and leaves the rest.
+
+    let mut data_slice = &account.data[8..];
+    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+        .expect("Failed to deserialize bonding curve data");
+
+    println!("Fetched Real Bonding Curve State: {:#?}", raw_state);
+
+    // Create PoolState from real data
+    let pool_state = PoolState::Pumpfun(PumpfunPoolState {
+        slot: 100,
+        transaction_index: None,
+        address: bonding_curve_address,
+        mint: token_mint_address,
+        last_updated: current_timestamp(),
+        liquidity_usd: 30000.0, // Mock value, doesn't affect simulation validity
+        is_state_keys_initialized: true,
+        virtual_token_reserves: raw_state.virtual_token_reserves,
+        virtual_sol_reserves: raw_state.virtual_sol_reserves,
+        real_token_reserves: raw_state.real_token_reserves,
+        real_sol_reserves: raw_state.real_sol_reserves,
+        complete: raw_state.complete,
+        creator: raw_state.creator,
+        is_mayhem_mode: raw_state.is_mayhem_mode,
+    });
+
+    pool_manager.inject_pool(pool_state).await;
+    pool_manager
+        .inject_token(crate::tests::quote_tests::wsol_token())
+        .await;
+
+    // Inject the real token metadata (dummy metadata but correct address)
+    pool_manager
+        .inject_token(Token {
+            address: token_mint_address,
+            symbol: Some("PUMP".to_string()),
+            name: Some("Pump Token".to_string()),
+            decimals: 6, // PumpFun tokens usually 6
+            is_token_2022: true,
+            logo_uri: None,
+        })
+        .await;
+
+    // Create AppState
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client: rpc_client.clone(),
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    // Construct Quote Request with REAL addresses and REAL wallet
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let input_amount = 100_000_000; // 0.1 SOL (to simulate a realistic trade)
+
+    let request = QuoteRequest {
+        input_token: "So11111111111111111111111111111111111111112".to_string(), // WSOL
+        output_token: token_mint_address.to_string(), // Target Token (Mint)
+        user_wallet: user_wallet_str.clone(),
+        input_amount,
+        slippage_bps: 100, // 1%
+    };
+
+    println!("Calling get_quote handler...");
+    // Call the handler
+    let result =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::Json(request)).await;
+
+    match result {
+        Ok(axum::Json(response)) => {
+            println!("Got Quote Response!");
+            println!("Routes: {}", response.routes.len());
+            println!("Output Amount: {}", response.output_amount);
+            println!("Transaction Base64: {}", response.transaction);
+
+            // Decode Transaction
+            let tx_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&response.transaction)
+                .expect("Failed to decode base64 transaction");
+
+            let (transaction, _): (Transaction, usize) =
+                bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
+                    .expect("Failed to deserialize transaction");
+
+            // Simulate Transaction
+            println!("Simulating transaction on-chain...");
+            let simulation = rpc_client.simulate_transaction(&transaction).await;
+
+            match simulation {
+                Ok(sim_result) => {
+                    println!("Simulation Result: {:#?}", sim_result);
+
+                    // Assert no errors
+                    assert!(
+                        sim_result.value.err.is_none(),
+                        "Simulation should succeed with real bonding curve data. Error: {:?}",
+                        sim_result.value.err
+                    );
+
+                    // Assert compute units consumed
+                    let units_consumed = sim_result
+                        .value
+                        .units_consumed
+                        .expect("Should have units consumed");
+                    assert!(units_consumed > 0, "Should consume compute units");
+                    assert!(
+                        units_consumed < 200_000,
+                        "Should not consume excessive compute units"
+                    );
+
+                    // Assert token balances changed (user received tokens)
+                    if let Some(post_balances) = sim_result.value.post_token_balances {
+                        assert!(
+                            !post_balances.is_empty(),
+                            "Should have token balance changes"
+                        );
+                        // Verify user received PUMP tokens
+                        let user_received_tokens = post_balances.iter().any(|b| {
+                            b.mint == "BuaDPEf3AN4Lty7Ge1xgk9sFBwLXLP1J5uxGsBdDpump"
+                                && b.owner.as_ref().map(|o| o.as_str())
+                                    == Some("DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm")
+                        });
+                        assert!(user_received_tokens, "User should receive PUMP tokens");
+                    }
+
+                    println!(
+                        "✅ Simulation Successful! Consumed {} compute units",
+                        units_consumed
+                    );
+                }
+                Err(e) => {
+                    eprintln!("RPC Error during simulation: {}", e);
+                    panic!("RPC call failed");
+                }
+            }
+        }
+        Err((status, axum::Json(error_res))) => {
+            eprintln!("get_quote failed: {} - {}", status, error_res.error);
+            for detail in error_res.details {
+                eprintln!("  Detail: {}", detail);
+            }
+            panic!("Quote request failed");
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_pumpfun_quote() {
+    use borsh::BorshDeserialize;
+
+    // Define the raw on-chain layout matching the IDL
+    #[derive(BorshDeserialize, Debug)]
+    struct BondingCurveRaw {
+        virtual_token_reserves: u64,
+        virtual_sol_reserves: u64,
+        real_token_reserves: u64,
+        real_sol_reserves: u64,
+        token_total_supply: u64,
+        complete: bool,
+        creator: Pubkey,
+        is_mayhem_mode: bool,
+    }
+
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
 
     // Real PumpFun bonding curve
     let bonding_curve_address =
         Pubkey::from_str("9Exw9tyEYPEv5wz7WsUZZVQEG262csVyHEKYcgNeEaf1").unwrap();
-    let test_tok = test_token();
+    let token_mint_address =
+        Pubkey::from_str("BuaDPEf3AN4Lty7Ge1xgk9sFBwLXLP1J5uxGsBdDpump").unwrap();
 
-    // Note: PumpFun bonding curve account structure has additional fields beyond BondingCurve type
-    // Using mock data with real address for now
+    // Fetch real pool state from RPC
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url,
+    ));
+
+    let account = rpc_client
+        .get_account(&bonding_curve_address)
+        .await
+        .expect("Failed to fetch bonding curve account from mainnet");
+
+    // Deserialize (skip 8 byte discriminator)
+    let mut data_slice = &account.data[8..];
+    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+        .expect("Failed to deserialize bonding curve data");
+
+    // Create PoolState from real data
     let pool_state = PoolState::Pumpfun(PumpfunPoolState {
         slot: 100,
         transaction_index: None,
         address: bonding_curve_address,
-        mint: test_tok.address,
+        mint: token_mint_address,
         last_updated: current_timestamp(),
         liquidity_usd: 30000.0,
         is_state_keys_initialized: true,
-        virtual_token_reserves: 1_073_000_000_000_000,
-        virtual_sol_reserves: 30_000_000_000,
-        real_token_reserves: 800_000_000_000_000,
-        real_sol_reserves: 20_000_000_000,
-        complete: false,
-        creator: Pubkey::default(),
-        is_mayhem_mode: false,
+        virtual_token_reserves: raw_state.virtual_token_reserves,
+        virtual_sol_reserves: raw_state.virtual_sol_reserves,
+        real_token_reserves: raw_state.real_token_reserves,
+        real_sol_reserves: raw_state.real_sol_reserves,
+        complete: raw_state.complete,
+        creator: raw_state.creator,
+        is_mayhem_mode: raw_state.is_mayhem_mode,
     });
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: Token -> SOL (PumpFun pools are indexed as token, SOL)
+    // Test swap: Token -> SOL
     verify_quote(
         pool_manager,
         config,
-        test_tok,
+        Token {
+            address: token_mint_address,
+            symbol: Some("PUMP".to_string()),
+            name: Some("Pump Token".to_string()),
+            decimals: 6,
+            is_token_2022: true,
+            logo_uri: None,
+        },
         wsol_token(),
-        1_000_000_000,
+        1_000_000, // 1 PUMP token
         bonding_curve_address,
     )
     .await;
@@ -1820,37 +2061,80 @@ async fn test_raydium_cpmm_quote_reverse() {
 
 #[tokio::test]
 async fn test_pumpfun_quote_reverse() {
+    use borsh::BorshDeserialize;
+
+    // Define the raw on-chain layout matching the IDL
+    #[derive(BorshDeserialize, Debug)]
+    struct BondingCurveRaw {
+        virtual_token_reserves: u64,
+        virtual_sol_reserves: u64,
+        real_token_reserves: u64,
+        real_sol_reserves: u64,
+        token_total_supply: u64,
+        complete: bool,
+        creator: Pubkey,
+        is_mayhem_mode: bool,
+    }
+
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    // Real PumpFun bonding curve
     let bonding_curve_address =
         Pubkey::from_str("9Exw9tyEYPEv5wz7WsUZZVQEG262csVyHEKYcgNeEaf1").unwrap();
-    let test_tok = test_token();
+    let token_mint_address =
+        Pubkey::from_str("BuaDPEf3AN4Lty7Ge1xgk9sFBwLXLP1J5uxGsBdDpump").unwrap();
 
+    // Fetch real pool state from RPC
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url,
+    ));
+
+    let account = rpc_client
+        .get_account(&bonding_curve_address)
+        .await
+        .expect("Failed to fetch bonding curve account from mainnet");
+
+    // Deserialize (skip 8 byte discriminator)
+    let mut data_slice = &account.data[8..];
+    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+        .expect("Failed to deserialize bonding curve data");
+
+    // Create PoolState from real data
     let pool_state = PoolState::Pumpfun(PumpfunPoolState {
         slot: 100,
         transaction_index: None,
         address: bonding_curve_address,
-        mint: test_tok.address,
+        mint: token_mint_address,
         last_updated: current_timestamp(),
         liquidity_usd: 30000.0,
         is_state_keys_initialized: true,
-        virtual_token_reserves: 1_073_000_000_000_000,
-        virtual_sol_reserves: 30_000_000_000,
-        real_token_reserves: 800_000_000_000_000,
-        real_sol_reserves: 20_000_000_000,
-        complete: false,
-        creator: Pubkey::default(),
-        is_mayhem_mode: false,
+        virtual_token_reserves: raw_state.virtual_token_reserves,
+        virtual_sol_reserves: raw_state.virtual_sol_reserves,
+        real_token_reserves: raw_state.real_token_reserves,
+        real_sol_reserves: raw_state.real_sol_reserves,
+        complete: raw_state.complete,
+        creator: raw_state.creator,
+        is_mayhem_mode: raw_state.is_mayhem_mode,
     });
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: SOL -> Token (reverse direction - PumpFun naturally goes this way)
+    // Test swap: SOL -> Token (reverse direction)
     verify_quote(
         pool_manager,
         config,
         wsol_token(),
-        test_tok,
-        1_000_000_000,
+        Token {
+            address: token_mint_address,
+            symbol: Some("PUMP".to_string()),
+            name: Some("Pump Token".to_string()),
+            decimals: 6,
+            is_token_2022: true,
+            logo_uri: None,
+        },
+        100_000_000, // 0.1 SOL
         bonding_curve_address,
     )
     .await;
@@ -2310,4 +2594,483 @@ async fn test_meteora_damm_v2_quote_reverse() {
         pool_address,
     )
     .await;
+}
+
+#[tokio::test]
+async fn test_pumpfun_quote_simulation_reverse() {
+    use crate::api::dto::{QuoteRequest, QuoteResponse};
+    use crate::api::AppState;
+    use base64::Engine;
+    use borsh::{BorshDeserialize, BorshSerialize};
+    use solana_sdk::transaction::Transaction;
+
+    #[derive(BorshDeserialize, Debug)]
+    struct BondingCurveRaw {
+        virtual_token_reserves: u64,
+        virtual_sol_reserves: u64,
+        real_token_reserves: u64,
+        real_sol_reserves: u64,
+        token_total_supply: u64,
+        complete: bool,
+        creator: Pubkey,
+        is_mayhem_mode: bool,
+    }
+
+    let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    let bonding_curve_address =
+        Pubkey::from_str("9Exw9tyEYPEv5wz7WsUZZVQEG262csVyHEKYcgNeEaf1").unwrap();
+    let token_mint_address =
+        Pubkey::from_str("BuaDPEf3AN4Lty7Ge1xgk9sFBwLXLP1J5uxGsBdDpump").unwrap();
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    let account = rpc_client
+        .get_account(&bonding_curve_address)
+        .await
+        .expect("Failed to fetch bonding curve account from mainnet");
+
+    let mut data_slice = &account.data[8..];
+    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+        .expect("Failed to deserialize bonding curve data");
+
+    let pool_state = PoolState::Pumpfun(PumpfunPoolState {
+        slot: 100,
+        transaction_index: None,
+        address: bonding_curve_address,
+        mint: token_mint_address,
+        last_updated: current_timestamp(),
+        liquidity_usd: 30000.0,
+        is_state_keys_initialized: true,
+        virtual_token_reserves: raw_state.virtual_token_reserves,
+        virtual_sol_reserves: raw_state.virtual_sol_reserves,
+        real_token_reserves: raw_state.real_token_reserves,
+        real_sol_reserves: raw_state.real_sol_reserves,
+        complete: raw_state.complete,
+        creator: raw_state.creator,
+        is_mayhem_mode: raw_state.is_mayhem_mode,
+    });
+
+    pool_manager.inject_pool(pool_state).await;
+    pool_manager
+        .inject_token(crate::tests::quote_tests::wsol_token())
+        .await;
+
+    pool_manager
+        .inject_token(Token {
+            address: token_mint_address,
+            symbol: Some("PUMP".to_string()),
+            name: Some("Pump Token".to_string()),
+            decimals: 6,
+            is_token_2022: true,
+            logo_uri: None,
+        })
+        .await;
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client: rpc_client.clone(),
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let input_amount = 1_000_000; // 1 Token (6 decimals)
+
+    let request = QuoteRequest {
+        input_token: token_mint_address.to_string(),
+        output_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+        user_wallet: user_wallet_str.clone(),
+        input_amount,
+        slippage_bps: 100,
+    };
+
+    println!("Calling get_quote handler (Reverse/Sell)...");
+    let result =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::Json(request)).await;
+
+    match result {
+        Ok(axum::Json(response)) => {
+            println!("Got Quote Response (Sell)!");
+            println!("Output SOL: {}", response.output_amount);
+
+            let tx_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&response.transaction)
+                .expect("Failed to decode base64 transaction");
+
+            let (transaction, _): (Transaction, usize) =
+                bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
+                    .expect("Failed to deserialize transaction");
+
+            println!("Simulating transaction on-chain...");
+            let simulation = rpc_client.simulate_transaction(&transaction).await;
+
+            match simulation {
+                Ok(sim_result) => {
+                    println!("Simulation Result: {:#?}", sim_result);
+
+                    // For Sell, we expect error 6023 (NotEnoughTokensToSell) since test wallet has no tokens
+                    // This confirms the instruction structure is correct and reached the Sell logic
+                    if let Some(err) = sim_result.value.err {
+                        let is_balance_error = format!("{:?}", err).contains("Custom(6023)");
+                        assert!(
+                            is_balance_error,
+                            "Expected NotEnoughTokensToSell error (6023), got: {:?}",
+                            err
+                        );
+
+                        // Assert compute units consumed (should be reasonable even with error)
+                        let units_consumed = sim_result
+                            .value
+                            .units_consumed
+                            .expect("Should have units consumed");
+                        assert!(units_consumed > 0, "Should consume compute units");
+                        assert!(
+                            units_consumed < 100_000,
+                            "Should not consume excessive compute units"
+                        );
+
+                        // Verify logs contain "Instruction: Sell" to confirm we reached Sell logic
+                        if let Some(logs) = &sim_result.value.logs {
+                            let reached_sell =
+                                logs.iter().any(|log| log.contains("Instruction: Sell"));
+                            assert!(reached_sell, "Should reach Sell instruction logic");
+                        }
+
+                        println!("✅ Sell instruction verified! Error 6023 confirms correct account structure. Consumed {} compute units", units_consumed);
+                    } else {
+                        panic!("Expected error 6023 (NotEnoughTokensToSell) since test wallet has no tokens");
+                    }
+                }
+                Err(e) => {
+                    panic!("RPC Error: {}", e);
+                }
+            }
+        }
+        Err((status, axum::Json(error_res))) => {
+            panic!("Quote request failed: {} - {}", status, error_res.error);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_pumpswap_quote_simulation() {
+    use crate::api::dto::{QuoteRequest, QuoteResponse};
+    use crate::api::AppState;
+    use base64::Engine;
+    use borsh::{BorshDeserialize, BorshSerialize};
+    use solana_sdk::transaction::Transaction;
+    use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::types::{
+        Pool as PumpSwapPoolRaw, POOL_SIZE,
+    };
+
+    let (pool_manager, config) = create_test_setup(vec!["pumpswap"]).await;
+
+    // Real SOL-Token PumpSwap pool
+    let pool_address = Pubkey::from_str("4w2cysotX6czaUGmmWg13hDpY4QEMG2CzeKYEQyK9Ama").unwrap();
+    let token_mint_address =
+        Pubkey::from_str("5UUH9RTDiSpq6HKS6bp4NdU9PNJpXRXuiw6ShBTBhgH2").unwrap();
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    // Fetch real pool state from RPC
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch PumpSwap pool account");
+
+    // Deserialize PumpSwap pool state
+    let pumpswap_pool = PumpSwapPoolRaw::try_from_slice(&account.data[8..8 + POOL_SIZE])
+        .expect("Failed to deserialize PumpSwap pool");
+
+    // Fetch token vault accounts to get real reserves
+    let vault_base_account = rpc_client
+        .get_account(&pumpswap_pool.pool_base_token_account)
+        .await
+        .expect("Failed to fetch base vault");
+    let vault_quote_account = rpc_client
+        .get_account(&pumpswap_pool.pool_quote_token_account)
+        .await
+        .expect("Failed to fetch quote vault");
+
+    let base_reserve = u64::from_le_bytes(vault_base_account.data[64..72].try_into().unwrap());
+    let quote_reserve = u64::from_le_bytes(vault_quote_account.data[64..72].try_into().unwrap());
+
+    let pool_state = PoolState::PumpSwap(PumpSwapPoolState {
+        slot: 100,
+        transaction_index: None,
+        address: pool_address,
+        index: pumpswap_pool.index,
+        creator: Some(pumpswap_pool.creator),
+        base_mint: pumpswap_pool.base_mint,
+        quote_mint: pumpswap_pool.quote_mint,
+        pool_base_token_account: pumpswap_pool.pool_base_token_account,
+        pool_quote_token_account: pumpswap_pool.pool_quote_token_account,
+        last_updated: current_timestamp(),
+        base_reserve,
+        quote_reserve,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+        coin_creator: pumpswap_pool.coin_creator,
+        protocol_fee_recipient: Pubkey::from_str("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV")
+            .unwrap(),
+    });
+
+    pool_manager.inject_pool(pool_state).await;
+    pool_manager
+        .inject_token(crate::tests::quote_tests::wsol_token())
+        .await;
+
+    // Inject the real token metadata
+    pool_manager
+        .inject_token(Token {
+            address: token_mint_address,
+            symbol: Some("TOKEN".to_string()),
+            name: Some("PumpSwap Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    // Create AppState
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client: rpc_client.clone(),
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    // Test Buy: SOL -> Token
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let input_amount = 100_000_000; // 0.1 SOL
+
+    let request = QuoteRequest {
+        input_token: "So11111111111111111111111111111111111111112".to_string(), // WSOL
+        output_token: token_mint_address.to_string(),
+        user_wallet: user_wallet_str.clone(),
+        input_amount,
+        slippage_bps: 100, // 1%
+    };
+
+    println!("Calling get_quote handler (Buy)...");
+    let result =
+        crate::api::handlers::get_quote(axum::extract::State(state.clone()), axum::Json(request))
+            .await;
+
+    match result {
+        Ok(axum::Json(response)) => {
+            println!("Got Buy Quote Response!");
+            println!("Transaction Base64: {}", response.transaction);
+
+            // Decode Transaction
+            let tx_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&response.transaction)
+                .expect("Failed to decode base64 transaction");
+
+            let (transaction, _): (Transaction, usize) =
+                bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
+                    .expect("Failed to deserialize transaction");
+
+            // Simulate Transaction
+            println!("Simulating Buy transaction on-chain...");
+            let simulation = rpc_client.simulate_transaction(&transaction).await;
+
+            match simulation {
+                Ok(sim_result) => {
+                    println!("Buy Simulation Result: {:#?}", sim_result);
+
+                    // Assert no errors
+                    assert!(
+                        sim_result.value.err.is_none(),
+                        "Buy Simulation should succeed. Error: {:?}",
+                        sim_result.value.err
+                    );
+
+                    // Assert compute units consumed
+                    let units_consumed = sim_result
+                        .value
+                        .units_consumed
+                        .expect("Should have units consumed");
+                    assert!(units_consumed > 0, "Should consume compute units");
+
+                    println!(
+                        "✅ Buy Simulation Successful! Consumed {} compute units",
+                        units_consumed
+                    );
+                }
+                Err(e) => panic!("RPC Error during Buy simulation: {}", e),
+            }
+        }
+        Err((status, axum::Json(error_res))) => {
+            panic!("Buy Quote request failed: {} - {}", status, error_res.error);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_pumpswap_quote_simulation_reverse() {
+    use crate::api::dto::{QuoteRequest, QuoteResponse};
+    use crate::api::AppState;
+    use base64::Engine;
+    use borsh::{BorshDeserialize, BorshSerialize};
+    use solana_sdk::transaction::Transaction;
+    use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::types::{
+        Pool as PumpSwapPoolRaw, POOL_SIZE,
+    };
+
+    let (pool_manager, config) = create_test_setup(vec!["pumpswap"]).await;
+
+    // Real SOL-Token PumpSwap pool
+    let pool_address = Pubkey::from_str("4w2cysotX6czaUGmmWg13hDpY4QEMG2CzeKYEQyK9Ama").unwrap();
+    let token_mint_address =
+        Pubkey::from_str("5UUH9RTDiSpq6HKS6bp4NdU9PNJpXRXuiw6ShBTBhgH2").unwrap();
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    // Fetch real pool state from RPC
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch PumpSwap pool account");
+
+    // Deserialize PumpSwap pool state
+    let pumpswap_pool = PumpSwapPoolRaw::try_from_slice(&account.data[8..8 + POOL_SIZE])
+        .expect("Failed to deserialize PumpSwap pool");
+
+    // Fetch token vault accounts to get real reserves
+    let vault_base_account = rpc_client
+        .get_account(&pumpswap_pool.pool_base_token_account)
+        .await
+        .expect("Failed to fetch base vault");
+    let vault_quote_account = rpc_client
+        .get_account(&pumpswap_pool.pool_quote_token_account)
+        .await
+        .expect("Failed to fetch quote vault");
+
+    let base_reserve = u64::from_le_bytes(vault_base_account.data[64..72].try_into().unwrap());
+    let quote_reserve = u64::from_le_bytes(vault_quote_account.data[64..72].try_into().unwrap());
+
+    let pool_state = PoolState::PumpSwap(PumpSwapPoolState {
+        slot: 100,
+        transaction_index: None,
+        address: pool_address,
+        index: pumpswap_pool.index,
+        creator: Some(pumpswap_pool.creator),
+        base_mint: pumpswap_pool.base_mint,
+        quote_mint: pumpswap_pool.quote_mint,
+        pool_base_token_account: pumpswap_pool.pool_base_token_account,
+        pool_quote_token_account: pumpswap_pool.pool_quote_token_account,
+        last_updated: current_timestamp(),
+        base_reserve,
+        quote_reserve,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+        coin_creator: pumpswap_pool.coin_creator,
+        protocol_fee_recipient: Pubkey::from_str("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV")
+            .unwrap(),
+    });
+
+    pool_manager.inject_pool(pool_state).await;
+    pool_manager
+        .inject_token(crate::tests::quote_tests::wsol_token())
+        .await;
+
+    // Inject the real token metadata
+    pool_manager
+        .inject_token(Token {
+            address: token_mint_address,
+            symbol: Some("TOKEN".to_string()),
+            name: Some("PumpSwap Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    // Create AppState
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client: rpc_client.clone(),
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    // Test Sell: Token -> SOL
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let input_amount = 1_000_000; // 1 Token
+
+    let request = QuoteRequest {
+        input_token: token_mint_address.to_string(),
+        output_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+        user_wallet: user_wallet_str.clone(),
+        input_amount,
+        slippage_bps: 100, // 1%
+    };
+
+    println!("Calling get_quote handler (Sell)...");
+    let result =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::Json(request)).await;
+
+    match result {
+        Ok(axum::Json(response)) => {
+            println!("Got Sell Quote Response!");
+            println!("Transaction Base64: {}", response.transaction);
+
+            // Decode Transaction
+            let tx_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&response.transaction)
+                .expect("Failed to decode base64 transaction");
+
+            let (transaction, _): (Transaction, usize) =
+                bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
+                    .expect("Failed to deserialize transaction");
+
+            // Simulate Transaction
+            println!("Simulating Sell transaction on-chain...");
+            let simulation = rpc_client.simulate_transaction(&transaction).await;
+
+            match simulation {
+                Ok(sim_result) => {
+                    println!("Sell Simulation Result: {:#?}", sim_result);
+
+                    if let Some(err) = sim_result.value.err {
+                        if let Some(logs) = &sim_result.value.logs {
+                            for log in logs {
+                                println!("  {}", log);
+                            }
+                        }
+
+                        println!(
+                            "✅ Sell Simulation Finished (Error expected due to token balance)"
+                        );
+                    } else {
+                        panic!("Sell Simulation should probably fail due to lack of tokens");
+                    }
+                }
+                Err(e) => panic!("RPC Error during Sell simulation: {}", e),
+            }
+        }
+        Err((status, axum::Json(error_res))) => {
+            panic!(
+                "Sell Quote request failed: {} - {}",
+                status, error_res.error
+            );
+        }
+    }
 }

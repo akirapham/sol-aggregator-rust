@@ -127,8 +127,23 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 .ok_or("Failed to derive creator vault")?;
 
         let is_mayhem_mode = self.is_mayhem_mode;
-        let token_program = functions::get_token_program(is_mayhem_mode);
-        let token_program_meta = functions::get_token_program_meta(is_mayhem_mode);
+
+        // Determine token program based on the token itself (Token2022 support)
+        let is_token_2022 = if is_buy {
+            params.output_token.is_token_2022
+        } else {
+            params.input_token.is_token_2022
+        };
+
+        // Use Token2022 program if token is 2022, otherwise fallback to standard or mayhem logic
+        let token_program = if is_token_2022 {
+            Pubkey::new_from_array(spl_token_2022::ID.to_bytes())
+        } else {
+            functions::get_token_program(is_mayhem_mode)
+        };
+
+        let token_program_meta = AccountMeta::new_readonly(token_program, false);
+
         let fee_recipient_meta = if is_mayhem_mode {
             constants::MAYHEM_FEE_RECIPIENT_META
         } else {
@@ -161,6 +176,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
             let output_mint_anchor = functions::to_pubkey(&params.output_token.address);
             let bonding_curve_anchor = functions::to_pubkey(&bonding_curve_addr);
+            // Use the token_program we determined earlier
             let token_program_anchor = functions::to_pubkey(&token_program);
 
             // Get associated token accounts
@@ -188,12 +204,22 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 params.user_wallet,
                 user_token_account,
                 params.output_token.address,
-                is_mayhem_mode,
+                is_token_2022,
             ));
 
-            let user_volume_accumulator =
-                pumpf_functions::get_user_volume_accumulator_pda(&params.user_wallet)
-                    .ok_or("Failed to get user volume accumulator".to_string())?;
+            // Derive user_volume_accumulator from PumpFun Program ID
+            let (user_volume_accumulator, _) = Pubkey::find_program_address(
+                &[b"user_volume_accumulator", params.user_wallet.as_ref()],
+                &pumpf_functions::accounts::PUMPFUN,
+            );
+
+            // Derive global_volume_accumulator from PumFun Program ID (Standard behavior)
+            // Even though error logs suggested pAMM expectation, the mainnet account state
+            // suggests alignment with PumpFun ownership.
+            let (global_volume_accumulator, _) = Pubkey::find_program_address(
+                &[b"global_volume_accumulator"],
+                &pumpf_functions::accounts::PUMPFUN,
+            );
 
             // Build instruction data (8 byte discriminator + 8 byte amount + 8 byte max cost)
             let mut buy_data = [0u8; 24];
@@ -201,6 +227,15 @@ impl BuildSwapInstruction for PumpfunPoolState {
             buy_data[8..16].copy_from_slice(&buy_token_amount.to_le_bytes());
             buy_data[16..24].copy_from_slice(&max_sol_cost.to_le_bytes());
             // Build accounts array
+            // Account Structure for Standard Buy (Post-Migration):
+            // 0..8: Standard Token Trade Accounts
+            // 9: Creator Vault
+            // 10: Event Authority
+            // 11: Program (PumpFun ID)
+            // 12: Global Volume Accumulator
+            // 13: User Volume Accumulator
+            // 14: Fee Config
+            // 15: Fee Program
             let buy_accounts: Vec<AccountMeta> = vec![
                 constants::PUMPFUN_GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,
@@ -214,7 +249,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 AccountMeta::new(creator_vault_pda, false),
                 constants::PUMPFUN_EVENT_AUTHORITY_META,
                 constants::PUMPFUN_META,
-                constants::PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR_META,
+                AccountMeta::new(global_volume_accumulator, false),
                 AccountMeta::new(user_volume_accumulator, false),
                 constants::PUMPFUN_FEE_CONFIG_META,
                 constants::PUMPFUN_FEE_PROGRAM_META,
@@ -251,6 +286,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
             let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
             let input_mint_anchor = functions::to_pubkey(&params.input_token.address);
             let bonding_curve_anchor = functions::to_pubkey(&bonding_curve_addr);
+            // Use the token_program we determined earlier
             let token_program_anchor = functions::to_pubkey(&token_program);
 
             // Get associated token accounts
@@ -281,14 +317,32 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 params.user_wallet,
                 user_token_account,
                 params.input_token.address,
-                is_mayhem_mode,
+                is_token_2022,
             ));
+            // Derive user_volume_accumulator from PumpFun Program ID
+            let (user_volume_accumulator, _) = Pubkey::find_program_address(
+                &[b"user_volume_accumulator", params.user_wallet.as_ref()],
+                &pumpf_functions::accounts::PUMPFUN,
+            );
+
+            // Derive global_volume_accumulator from PumpFun Program ID
+            let (global_volume_accumulator, _) = Pubkey::find_program_address(
+                &[b"global_volume_accumulator"],
+                &pumpf_functions::accounts::PUMPFUN,
+            );
+
             // Build instruction data (8 byte discriminator + 8 byte amount + 8 byte min output)
             let mut sell_data = [0u8; 24];
             sell_data[..8].copy_from_slice(&[51, 230, 133, 164, 1, 127, 131, 173]); // Sell method ID
             sell_data[8..16].copy_from_slice(&params.input_amount.to_le_bytes());
             sell_data[16..24].copy_from_slice(&min_sol_output.to_le_bytes());
-            // Build accounts array (14 accounts for sell)
+
+            // Account Structure for Standard Sell (Post-Migration):
+            // 0..7: Standard
+            // 8: Associated Token Program
+            // 9: Token Program
+            // 10: Creator Vault
+            // ...
             let sell_accounts: Vec<AccountMeta> = vec![
                 constants::PUMPFUN_GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,

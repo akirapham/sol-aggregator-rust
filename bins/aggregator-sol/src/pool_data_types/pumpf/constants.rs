@@ -6,14 +6,14 @@ pub const FEE_RECIPIENT_META: solana_sdk::instruction::AccountMeta =
     solana_sdk::instruction::AccountMeta {
         pubkey: FEE_RECIPIENT,
         is_signer: false,
-        is_writable: false,
+        is_writable: true,
     };
 pub const MAYHEM_FEE_RECIPIENT: Pubkey = pubkey!("GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS");
 pub const MAYHEM_FEE_RECIPIENT_META: solana_sdk::instruction::AccountMeta =
     solana_sdk::instruction::AccountMeta {
         pubkey: MAYHEM_FEE_RECIPIENT,
         is_signer: false,
-        is_writable: false,
+        is_writable: true,
     };
 
 // PumpFun constants
@@ -50,7 +50,7 @@ pub const PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR_META: solana_sdk::instruction::Accou
         is_writable: false,
     };
 
-pub const PUMPFUN_FEE_CONFIG: Pubkey = pubkey!("5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx");
+pub const PUMPFUN_FEE_CONFIG: Pubkey = pubkey!("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
 pub const PUMPFUN_FEE_CONFIG_META: solana_sdk::instruction::AccountMeta =
     solana_sdk::instruction::AccountMeta {
         pubkey: PUMPFUN_FEE_CONFIG,

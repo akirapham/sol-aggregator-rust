@@ -62,7 +62,7 @@ pub struct QuoteRequest {
     pub slippage_bps: u16,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct QuoteResponse {
     pub routes: Vec<SwapStep>,
     pub input_amount: u64,
@@ -121,7 +121,7 @@ pub struct ArbitrageResponse {
     pub transaction: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct ErrorResponse {
     pub error: String,
     pub details: Vec<String>,

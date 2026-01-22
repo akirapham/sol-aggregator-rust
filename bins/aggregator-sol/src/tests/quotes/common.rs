@@ -1,9 +1,7 @@
 use crate::aggregator::DexAggregator;
-use crate::pool_data_types::PoolState;
 use crate::pool_manager::PoolStateManager;
 use crate::types::{AggregatorConfig, ExecutionPriority, SwapParams, Token};
 use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
 use std::str::FromStr;
 use std::sync::Arc;
 

@@ -274,6 +274,12 @@ impl PoolStateManager {
         self.tick_synced_pools.lock().await.insert(pool_address);
     }
 
+    #[cfg(test)]
+    pub async fn inject_token(&self, token: Token) {
+        let mut tokens = self.token_cache.write().await;
+        tokens.insert(token.address, token);
+    }
+
     /// Create a new pool manager for testing with mock dependencies
     #[cfg(test)]
     pub async fn new_for_testing(config: AggregatorConfig, rpc_client: Arc<RpcClient>) -> Self {

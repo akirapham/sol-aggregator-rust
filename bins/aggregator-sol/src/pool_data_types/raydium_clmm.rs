@@ -445,24 +445,62 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
             data,
         };
 
-        let instructions = vec![
-            // Create input token ATA instruction (idempotent - creates if doesn't exist)
-            functions::create_ata_instruction(
+        let mut instructions = Vec::new();
+
+        // Handle WSOL wrapping/unwrapping
+        // Check if input is WSOL (So11111111111111111111111111111111111111112)
+        let is_input_wsol =
+            params.input_token.address.to_string() == "So11111111111111111111111111111111111111112";
+        // Check if output is WSOL
+        let is_output_wsol = params.output_token.address.to_string()
+            == "So11111111111111111111111111111111111111112";
+
+        if is_input_wsol {
+            // Wrap SOL to WSOL
+            instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
+                &params.user_wallet,
+                params.input_amount,
+            ));
+        } else {
+            // Create input ATA if not WSOL (idempotent)
+            instructions.push(functions::create_ata_instruction(
                 params.user_wallet,
                 user_input_token,
                 input_mint,
                 params.input_token.is_token_2022,
-            ),
-            // Create output token ATA instruction (idempotent - creates if doesn't exist)
-            functions::create_ata_instruction(
+            ));
+        }
+
+        if is_output_wsol {
+            // Create WSOL ATA to receive output if needed (usually handled by handle_wsol if input is also WSOL, but here input might not be WSOL)
+            // If input IS WSOL, handle_wsol already created the account.
+            // If input is NOT WSOL, we need to create the WSOL account to receive funds.
+            if !is_input_wsol {
+                instructions.extend(
+                    sol_trade_sdk::trading::common::wsol_manager::create_wsol_ata(
+                        &params.user_wallet,
+                    ),
+                );
+            }
+        } else {
+            // Create output ATA (idempotent)
+            instructions.push(functions::create_ata_instruction(
                 params.user_wallet,
                 user_output_token,
                 output_mint,
                 params.output_token.is_token_2022,
-            ),
-            // Add swap instruction
-            swap_instruction,
-        ];
+            ));
+        }
+
+        // Add swap instruction
+        instructions.push(swap_instruction);
+
+        // Unwrap WSOL if output is WSOL
+        if is_output_wsol {
+            instructions.extend(sol_trade_sdk::trading::common::close_wsol(
+                &params.user_wallet,
+            ));
+        }
 
         Ok(instructions)
     }

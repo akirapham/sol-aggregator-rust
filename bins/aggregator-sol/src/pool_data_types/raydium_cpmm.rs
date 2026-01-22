@@ -15,6 +15,7 @@ use borsh::BorshSerialize;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_program::instruction::{AccountMeta, Instruction};
 use spl_associated_token_account;
+use std::str::FromStr;
 
 #[derive(BorshSerialize)]
 struct SwapBaseInputArgs {
@@ -126,10 +127,14 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
-    ) -> std::result::Result<Vec<Instruction>, String> {
+    ) -> std::result::Result<Vec<solana_sdk::instruction::Instruction>, String> {
+        let mut instructions = Vec::new();
+
+        // Helper to convert anchor pubkey to sdk pubkey
+        let to_sdk_pubkey =
+            |pk: anchor_lang::prelude::Pubkey| -> Pubkey { Pubkey::new_from_array(pk.to_bytes()) };
+
         // 1. Determine direction
-        // In Raydium CPMM, we need to know if we are swapping Token 0 -> Token 1 or Token 1 -> Token 0
-        // to correctly assign input/output accounts.
         let is_input_token0 = params.input_token.address == self.token0;
         if !is_input_token0 && params.input_token.address != self.token1 {
             return Err("Input token does not match pool mints".to_string());
@@ -174,28 +179,116 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         };
 
         // User ATAs
+        // Convert SDK Pubkeys to Anchor Pubkeys for spl_associated_token_account
         let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
-        let input_mint_anchor = functions::to_pubkey(&params.input_token.address);
-        let output_mint_anchor = functions::to_pubkey(&params.output_token.address);
+        let input_mint_anchor = functions::to_pubkey(&input_mint);
+        let output_mint_anchor = functions::to_pubkey(&output_mint);
+        let input_token_program_anchor = functions::to_pubkey(&input_token_program);
+        let output_token_program_anchor = functions::to_pubkey(&output_token_program);
 
-        let user_input_token_old =
+        let user_input_token_anchor =
             spl_associated_token_account::get_associated_token_address_with_program_id(
                 &user_wallet_anchor,
                 &input_mint_anchor,
-                &functions::to_pubkey(&input_token_program),
+                &input_token_program_anchor,
             );
-        let user_output_token_old =
+        let user_output_token_anchor =
             spl_associated_token_account::get_associated_token_address_with_program_id(
                 &user_wallet_anchor,
                 &output_mint_anchor,
-                &functions::to_pubkey(&output_token_program),
+                &output_token_program_anchor,
             );
 
-        let user_input_token = functions::to_address(&user_input_token_old);
-        let user_output_token = functions::to_address(&user_output_token_old);
+        let user_input_token = to_sdk_pubkey(user_input_token_anchor);
+        let user_output_token = to_sdk_pubkey(user_output_token_anchor);
 
-        // 5. Construct Instruction Data
-        // global:swap_base_input discriminator: [143, 190, 90, 218, 196, 30, 51, 222]
+        // Compute Budget (Manual SDK construction)
+        // Program: ComputeBudget111111111111111111111111111111
+        // Instruction: SetComputeUnitLimit (2)
+        let compute_budget_program =
+            Pubkey::from_str("ComputeBudget111111111111111111111111111111")
+                .map_err(|e| e.to_string())?;
+        let mut cb_data = vec![2]; // SetComputeUnitLimit discriminator
+        cb_data.extend_from_slice(&(1_400_000u32).to_le_bytes());
+
+        instructions.push(solana_sdk::instruction::Instruction {
+            program_id: compute_budget_program,
+            accounts: vec![],
+            data: cb_data,
+        });
+
+        // WSOL Logic
+        let wsol_mint = Pubkey::from_str("So11111111111111111111111111111111111111112")
+            .map_err(|e| e.to_string())?;
+
+        if params.input_token.address == wsol_mint {
+            let spl_token_id = Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+                .map_err(|e| e.to_string())?;
+            let associated_token_program =
+                Pubkey::from_str("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+                    .map_err(|e| e.to_string())?;
+            let system_program =
+                Pubkey::from_str("11111111111111111111111111111111").map_err(|e| e.to_string())?;
+
+            // 1. Create WSOL ATA (Idempotent)
+            instructions.push(solana_sdk::instruction::Instruction {
+                program_id: associated_token_program,
+                accounts: vec![
+                    solana_sdk::instruction::AccountMeta::new(params.user_wallet, true),
+                    solana_sdk::instruction::AccountMeta::new(user_input_token, false),
+                    solana_sdk::instruction::AccountMeta::new_readonly(params.user_wallet, false),
+                    solana_sdk::instruction::AccountMeta::new_readonly(wsol_mint, false),
+                    solana_sdk::instruction::AccountMeta::new_readonly(system_program, false),
+                    solana_sdk::instruction::AccountMeta::new_readonly(spl_token_id, false),
+                ],
+                data: vec![1], // Idempotent
+            });
+
+            // 2. Transfer SOL
+            let mut transfer_data = vec![2, 0, 0, 0];
+            transfer_data.extend_from_slice(&params.input_amount.to_le_bytes());
+            instructions.push(solana_sdk::instruction::Instruction {
+                program_id: system_program,
+                accounts: vec![
+                    solana_sdk::instruction::AccountMeta::new(params.user_wallet, true),
+                    solana_sdk::instruction::AccountMeta::new(user_input_token, false),
+                ],
+                data: transfer_data,
+            });
+
+            // 3. Sync Native
+            instructions.push(solana_sdk::instruction::Instruction {
+                program_id: spl_token_id,
+                accounts: vec![solana_sdk::instruction::AccountMeta::new(
+                    user_input_token,
+                    false,
+                )],
+                data: vec![17],
+            });
+        }
+
+        // Create Output ATA (Idempotent) - Manual build
+        let spl_token_prog = Pubkey::new_from_array(output_token_program.to_bytes());
+        let associated_token_program =
+            Pubkey::from_str("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+                .map_err(|e| e.to_string())?;
+        let system_program =
+            Pubkey::from_str("11111111111111111111111111111111").map_err(|e| e.to_string())?;
+
+        instructions.push(solana_sdk::instruction::Instruction {
+            program_id: associated_token_program,
+            accounts: vec![
+                solana_sdk::instruction::AccountMeta::new(params.user_wallet, true),
+                solana_sdk::instruction::AccountMeta::new(user_output_token, false),
+                solana_sdk::instruction::AccountMeta::new_readonly(params.user_wallet, false),
+                solana_sdk::instruction::AccountMeta::new_readonly(output_mint, false),
+                solana_sdk::instruction::AccountMeta::new_readonly(system_program, false),
+                solana_sdk::instruction::AccountMeta::new_readonly(spl_token_prog, false),
+            ],
+            data: vec![1], // Idempotent
+        });
+
+        // 5. Construct Swap Instruction Data
         let discriminator: [u8; 8] = [143, 190, 90, 218, 196, 30, 51, 222];
         let args = SwapBaseInputArgs {
             amount_in: params.input_amount,
@@ -205,48 +298,47 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         data.extend_from_slice(&discriminator);
         args.serialize(&mut data).map_err(|e| e.to_string())?;
 
-        // Derive Authority
-        // AUTH_SEED = "vault_and_lp_mint_auth_seed"
         let (authority, _) = Pubkey::find_program_address(
             &[b"vault_and_lp_mint_auth_seed"],
             &Self::get_program_id(),
         );
 
         let accounts = vec![
-            AccountMeta::new(params.user_wallet, true),        // payer
-            AccountMeta::new_readonly(authority, false),       // authority
-            AccountMeta::new_readonly(self.amm_config, false), // amm_config
-            AccountMeta::new(self.address, false),             // pool_state
-            AccountMeta::new(user_input_token, false),         // input_token_account
-            AccountMeta::new(user_output_token, false),        // output_token_account
-            AccountMeta::new(input_vault, false),              // input_vault
-            AccountMeta::new(output_vault, false),             // output_vault
-            AccountMeta::new_readonly(input_token_program, false), // input_token_program
-            AccountMeta::new_readonly(output_token_program, false), // output_token_program
-            AccountMeta::new_readonly(input_mint, false),      // input_token_mint
-            AccountMeta::new_readonly(output_mint, false),     // output_token_mint
-            AccountMeta::new(self.observation_state, false),   // observation_state
+            solana_sdk::instruction::AccountMeta::new(params.user_wallet, true),
+            solana_sdk::instruction::AccountMeta::new_readonly(authority, false),
+            solana_sdk::instruction::AccountMeta::new_readonly(self.amm_config, false),
+            solana_sdk::instruction::AccountMeta::new(self.address, false),
+            solana_sdk::instruction::AccountMeta::new(user_input_token, false),
+            solana_sdk::instruction::AccountMeta::new(user_output_token, false),
+            solana_sdk::instruction::AccountMeta::new(input_vault, false),
+            solana_sdk::instruction::AccountMeta::new(output_vault, false),
+            solana_sdk::instruction::AccountMeta::new_readonly(input_token_program, false),
+            solana_sdk::instruction::AccountMeta::new_readonly(output_token_program, false),
+            solana_sdk::instruction::AccountMeta::new_readonly(input_mint, false),
+            solana_sdk::instruction::AccountMeta::new_readonly(output_mint, false),
+            solana_sdk::instruction::AccountMeta::new(self.observation_state, false),
         ];
 
-        let swap_instruction = Instruction {
+        instructions.push(solana_sdk::instruction::Instruction {
             program_id: Self::get_program_id(),
             accounts,
             data,
-        };
+        });
 
-        let instructions = vec![
-            // Compute Budget
-            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
-            // Create Output ATA (Idempotent)
-            functions::create_ata_instruction(
-                params.user_wallet,
-                user_output_token,
-                output_mint,
-                params.output_token.is_token_2022,
-            ),
-            // Swap Instruction
-            swap_instruction,
-        ];
+        // WSOL Unwrapping
+        if params.output_token.address == wsol_mint {
+            let spl_token_id = Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+                .map_err(|e| e.to_string())?;
+            instructions.push(solana_sdk::instruction::Instruction {
+                program_id: spl_token_id,
+                accounts: vec![
+                    solana_sdk::instruction::AccountMeta::new(user_output_token, false),
+                    solana_sdk::instruction::AccountMeta::new(params.user_wallet, false),
+                    solana_sdk::instruction::AccountMeta::new(params.user_wallet, true),
+                ],
+                data: vec![9], // CloseAccount
+            });
+        }
 
         Ok(instructions)
     }

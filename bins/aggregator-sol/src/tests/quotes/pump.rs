@@ -1,18 +1,16 @@
 use crate::aggregator::DexAggregator;
-use crate::api::dto::{QuoteRequest, QuoteResponse};
+use crate::api::dto::QuoteRequest;
 use crate::api::AppState;
 use crate::pool_data_types::*;
-use crate::pool_manager::PoolStateManager;
 use crate::tests::quotes::common::*;
 use crate::types::Token;
 use base64::Engine;
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::BorshDeserialize;
 use solana_client::rpc_config::RpcSimulateTransactionConfig;
 use solana_commitment_config::CommitmentConfig;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::Transaction;
-use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::types::{
     Pool as PumpSwapPoolRaw, POOL_SIZE,
 };
@@ -777,16 +775,18 @@ async fn test_pumpswap_quote_simulation() {
             match simulation {
                 Ok(sim_result) => {
                     println!("Buy Simulation Result: {:#?}", sim_result);
-                    assert!(
-                        sim_result.value.err.is_none(),
-                        "Buy Simulation should succeed. Error: {:?}",
-                        sim_result.value.err
-                    );
+                    if let Some(err) = sim_result.value.err {
+                        panic!("Buy Simulation failed: {:?}", err);
+                    }
+
                     let units_consumed = sim_result
                         .value
                         .units_consumed
                         .expect("Should have units consumed");
-                    assert!(units_consumed > 0, "Should consume compute units");
+                    assert!(
+                        units_consumed > 0,
+                        "Simulation should consume compute units"
+                    );
                     println!(
                         "✅ Buy Simulation Successful! Consumed {} compute units",
                         units_consumed
@@ -1006,16 +1006,18 @@ async fn test_pumpswap_quote_simulation_reverse() {
                     println!("  {}", log);
                 }
             }
-            assert!(
-                sim_result.value.err.is_none(),
-                "Composite Simulation should succeed. Error: {:?}",
-                sim_result.value.err
-            );
+            if let Some(err) = sim_result.value.err {
+                panic!("Composite Simulation failed: {:?}", err);
+            }
+
             let units_consumed = sim_result
                 .value
                 .units_consumed
                 .expect("Should have units consumed");
-            assert!(units_consumed > 0, "Should consume compute units");
+            assert!(
+                units_consumed > 0,
+                "Simulation should consume compute units"
+            );
             println!(
                 "✅ Composite PumpSwap Simulation Successful! Consumed {} compute units",
                 units_consumed

@@ -1,12 +1,16 @@
 use crate::aggregator::DexAggregator;
+use crate::api::dto::QuoteRequest;
+use crate::api::AppState;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
 use crate::pool_data_types::*;
-use crate::pool_manager::PoolStateManager;
 use crate::tests::quotes::common::*;
 use crate::types::Token;
+use base64::Engine;
 use borsh::BorshDeserialize;
+use solana_client::rpc_config::{CommitmentConfig, RpcSimulateTransactionConfig};
+use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+use solana_sdk::transaction::Transaction;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_amm_v4::types::AmmInfo as RaydiumAmmInfoRaw;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID;
 use solana_streamer_sdk::streaming::event_parser::protocols::raydium_clmm::types::PoolState as RaydiumClmmStateRaw;
@@ -612,4 +616,396 @@ async fn test_raydium_clmm_quote_reverse() {
         pool_address,
     )
     .await;
+}
+
+#[tokio::test]
+async fn test_raydium_amm_v4_quote_simulation() {
+    let (pool_manager, config) = create_test_setup(vec!["raydium_amm_v4"]).await;
+
+    // Real SOL-PINPIN Raydium AMM V4 pool
+    let pool_address = Pubkey::from_str("8WwcNqdZjCY5Pt7AkhupAFknV2txca9sq6YBkGzLbvdt").unwrap();
+    let pinpin_mint = Pubkey::from_str("Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump").unwrap();
+
+    // Fetch real pool state from RPC
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch AMM pool account");
+
+    let amm_info =
+        RaydiumAmmInfoRaw::try_from_slice(&account.data).expect("Failed to deserialize AMM info");
+
+    let vault_coin_account = rpc_client
+        .get_account(&amm_info.token_coin)
+        .await
+        .expect("Failed to fetch coin vault");
+    let vault_pc_account = rpc_client
+        .get_account(&amm_info.token_pc)
+        .await
+        .expect("Failed to fetch pc vault");
+
+    let coin_reserve = u64::from_le_bytes(vault_coin_account.data[64..72].try_into().unwrap());
+    let pc_reserve = u64::from_le_bytes(vault_pc_account.data[64..72].try_into().unwrap());
+
+    let pool_state = PoolState::RaydiumAmmV4(RaydiumAmmV4PoolState {
+        slot: 100,
+        transaction_index: None,
+        address: pool_address,
+        base_mint: amm_info.coin_mint,
+        quote_mint: amm_info.pc_mint,
+        amm_authority: Pubkey::from_str("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1").unwrap(),
+        amm_open_orders: amm_info.open_orders,
+        amm_target_orders: amm_info.target_orders,
+        pool_coin_token_account: amm_info.token_coin,
+        pool_pc_token_account: amm_info.token_pc,
+        serum_program: amm_info.serum_dex,
+        serum_market: amm_info.market,
+        serum_bids: Pubkey::default(),
+        serum_asks: Pubkey::default(),
+        serum_event_queue: Pubkey::default(),
+        serum_coin_vault_account: Pubkey::default(),
+        serum_pc_vault_account: Pubkey::default(),
+        serum_vault_signer: Pubkey::default(),
+        last_updated: u64::MAX,
+        base_reserve: coin_reserve,
+        quote_reserve: pc_reserve,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+    });
+
+    pool_manager.inject_pool(pool_state.clone()).await;
+    pool_manager.inject_token(wsol_token()).await;
+
+    pool_manager
+        .inject_token(Token {
+            address: pinpin_mint,
+            symbol: Some("PINPIN".to_string()),
+            name: Some("Pinpin Token".to_string()),
+            decimals: amm_info.coin_decimals as u8,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client: rpc_client.clone(),
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    // Construct Quote Request: SOL -> PINPIN
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let input_amount = 100_000_000; // 0.1 SOL
+
+    let request = QuoteRequest {
+        input_token: "So11111111111111111111111111111111111111112".to_string(), // WSOL
+        output_token: pinpin_mint.to_string(),
+        user_wallet: user_wallet_str.clone(),
+        input_amount,
+        slippage_bps: 100,
+    };
+
+    println!("Calling get_quote handler (Raydium V4 Forward)...");
+    let result =
+        crate::api::handlers::get_quote(axum::extract::State(state.clone()), axum::Json(request))
+            .await;
+
+    match result {
+        Ok(axum::Json(response)) => {
+            println!("Got Quote Response!");
+            println!("Transaction Base64: {}", response.transaction);
+
+            let tx_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&response.transaction)
+                .expect("Failed to decode base64 transaction");
+
+            let (transaction, _): (Transaction, usize) =
+                bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
+                    .expect("Failed to deserialize transaction");
+
+            println!("Simulating transaction on-chain...");
+            let simulation = rpc_client.simulate_transaction(&transaction).await;
+
+            match simulation {
+                Ok(sim_result) => {
+                    // log all accounts details of each instruction
+                    println!("amm_info: {:#?}", amm_info.clone());
+                    for instruction in transaction.message.instructions.iter() {
+                        println!(
+                            "Instruction: {}",
+                            transaction.message.account_keys[instruction.program_id_index as usize]
+                        );
+                        for account_index in instruction.accounts.iter() {
+                            // log account address from account index
+                            println!(
+                                "Account: {}",
+                                transaction.message.account_keys[*account_index as usize]
+                            );
+                        }
+                    }
+
+                    if let Some(err) = sim_result.value.err {
+                        panic!("Simulation failed: {:?}", err);
+                    }
+
+                    let units_consumed = sim_result
+                        .value
+                        .units_consumed
+                        .expect("Should have units consumed");
+                    assert!(
+                        units_consumed > 0,
+                        "Simulation should consume compute units"
+                    );
+                    println!(
+                        "✅ Simulation Successful! Consumed {} compute units",
+                        units_consumed
+                    );
+                }
+                Err(e) => panic!("RPC Error during simulation: {}", e),
+            }
+        }
+        Err((status, axum::Json(error_res))) => {
+            panic!("Quote request failed: {} - {}", status, error_res.error);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_raydium_amm_v4_quote_simulation_reverse() {
+    let (pool_manager, config) = create_test_setup(vec!["raydium_amm_v4"]).await;
+
+    // Real SOL-PINPIN Raydium AMM V4 pool (Reverse: PINPIN -> SOL)
+    let pool_address = Pubkey::from_str("8WwcNqdZjCY5Pt7AkhupAFknV2txca9sq6YBkGzLbvdt").unwrap();
+    let pinpin_mint = Pubkey::from_str("Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump").unwrap();
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch AMM pool account");
+
+    let amm_info =
+        RaydiumAmmInfoRaw::try_from_slice(&account.data).expect("Failed to deserialize AMM info");
+
+    let vault_coin_account = rpc_client
+        .get_account(&amm_info.token_coin)
+        .await
+        .expect("Failed to fetch coin vault");
+    let vault_pc_account = rpc_client
+        .get_account(&amm_info.token_pc)
+        .await
+        .expect("Failed to fetch pc vault");
+
+    let coin_reserve = u64::from_le_bytes(vault_coin_account.data[64..72].try_into().unwrap());
+    let pc_reserve = u64::from_le_bytes(vault_pc_account.data[64..72].try_into().unwrap());
+
+    let pool_state = PoolState::RaydiumAmmV4(RaydiumAmmV4PoolState {
+        slot: 100,
+        transaction_index: None,
+        address: pool_address,
+        base_mint: amm_info.coin_mint,
+        quote_mint: amm_info.pc_mint,
+        amm_authority: Pubkey::from_str("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1").unwrap(),
+        amm_open_orders: amm_info.open_orders,
+        amm_target_orders: amm_info.target_orders,
+        pool_coin_token_account: amm_info.token_coin,
+        pool_pc_token_account: amm_info.token_pc,
+        serum_program: amm_info.serum_dex,
+        serum_market: amm_info.market,
+        serum_bids: Pubkey::default(),
+        serum_asks: Pubkey::default(),
+        serum_event_queue: Pubkey::default(),
+        serum_coin_vault_account: Pubkey::default(),
+        serum_pc_vault_account: Pubkey::default(),
+        serum_vault_signer: Pubkey::default(),
+        last_updated: u64::MAX,
+        base_reserve: coin_reserve,
+        quote_reserve: pc_reserve,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+    });
+
+    pool_manager.inject_pool(pool_state).await;
+    pool_manager.inject_token(wsol_token()).await;
+
+    pool_manager
+        .inject_token(Token {
+            address: pinpin_mint,
+            symbol: Some("PINPIN".to_string()),
+            name: Some("Pinpin Token".to_string()),
+            decimals: amm_info.coin_decimals as u8,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client: rpc_client.clone(),
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    // Composite Simulation
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+
+    let buy_input_amount = 100_000_000;
+    let buy_request = QuoteRequest {
+        input_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+        output_token: pinpin_mint.to_string(),
+        user_wallet: user_wallet_str.clone(),
+        input_amount: buy_input_amount,
+        slippage_bps: 100,
+    };
+
+    println!("Getting Buy Quote...");
+    let buy_result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::Json(buy_request),
+    )
+    .await
+    .expect("Buy request failed");
+
+    let buy_response = match buy_result {
+        axum::Json(res) => res,
+    };
+
+    let buy_tx_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&buy_response.transaction)
+        .expect("Failed to decode buy transaction");
+
+    let (buy_transaction, _): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&buy_tx_bytes, bincode::config::standard())
+            .expect("Failed to deserialize buy transaction");
+
+    let buy_output_amount: u64 = buy_response.output_amount;
+    let sell_input_amount = buy_output_amount / 2;
+
+    println!("Getting Sell Quote (Amount: {})...", sell_input_amount);
+    let sell_request = QuoteRequest {
+        input_token: pinpin_mint.to_string(),
+        output_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+        user_wallet: user_wallet_str.clone(),
+        input_amount: sell_input_amount,
+        slippage_bps: 100,
+    };
+
+    let sell_result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::Json(sell_request),
+    )
+    .await
+    .expect("Sell request failed");
+
+    let sell_response = match sell_result {
+        axum::Json(res) => res,
+    };
+
+    let sell_tx_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&sell_response.transaction)
+        .expect("Failed to decode sell transaction");
+
+    let (sell_transaction, _): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&sell_tx_bytes, bincode::config::standard())
+            .expect("Failed to deserialize sell transaction");
+
+    let recent_blockhash = buy_transaction.message.recent_blockhash;
+
+    let get_instructions = |tx: &Transaction| -> Vec<Instruction> {
+        let message = &tx.message;
+        message
+            .instructions
+            .iter()
+            .map(|ix| Instruction {
+                program_id: message.account_keys[ix.program_id_index as usize],
+                accounts: ix
+                    .accounts
+                    .iter()
+                    .map(|&acc_idx| {
+                        let idx = acc_idx as usize;
+                        let is_signer = idx < message.header.num_required_signatures as usize;
+                        let is_writable = if is_signer {
+                            idx < (message.header.num_required_signatures
+                                - message.header.num_readonly_signed_accounts)
+                                as usize
+                        } else {
+                            idx < (message.account_keys.len()
+                                - message.header.num_readonly_unsigned_accounts as usize)
+                        };
+
+                        solana_sdk::instruction::AccountMeta {
+                            pubkey: message.account_keys[idx],
+                            is_signer,
+                            is_writable,
+                        }
+                    })
+                    .collect(),
+                data: ix.data.clone(),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut instructions = get_instructions(&buy_transaction);
+    let sell_instructions = get_instructions(&sell_transaction);
+
+    instructions.extend(sell_instructions);
+
+    let composite_transaction = Transaction::new_with_payer(&instructions, Some(&payer));
+    let mut composite_transaction = composite_transaction;
+    composite_transaction.message.recent_blockhash = recent_blockhash;
+
+    println!("Simulating Composite Buy -> Sell Transaction...");
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::processed()),
+        ..RpcSimulateTransactionConfig::default()
+    };
+
+    let simulation = rpc_client
+        .simulate_transaction_with_config(&composite_transaction, config)
+        .await;
+
+    match simulation {
+        Ok(sim_result) => {
+            println!("Composite Simulation Result: {:#?}", sim_result);
+            if let Some(logs) = &sim_result.value.logs {
+                for log in logs {
+                    println!("  {}", log);
+                }
+            }
+            if let Some(err) = sim_result.value.err {
+                panic!("Composite Simulation failed: {:?}", err);
+            }
+
+            let units_consumed = sim_result
+                .value
+                .units_consumed
+                .expect("Should have units consumed");
+            assert!(
+                units_consumed > 0,
+                "Simulation should consume compute units"
+            );
+            println!(
+                "✅ Composite Raydium V4 Simulation Successful! Consumed {} compute units",
+                units_consumed
+            );
+        }
+        Err(e) => panic!("RPC Error during Composite simulation: {}", e),
+    }
 }

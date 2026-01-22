@@ -482,25 +482,77 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         };
 
         // 9. Build instruction list
-        // 9. Build instruction list
-        let instructions = vec![
-            // Create ATA for token A if needed
-            functions::create_ata_instruction(
-                params.user_wallet,
-                token_owner_account_a,
-                self.token_mint_a,
-                token_program_a == constants::TOKEN_PROGRAM_2022,
-            ),
-            // Create ATA for token B if needed
-            functions::create_ata_instruction(
-                params.user_wallet,
-                token_owner_account_b,
-                self.token_mint_b,
-                token_program_b == constants::TOKEN_PROGRAM_2022,
-            ),
-            // Add swap instruction
-            swap_instruction,
-        ];
+        let mut instructions = vec![];
+
+        // Create ATA for token A if needed
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            token_owner_account_a,
+            self.token_mint_a,
+            token_program_a == constants::TOKEN_PROGRAM_2022,
+        ));
+
+        // Create ATA for token B if needed
+        instructions.push(functions::create_ata_instruction(
+            params.user_wallet,
+            token_owner_account_b,
+            self.token_mint_b,
+            token_program_b == constants::TOKEN_PROGRAM_2022,
+        ));
+
+        // If input token is SOL (WSOL), we need to wrap it
+        let wsol_mint = solana_program::pubkey!("So11111111111111111111111111111111111111112");
+        if params.input_token.address == wsol_mint {
+            let wsol_ata = if a_to_b {
+                token_owner_account_a
+            } else {
+                token_owner_account_b
+            };
+
+            // Transfer SOL to WSOL ATA
+            instructions.push(Instruction {
+                program_id: constants::SYSTEM_PROGRAM,
+                accounts: vec![
+                    AccountMeta::new(params.user_wallet, true),
+                    AccountMeta::new(wsol_ata, false),
+                ],
+                data: {
+                    let mut data = vec![2, 0, 0, 0]; // Transfer instruction discriminator
+                    data.extend_from_slice(&params.input_amount.to_le_bytes());
+                    data
+                },
+            });
+
+            // Sync native to wrap SOL into WSOL
+            instructions.push(Instruction {
+                program_id: constants::TOKEN_PROGRAM,
+                accounts: vec![AccountMeta::new(wsol_ata, false)],
+                data: vec![17], // SyncNative instruction discriminator
+            });
+        }
+
+        // Add swap instruction
+        instructions.push(swap_instruction);
+
+        // If output token is SOL (WSOL), we need to unwrap it
+        if params.output_token.address == wsol_mint {
+            let wsol_ata = if a_to_b {
+                token_owner_account_b
+            } else {
+                token_owner_account_a
+            };
+
+            // CloseAccount to unwrap WSOL back to SOL
+            instructions.push(Instruction {
+                program_id: constants::TOKEN_PROGRAM,
+                accounts: vec![
+                    AccountMeta::new(wsol_ata, false),           // Account to close
+                    AccountMeta::new(params.user_wallet, false), // Destination for lamports
+                    AccountMeta::new(params.user_wallet, true),  // Owner/authority
+                ],
+                data: vec![9], // CloseAccount instruction discriminator
+            });
+        }
 
         Ok(instructions)
     }

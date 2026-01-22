@@ -77,6 +77,7 @@ impl BatchProcessor {
         post_balances: Vec<u64>,
         post_token_balances: HashMap<String, SimplifiedTokenBalance>,
     ) {
+        log::info!("BatchProcessor::send_event called with {} events", events.len());
         let _ = self
             .event_tx
             .send((events, accounts, post_balances, post_token_balances));
@@ -92,12 +93,15 @@ impl BatchProcessor {
         let mut timeout_interval = interval(timeout_duration);
         timeout_interval.tick().await; // Start the timer
 
+        log::info!("BatchProcessor scanning loop started");
+
         loop {
             tokio::select! {
                 // Process events as they come in
                 event = event_rx.recv() => {
                     match event {
                         Some(e) => {
+                            // log::info!("BatchProcessor received event"); 
                             current_batch.push(e);
 
                             // If batch is full, process it immediately
@@ -107,7 +111,10 @@ impl BatchProcessor {
                                 timeout_interval.reset(); // Reset timer for next batch
                             }
                         }
-                        None => break, // Channel closed
+                        None => {
+                            log::error!("BatchProcessor event_rx channel closed!");
+                            break; 
+                        }, 
                     }
                 }
 
@@ -208,6 +215,9 @@ impl GrpcService {
                              accounts,
                              post_balances,
                              post_token_balances| {
+            if !events.is_empty() {
+                log::info!("GrpcService callback triggered with {} events", events.len());
+            }
             batch_processor.send_event(events, accounts, post_balances, post_token_balances);
         };
 

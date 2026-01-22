@@ -266,17 +266,23 @@ impl GrpcServiceTrait for GrpcService {
         pool_update_sender: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_sender: mpsc::UnboundedSender<ChainStateUpdate>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        log::info!("GrpcService::subscribe_pool_updates called");
+        
         // Start gRPC subscription
         if let Err(e) = self.start().await {
+            log::error!("GrpcService failed to start: {}", e);
             return Err(e.into());
         }
 
         // Take the batch receiver
         let mut rx_guard = self.batch_rx.lock().await;
         if let Some(mut rx) = rx_guard.take() {
+            log::info!("Consumer loop spawning - RX taken successfully");
             // Spawn consumer loop
             tokio::spawn(async move {
+                log::info!("Consumer loop started running");
                 while let Some(batch) = rx.recv().await {
+                    // log::info!("Consumer loop received batch of size {}", batch.len());
                     BatchProcessor::process_batch(
                         batch,
                         pool_update_sender.clone(),
@@ -284,7 +290,10 @@ impl GrpcServiceTrait for GrpcService {
                     )
                     .await;
                 }
+                log::warn!("Consumer loop exited - channel closed");
             });
+        } else {
+            log::error!("FAILED TO TAKE BATCH RX - Already taken?");
         }
         Ok(())
     }

@@ -90,6 +90,8 @@ impl DexAggregator {
         let amm_config_fetcher = self.pool_manager.as_ref();
         let min_liquidity_usd = 500.0_f64;
         // First, direct path
+        // First, direct path
+        // First, direct path
         let direct_pool_addresses = self
             .pool_manager
             .get_pool_addresses_for_pair(
@@ -137,8 +139,6 @@ impl DexAggregator {
                     .insert((base_token_key, swap_param.output_token.address), pools);
             }
         }
-
-        println!("Direct pool addresses: {:#?}", direct_pool_addresses);
 
         // Collect all pool states we need
         let mut all_pool_state: HashMap<Pubkey, Arc<PoolState>> = HashMap::new();

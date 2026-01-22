@@ -23,7 +23,7 @@ mod kyber;
 mod types;
 use db::{ArbitrageDb, ArbitrageOpportunity};
 use dex_price::{DexPriceClient, DexPriceConfig};
-use kyber::{client::RouteSummary, KyberClient};
+use kyber::KyberClient;
 use std::env;
 
 use crate::types::TokenPriceUpdate;

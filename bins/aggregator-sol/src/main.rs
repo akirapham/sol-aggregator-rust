@@ -1,4 +1,4 @@
-mod aggregator;
+pub mod aggregator;
 pub mod api;
 pub mod arbitrage_config;
 pub mod arbitrage_monitor;
@@ -12,10 +12,10 @@ pub mod fetchers;
 pub mod grpc;
 pub mod pool_data_types;
 pub mod pool_manager;
-pub mod types;
-pub mod utils;
 #[cfg(test)]
 pub mod tests;
+pub mod types;
+pub mod utils;
 
 use crate::pool_manager::ArbitragePoolUpdate;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
@@ -36,6 +36,7 @@ use tokio::signal;
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
 use crate::grpc::create_grpc_service;
+use crate::pool_manager::traits::DatabaseTrait;
 use crate::pool_manager::{PoolDataProvider, PoolStateManager};
 
 #[tokio::main]
@@ -53,16 +54,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 0. Initialize Database
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let database = db::Database::new(&database_url)
-        .await
-        .expect("Failed to connect to database");
+    let database = Arc::new(
+        db::Database::new(&database_url)
+            .await
+            .expect("Failed to connect to database"),
+    );
 
     // Run migrations (optional, better to use sqlx-cli in prod)
     // database.run_migrations().await.expect("Failed to run migrations"); // Implement if needed
 
     // 1. Start the pool manager and gRPC streaming
     log::info!("Starting pool manager and gRPC streaming...");
-    let (grpc_service, batch_rx) = create_grpc_service(50, 100).await?;
+    let grpc_service = create_grpc_service(50, 100).await?;
 
     log::info!("Creating DEX aggregator...");
     let config = ConfigLoader::load().expect("Failed to load config");
@@ -77,19 +80,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rpc_client.clone(),
             price_service.clone(),
             arbitrage_pool_tx.clone(),
-            database.get_pool().clone(),
+            database.clone(),
         )
         .await,
     );
     // Start background event processing
-    let pool_update_sender = pool_manager.get_pool_update_sender().clone();
-    let chain_state_update_sender = pool_manager.get_chain_state_update_sender().clone();
-
-    PoolStateManager::start_batch_event_processing(
-        batch_rx,
-        pool_update_sender,
-        chain_state_update_sender,
-    );
+    // Batch processing loop is now handled internally by GrpcService via subscribe_pool_updates
 
     // Start pool manager
     let pool_manager_clone = pool_manager.clone();
@@ -123,11 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arb_path: PathBuf,
         pool_manager: Arc<PoolStateManager>,
         aggregator: Arc<aggregator::DexAggregator>,
-        // The database pool is obtained from pool_manager inside, so no need to pass it explicitly if we use pool_manager.get_db()
-        // BUT the previous call site passed it, which caused the error "expected 3 arguments, found 4".
-        // Let's REMOVE the 4th argument from the CALL SITE in the `if let Some` block,
-        // OR add it here. Adding it here is cleaner if we want to be explicit, but `pool_manager` has it.
-        // Let's use `pool_manager.get_db()` inside.
+        db_pool: sqlx::Pool<sqlx::Postgres>,
     ) -> Option<(
         Arc<std::sync::RwLock<ArbitrageConfig>>,
         Arc<ArbitrageMonitor>,
@@ -142,12 +134,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Load tokens from DB and merge with TOML config
                 let db = pool_manager.get_db();
-                if let Ok(db_tokens) = ArbitrageConfig::load_tokens_from_db(&db).await {
-                    if !db_tokens.is_empty() {
+                if let Ok(db_token_pubkeys) = db.load_arbitrage_tokens().await {
+                    if !db_token_pubkeys.is_empty() {
                         log::info!(
                             "Loaded {} tokens from Postgres, merging with TOML config",
-                            db_tokens.len()
+                            db_token_pubkeys.len()
                         );
+                        use crate::arbitrage_config::MonitoredToken;
+                        let db_tokens: Vec<MonitoredToken> = db_token_pubkeys
+                            .into_iter()
+                            .map(|pk| MonitoredToken {
+                                symbol: "UNKNOWN".to_string(),
+                                address: pk.to_string(),
+                                enabled: true,
+                            })
+                            .collect();
                         arb_config = arb_config.merge_with_db_tokens(db_tokens);
                     }
                 }
@@ -200,10 +201,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Pubkey::from_str(&payer_pubkey_str).expect("Invalid PAYER_PUBKEY");
                 log::info!("Loaded keypair: {}", payer_pubkey);
 
+                // Create the monitor
                 let monitor = ArbitrageMonitor::new(
                     aggregator_clone,
                     arb_config.clone(),
-                    db.clone(), // Pass the PgPool directly
+                    db_pool,
                     &rpc_url,
                     payer_pubkey,
                 )
@@ -263,8 +265,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // But for now let's assume we update the manual construction if valid
         // Actually try_setup_arb is a helper function. We need to check it.
         // Assuming we replace it or update it.
-        if let Some((cfg, mon)) =
-            try_setup_arb(requested.clone(), pool_manager.clone(), aggregator.clone()).await
+        if let Some((cfg, mon)) = try_setup_arb(
+            requested.clone(),
+            pool_manager.clone(),
+            aggregator.clone(),
+            database.get_pool().clone(),
+        )
+        .await
         {
             arb_config_arc = Some(cfg);
             arbitrage_monitor = Some(mon);
@@ -286,8 +293,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut found = false;
             for p in tried.into_iter() {
                 if p.exists() {
-                    if let Some((cfg, mon)) =
-                        try_setup_arb(p, pool_manager.clone(), aggregator.clone()).await
+                    if let Some((cfg, mon)) = try_setup_arb(
+                        p,
+                        pool_manager.clone(),
+                        aggregator.clone(),
+                        database.get_pool().clone(),
+                    )
+                    .await
                     {
                         arb_config_arc = Some(cfg);
                         arbitrage_monitor = Some(mon);

@@ -1,8 +1,13 @@
+// Module declarations for traits
+pub mod traits;
+
+use crate::pool_manager::traits::{DatabaseTrait, GrpcServiceTrait, PriceServiceTrait};
+
 use crate::fetchers::common::{fetch_account_data, fetch_token};
 use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
-use crate::grpc::{BatchProcessor, GrpcService};
+use crate::grpc::BatchProcessor;
 use crate::pool_data_types::{
     dbc, DexType, GetAmmConfig, MeteoraDlmmPoolUpdate, PoolState, PoolUpdateEventType,
     RaydiumClmmAmmConfig, RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig,
@@ -13,7 +18,6 @@ use crate::types::{AggregatorConfig, ChainStateUpdate, PoolUpdateEvent};
 use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
 use anyhow::Result;
 use async_trait::async_trait;
-use binance_price_stream::BinancePriceStream;
 use borsh::BorshDeserialize;
 use futures::stream::{self, StreamExt};
 use std::sync::Arc;
@@ -34,7 +38,6 @@ use solana_streamer_sdk::streaming::event_parser::protocols::{
 };
 use solana_streamer_sdk::streaming::event_parser::UnifiedEvent;
 use sqlx::{Pool, Postgres};
-use std::str::FromStr;
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -97,7 +100,7 @@ pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
     async fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState>;
     async fn get_pools_for_token(&self, token_address: &Pubkey) -> Vec<PoolState>;
     async fn get_stats(&self) -> PoolManagerStats;
-    fn get_db(&self) -> Pool<Postgres>;
+    fn get_db(&self) -> Arc<dyn DatabaseTrait>;
     async fn add_arbitrage_token(&self, token: Pubkey) -> Result<(), String>;
     async fn remove_arbitrage_token(&self, token: &Pubkey) -> Result<(), String>;
     async fn get_chain_state(&self) -> ChainStateUpdate;
@@ -105,7 +108,7 @@ pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
 
 /// In-memory pool state manager with real-time updates
 pub struct PoolStateManager {
-    grpc_service: Arc<GrpcService>,
+    grpc_service: Arc<dyn GrpcServiceTrait>,
     /// Pool states indexed by pool address
     pools: PoolStorage,
     /// Pool addresses indexed by token pair
@@ -127,9 +130,9 @@ pub struct PoolStateManager {
     pending_updates_account_event: PendingUpdatesMap,
     pending_pools_to_fetch_tick_arrays: PendingPoolsForTickFetching,
     tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
-    /// Postgres Connection Pool
-    db: Pool<Postgres>,
-    price_service: Arc<BinancePriceStream>,
+    /// Database abstraction
+    db: Arc<dyn DatabaseTrait>,
+    price_service: Arc<dyn PriceServiceTrait>,
     chain_state: Arc<Mutex<ChainStateUpdate>>,
     chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     raydium_clmm_amm_config_cache: Arc<RwLock<HashMap<Pubkey, RaydiumClmmAmmConfig>>>,
@@ -148,12 +151,12 @@ pub struct PoolStateManager {
 impl PoolStateManager {
     /// Create a new pool manager
     pub async fn new(
-        grpc_service: Arc<GrpcService>,
+        grpc_service: Arc<dyn GrpcServiceTrait>,
         config: AggregatorConfig,
         _rpc_client: Arc<RpcClient>,
-        price_service: Arc<BinancePriceStream>,
+        price_service: Arc<dyn PriceServiceTrait>,
         arbitrage_pool_tx: broadcast::Sender<ArbitragePoolUpdate>,
-        db: Pool<Postgres>,
+        db: Arc<dyn DatabaseTrait>,
     ) -> Self {
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
         let (chain_state_update_tx, chain_state_update_rx) =
@@ -188,14 +191,9 @@ impl PoolStateManager {
             dbc_configs: Arc::new(RwLock::new(HashMap::new())),
         };
 
-        // Load data from Postgres on startup
+        // Load data from DB on startup
         manager.load_from_db().await;
 
-        // Start periodic save to Postgres (every 15 minutes)
-        // Note: The original code started this background task here.
-        // We should ensure we spawn a task for saving.
-        // It seems `start_pool_update_event_processing` is a method.
-        // Let me verify if I mangled it.
         manager
             .start_pool_update_event_processing(pool_update_rx)
             .await;
@@ -217,9 +215,29 @@ impl PoolStateManager {
             loop {
                 interval.tick().await;
                 log::info!("Starting periodic save to Postgres...");
-                if let Err(e) = Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
-                {
-                    log::error!("Failed to save to Postgres: {}", e);
+
+                // Collect tokens
+                let tokens: Vec<Token> = {
+                    let token_read = token_cache_clone.read().await;
+                    token_read.values().cloned().collect()
+                };
+
+                // Collect pools
+                let pools: Vec<PoolState> = {
+                    let pools_read = pools_clone.read().await;
+                    let mut entries = Vec::with_capacity(pools_read.len());
+                    for v in pools_read.values() {
+                        let guard = v.lock().await;
+                        entries.push((*guard).clone());
+                    }
+                    entries
+                };
+
+                if let Err(e) = db_clone.save_tokens(&tokens).await {
+                    log::error!("Failed to save tokens to Postgres: {}", e);
+                }
+                if let Err(e) = db_clone.save_pools(&pools).await {
+                    log::error!("Failed to save pools to Postgres: {}", e);
                 }
             }
         });
@@ -229,12 +247,85 @@ impl PoolStateManager {
         manager
     }
 
+    #[cfg(test)]
+    pub async fn inject_pool(&self, pool: PoolState) {
+        let mut pools = self.pools.write().await;
+        // Map pair to pools
+        let (token_a, token_b) = pool.get_tokens();
+        let pool_address = pool.address();
+
+        pools.insert(pool_address, Arc::new(Mutex::new(pool.clone())));
+
+        let mut pair_map = self.pair_to_pools.write().await;
+        let pair_key = if token_a < token_b {
+            (token_a, token_b)
+        } else {
+            (token_b, token_a)
+        };
+        pair_map
+            .entry(pair_key)
+            .or_insert_with(HashSet::new)
+            .insert(pool_address);
+        self.tick_synced_pools.lock().await.insert(pool_address);
+    }
+
+    /// Create a new pool manager for testing with mock dependencies
+    #[cfg(test)]
+    pub async fn new_for_testing(config: AggregatorConfig, rpc_client: Arc<RpcClient>) -> Self {
+        use crate::tests::mocks::{MockDatabase, MockGrpcService, MockPriceService};
+
+        let (pool_update_tx, _) = mpsc::unbounded_channel();
+        let (chain_state_update_tx, _) = mpsc::unbounded_channel();
+        let (arbitrage_pool_tx, _) = broadcast::channel(1);
+
+        Self {
+            grpc_service: Arc::new(MockGrpcService),
+            pools: Arc::new(RwLock::new(HashMap::new())),
+            pair_to_pools: Arc::new(RwLock::new(HashMap::new())),
+            dex_pools: Arc::new(RwLock::new(HashMap::new())),
+            token_cache: Arc::new(RwLock::new(HashMap::new())),
+            pool_update_tx,
+            rpc_client,
+            arbitrage_pool_tx,
+            pending_updates: Arc::new(Mutex::new(HashMap::new())),
+            pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
+            db: Arc::new(MockDatabase::new()),
+            price_service: Arc::new(MockPriceService::new(150.0)),
+            chain_state: Arc::new(Mutex::new(ChainStateUpdate::default())),
+            chain_state_update_tx,
+            raydium_clmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
+            raydium_cpmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
+            pending_pools_to_fetch_tick_arrays: Arc::new(Mutex::new(HashSet::new())),
+            tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
+            arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
+            startup_time: SystemTime::now(),
+            config,
+            dbc_configs: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
     pub fn get_pool_update_sender(&self) -> mpsc::UnboundedSender<Vec<PoolUpdateEvent>> {
         self.pool_update_tx.clone()
     }
 
     pub fn get_chain_state_update_sender(&self) -> mpsc::UnboundedSender<ChainStateUpdate> {
         self.chain_state_update_tx.clone()
+    }
+
+    pub async fn start(&self) {
+        let grpc_service = self.grpc_service.clone();
+        let pool_tx = self.get_pool_update_sender();
+        let chain_tx = self.get_chain_state_update_sender();
+
+        tokio::spawn(async move {
+            if let Err(e) = grpc_service.subscribe_pool_updates(pool_tx, chain_tx).await {
+                log::error!("gRPC subscription failed: {}", e);
+            }
+        });
+    }
+
+    pub async fn stop(&self) {
+        self.grpc_service.stop().await;
     }
 
     /// Subscribe to arbitrage pool updates
@@ -263,7 +354,8 @@ impl PoolStateManager {
         if needs_save {
             let db = self.db.clone();
             tokio::spawn(async move {
-                if let Err(e) = Self::save_arbitrage_tokens_to_db(&db, &tokens).await {
+                let tokens_vec: Vec<Pubkey> = tokens.into_iter().collect();
+                if let Err(e) = db.save_arbitrage_tokens(&tokens_vec).await {
                     log::error!("Failed to save arbitrage tokens to DB: {}", e);
                 } else {
                     log::info!("Saved arbitrage monitored tokens to DB");
@@ -300,7 +392,8 @@ impl PoolStateManager {
         let db = self.db.clone();
         let tokens = self.get_arbitrage_monitored_tokens().await;
         tokio::spawn(async move {
-            if let Err(e) = Self::save_arbitrage_tokens_to_db(&db, &tokens).await {
+            let tokens_vec: Vec<Pubkey> = tokens.into_iter().collect();
+            if let Err(e) = db.save_arbitrage_tokens(&tokens_vec).await {
                 log::error!("Failed to save arbitrage tokens to DB: {}", e);
             }
         });
@@ -322,94 +415,13 @@ impl PoolStateManager {
         let db = self.db.clone();
         let tokens = self.get_arbitrage_monitored_tokens().await;
         tokio::spawn(async move {
-            if let Err(e) = Self::save_arbitrage_tokens_to_db(&db, &tokens).await {
+            let tokens_vec: Vec<Pubkey> = tokens.into_iter().collect();
+            if let Err(e) = db.save_arbitrage_tokens(&tokens_vec).await {
                 log::error!("Failed to save arbitrage tokens to DB: {}", e);
             }
         });
 
         Ok(())
-    }
-
-    /// Save arbitrage monitored token addresses to DB
-    async fn save_arbitrage_tokens_to_db(
-        db: &Pool<Postgres>,
-        tokens: &HashSet<Pubkey>,
-    ) -> Result<(), String> {
-        let addrs: Vec<String> = tokens.iter().map(|p| p.to_string()).collect();
-        let value = serde_json::to_value(&addrs)
-            .map_err(|e| format!("Failed to serialize token addresses: {}", e))?;
-
-        sqlx::query(
-            "INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2"
-        )
-        .bind("arbitrage_monitored_token_addresses")
-        .bind(value)
-        .execute(db)
-        .await
-        .map_err(|e| format!("Failed to save token addresses to DB: {}", e))?;
-
-        Ok(())
-    }
-
-    /// Load arbitrage monitored token addresses from DB
-    pub async fn load_arbitrage_tokens_from_db(
-        db: &Pool<Postgres>,
-    ) -> Result<HashSet<Pubkey>, String> {
-        let row = sqlx::query("SELECT value FROM app_settings WHERE key = $1")
-            .bind("arbitrage_monitored_token_addresses")
-            .fetch_optional(db)
-            .await
-            .map_err(|e| format!("Failed to fetch tokens from DB: {}", e))?;
-
-        if let Some(row) = row {
-            use sqlx::Row;
-            let value: serde_json::Value = row
-                .try_get("value")
-                .map_err(|e| format!("Navlue error: {}", e))?;
-            let addrs: Vec<String> =
-                serde_json::from_value(value).map_err(|e| format!("Json err: {}", e))?;
-            let mut set = HashSet::new();
-            for s in addrs {
-                set.insert(Pubkey::from_str(&s).map_err(|e| format!("Invalid pubkey: {}", e))?);
-            }
-            Ok(set)
-        } else {
-            Ok(HashSet::new())
-        }
-    }
-
-    pub async fn start(&self) {
-        let grpc_service = self.grpc_service.clone();
-
-        tokio::spawn(async move {
-            let _ = grpc_service.start().await;
-        });
-    }
-
-    pub async fn stop(&self) {
-        self.grpc_service.stop().await;
-    }
-
-    pub fn start_periodic_save_to_db(&self) {
-        let db_clone = self.db.clone();
-        let pools_clone = Arc::clone(&self.pools);
-        let token_cache_clone = Arc::clone(&self.token_cache);
-
-        tokio::spawn(async move {
-            let mut save_ticker = interval(Duration::from_secs(30 * 60)); // 30 min
-            loop {
-                save_ticker.tick().await;
-                // measure time to save
-                let save_start = std::time::Instant::now();
-                if let Err(e) = Self::save_to_db(&db_clone, &pools_clone, &token_cache_clone).await
-                {
-                    log::error!("Failed to save to RocksDB: {:?}", e);
-                } else {
-                    let save_ns = save_start.elapsed();
-                    log::info!("Saved pool state to RocksDB in {:?}", save_ns);
-                }
-            }
-        });
     }
 
     // read set of pools with ticks, sync the pool with ticks, mark it as synced with ticks
@@ -698,7 +710,7 @@ impl PoolStateManager {
                 ticker.tick().await;
 
                 // read sol price
-                let sol_price = price_service.get_price("SOLUSDT").unwrap_or_default().price;
+                let sol_price = price_service.get_sol_price();
                 if sol_price == 0.0 {
                     log::warn!("SOL price is zero, skipping flusher iteration");
                     continue;
@@ -1281,7 +1293,11 @@ impl PoolStateManager {
         // Step 1: Get pool addresses (quick map read)
         let pool_addresses = {
             let pair_to_pools = self.pair_to_pools.read().await;
-            let key = (*token_a, *token_b);
+            let key = if token_a < token_b {
+                (*token_a, *token_b)
+            } else {
+                (*token_b, *token_a)
+            };
             pair_to_pools.get(&key).cloned().unwrap_or_default()
         };
 
@@ -1346,7 +1362,7 @@ impl PoolStateManager {
     }
 
     /// Get access to the underlying Postgres pool
-    pub fn get_db(&self) -> Pool<Postgres> {
+    pub fn get_db(&self) -> Arc<dyn DatabaseTrait> {
         self.db.clone()
     }
 
@@ -1361,13 +1377,21 @@ impl PoolStateManager {
         token_b: &Pubkey,
     ) -> HashSet<Pubkey> {
         let pair_to_pools = self.pair_to_pools.read().await;
-        let key = (*token_a, *token_b);
+        let key = if token_a < token_b {
+            (*token_a, *token_b)
+        } else {
+            (*token_b, *token_a)
+        };
         pair_to_pools.get(&key).cloned().unwrap_or_default()
     }
 
     pub async fn get_pool_count_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> usize {
         let pair_to_pools = self.pair_to_pools.read().await;
-        let key = (*token_a, *token_b);
+        let key = if token_a < token_b {
+            (*token_a, *token_b)
+        } else {
+            (*token_b, *token_a)
+        };
         pair_to_pools.get(&key).map(|s| s.len()).unwrap_or(0)
     }
 
@@ -1483,24 +1507,10 @@ impl PoolStateManager {
         log::info!("Loading pool state from Postgres...");
 
         // 1. Load Pools
-        // We use a stream or fetch_all. Given memory constraints, maybe stream,
-        // but populating HashMap requires all anyway.
-        // Let's fetch all - if it crashes we need bigger machine or pagination.
-
-        // We select the JSONB 'data' field which contains the serialized PoolState
-        let pools_query = sqlx::query("SELECT data FROM pools");
-
-        match pools_query.fetch_all(&self.db).await {
-            Ok(rows) => {
+        match self.db.load_pools().await {
+            Ok(pools) => {
                 let mut pools_write = self.pools.write().await;
-                for row in rows {
-                    use sqlx::Row;
-                    let data: serde_json::Value = row.try_get("data").unwrap_or_default();
-                    let pool_state: PoolState = serde_json::from_value(data).unwrap_or_else(|e| {
-                        log::error!("Failed to deserialize pool state from DB: {}", e);
-                        panic!("Critical: DB data corruption");
-                    });
-
+                for pool_state in pools {
                     pools_write.insert(pool_state.address(), Arc::new(Mutex::new(pool_state)));
                 }
                 log::info!("Loaded {} pools from Postgres", pools_write.len());
@@ -1511,22 +1521,11 @@ impl PoolStateManager {
         }
 
         // 2. Load Tokens
-        let tokens_query = sqlx::query("SELECT data FROM tokens");
-        match tokens_query.fetch_all(&self.db).await {
-            Ok(rows) => {
+        match self.db.load_tokens().await {
+            Ok(tokens) => {
                 let mut token_write = self.token_cache.write().await;
-                for row in rows {
-                    use sqlx::Row;
-                    // data is nullable/Option in Postgres usually, though we defined it.
-                    // try_get handles the mapping.
-                    let json_val: Option<serde_json::Value> = row.try_get("data").ok();
-                    if let Some(json_val) = json_val {
-                        let token: Token = serde_json::from_value(json_val).unwrap_or_else(|e| {
-                            log::error!("Failed to deserialize token from DB: {}", e);
-                            panic!("Critical: DB data corruption (token)");
-                        });
-                        token_write.insert(token.address, token);
-                    }
+                for token in tokens {
+                    token_write.insert(token.address, token);
                 }
                 log::info!("Loaded {} tokens from Postgres", token_write.len());
             }
@@ -1535,17 +1534,21 @@ impl PoolStateManager {
             }
         }
 
-        // 3. Load Arbitrage Tokens (if we persist them in specific table or config)
-        // Previous impl loaded from ArbitrageConfig logic, but here we might want to consolidate.
-        // For now, let's keep it simple - ArbitrageMonitor handles its own config usually.
-        // But the previous code had `load_arbitrage_tokens_from_db`.
-        // If that logic resides in PoolManager, we need to adapt it.
-        // Checking previous code: `Self::load_arbitrage_tokens_from_db(&self.db)`
-        // We should implement `load_arbitrage_tokens_from_db` separately in ArbitrageConfig using Postgres?
-        // Actually, let's skip for a moment and focus on pools/tokens.
-        // The arbitrage monitored tokens are usually loaded from file or DB.
+        // 3. Load Arbitrage Tokens
+        match self.db.load_arbitrage_tokens().await {
+            Ok(tokens) => {
+                let mut set = self.arbitrage_monitored_tokens.write().await;
+                for t in tokens {
+                    set.insert(t);
+                }
+                log::info!("Loaded {} arbitrage tokens from DB", set.len());
+            }
+            Err(e) => {
+                log::error!("Failed to load arbitrage tokens from DB: {}", e);
+            }
+        }
 
-        // Rebuild pair_to_pools and dex_pools mappings from loaded pools
+        // Rebuild mappings
         self.rebuild_mappings_from_pools().await;
     }
 
@@ -1766,12 +1769,30 @@ impl PoolStateManager {
         }
     }
 
-    /// Save in-memory data to RocksDB
+    /// Save in-memory data to Database
     pub async fn save_pools(&self) -> Result<(), Box<dyn std::error::Error>> {
         let msg = "Saving pools to database...";
         log::info!("{}", msg);
-        println!("{}", msg);
-        Self::save_to_db(&self.db, &self.pools, &self.token_cache).await?;
+
+        // Collect tokens
+        let tokens: Vec<Token> = {
+            let token_read = self.token_cache.read().await;
+            token_read.values().cloned().collect()
+        };
+
+        // Collect pools
+        let pools: Vec<PoolState> = {
+            let pools_read = self.pools.read().await;
+            let mut entries = Vec::with_capacity(pools_read.len());
+            for v in pools_read.values() {
+                let guard = v.lock().await;
+                entries.push((*guard).clone());
+            }
+            entries
+        };
+
+        self.db.save_tokens(&tokens).await?;
+        self.db.save_pools(&pools).await?;
         Ok(())
     }
 
@@ -1878,10 +1899,7 @@ impl PoolStateManager {
     }
 
     pub fn get_sol_price(&self) -> f64 {
-        self.price_service
-            .get_price("SOLUSDT")
-            .unwrap_or_default()
-            .price
+        self.price_service.get_sol_price()
     }
 
     pub async fn get_chain_state(&self) -> ChainStateUpdate {
@@ -2011,7 +2029,7 @@ impl PoolDataProvider for PoolStateManager {
         self.get_stats().await
     }
 
-    fn get_db(&self) -> Pool<Postgres> {
+    fn get_db(&self) -> Arc<dyn DatabaseTrait> {
         self.get_db()
     }
 

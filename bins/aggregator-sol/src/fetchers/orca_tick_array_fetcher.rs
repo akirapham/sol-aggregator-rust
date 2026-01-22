@@ -271,7 +271,11 @@ impl OrcaTickArrayFetcher {
                 Ok(account) => break account,
                 Err(e) => {
                     if attempt >= MAX_RETRIES {
-                        return Err(anyhow!("Failed to fetch tick array account after {} retries: {}", MAX_RETRIES, e));
+                        return Err(anyhow!(
+                            "Failed to fetch tick array account after {} retries: {}",
+                            MAX_RETRIES,
+                            e
+                        ));
                     }
                     log::warn!(
                         "Failed to fetch tick array account {}, retrying... ({}/{}): {}",
@@ -332,7 +336,11 @@ impl OrcaTickArrayFetcher {
                 Ok(accounts) => break accounts,
                 Err(e) => {
                     if attempt >= MAX_RETRIES {
-                         return Err(anyhow!("Failed to fetch multiple tick array accounts after {} retries: {}", MAX_RETRIES, e));
+                        return Err(anyhow!(
+                            "Failed to fetch multiple tick array accounts after {} retries: {}",
+                            MAX_RETRIES,
+                            e
+                        ));
                     }
                     log::warn!(
                         "Failed to fetch multiple tick array accounts, retrying... ({}/{}): {}",
@@ -340,7 +348,7 @@ impl OrcaTickArrayFetcher {
                         MAX_RETRIES,
                         e
                     );
-                     tokio::time::sleep(std::time::Duration::from_millis(
+                    tokio::time::sleep(std::time::Duration::from_millis(
                         INITIAL_BACKOFF * 2u64.pow(attempt),
                     ))
                     .await;
@@ -561,11 +569,15 @@ impl OrcaTickArrayFetcher {
 
         let mut attempt = 0;
         let oracle_info = loop {
-             match self.rpc_client.get_account(&oracle_address).await {
+            match self.rpc_client.get_account(&oracle_address).await {
                 Ok(info) => break info,
                 Err(e) => {
                     if attempt >= MAX_RETRIES {
-                         return Err(anyhow!("Failed to fetch oracle account after {} retries: {}", MAX_RETRIES, e));
+                        return Err(anyhow!(
+                            "Failed to fetch oracle account after {} retries: {}",
+                            MAX_RETRIES,
+                            e
+                        ));
                     }
                     log::warn!(
                         "Failed to fetch oracle account {}, retrying... ({}/{}): {}",

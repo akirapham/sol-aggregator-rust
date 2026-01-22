@@ -6,7 +6,7 @@ pub enum BinanceError {
     ConnectionError(String),
 
     #[error("WebSocket error: {0}")]
-    WebSocketError(#[from] tokio_tungstenite::tungstenite::Error),
+    WebSocketError(Box<tokio_tungstenite::tungstenite::Error>),
 
     #[error("JSON parsing error: {0}")]
     JsonError(#[from] serde_json::Error),
@@ -22,6 +22,12 @@ pub enum BinanceError {
 
     #[error("Other error: {0}")]
     Other(String),
+}
+
+impl From<tokio_tungstenite::tungstenite::Error> for BinanceError {
+    fn from(err: tokio_tungstenite::tungstenite::Error) -> Self {
+        BinanceError::WebSocketError(Box::new(err))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, BinanceError>;

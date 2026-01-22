@@ -30,7 +30,7 @@ pub async fn fetch_token(
             address: *mint,
             decimals: 6,
             is_token_2022: false,
-            symbol: Some(get_base_token_symbol(*mint)), 
+            symbol: Some(get_base_token_symbol(*mint)),
             name: None,
             logo_uri: None,
         });
@@ -80,9 +80,11 @@ pub async fn fetch_token(
             }
         }
     }
-    
+
     // Should be unreachable if the loop logic is correct, but effectively covered by the Err return in loop
-    Err(DexAggregatorError::RpcError("Failed to fetch mint account data".to_string()))
+    Err(DexAggregatorError::RpcError(
+        "Failed to fetch mint account data".to_string(),
+    ))
 }
 
 pub async fn fetch_account_data(
@@ -117,7 +119,9 @@ pub async fn fetch_account_data(
             }
         }
     }
-    
+
     // Should be unreachable if the loop logic is correct
-    Err(DexAggregatorError::RpcError("Failed to fetch account data".to_string()))
+    Err(DexAggregatorError::RpcError(
+        "Failed to fetch account data".to_string(),
+    ))
 }

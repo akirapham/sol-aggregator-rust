@@ -1,8 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::{Html, IntoResponse},
-};
+use axum::{extract::State, http::StatusCode, response::Html};
 use std::sync::Arc;
 
 use crate::arbitrage_api::AppState;

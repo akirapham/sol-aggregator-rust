@@ -76,11 +76,17 @@ impl MeteoraDlmmPoolState {
         let mut total_amount_out: u64 = 0;
         let mut total_fee: u64 = 0;
 
+        println!(
+            "DEBUG: calculate_output_amount START. Input: {}, SwapForY: {}",
+            input_amount, swap_for_y
+        );
+
         // Create Clock using anchor types
         let current_timestamp = self.last_updated;
 
         // Update references
         if let Err(e) = lb_pair.update_references(current_timestamp as i64) {
+            println!("DEBUG: Error updating references: {:?}", e);
             log::debug!("Error updating references: {:?}", e);
             return 0;
         }
@@ -103,14 +109,18 @@ impl MeteoraDlmmPoolState {
                 ) {
                     Ok(keys) => keys,
                     Err(e) => {
+                        println!("DEBUG: Error getting bin array pubkeys: {:?}", e);
                         log::debug!("Error getting bin array pubkeys: {:?}", e);
                         return 0;
                     }
                 };
 
+            println!("DEBUG: Pubkeys found: {:?}", active_bin_array_pubkeys.len());
+
             let active_bin_array_pubkey = match active_bin_array_pubkeys.last() {
                 Some(key) => *key,
                 None => {
+                    println!("DEBUG: Pool out of liquidity (no pubkeys)");
                     log::debug!("Pool out of liquidity");
                     return 0;
                 }
@@ -119,10 +129,20 @@ impl MeteoraDlmmPoolState {
             let mut active_bin_array = match bin_arrays.get(&active_bin_array_pubkey).cloned() {
                 Some(arr) => arr,
                 None => {
+                    println!(
+                        "DEBUG: Active bin array not found: {:?}",
+                        active_bin_array_pubkey
+                    );
+                    // println!("DEBUG: Available keys: {:?}", bin_arrays.keys()); // Can be verbose
                     log::debug!("Active bin array not found");
                     return 0;
                 }
             };
+
+            println!(
+                "DEBUG: Active Bin Array Found. Index: {}",
+                active_bin_array.index
+            );
 
             // Shift active bin if there's an empty gap
             let lb_pair_bin_array_index =
@@ -131,12 +151,17 @@ impl MeteoraDlmmPoolState {
                 ) {
                     Ok(idx) => idx,
                     Err(e) => {
+                        println!("DEBUG: Error getting bin array index: {:?}", e);
                         log::debug!("Error getting bin array index: {:?}", e);
                         return 0;
                     }
                 };
 
             if i64::from(lb_pair_bin_array_index) != active_bin_array.index {
+                println!(
+                    "DEBUG: BinIndex mismatch: LbPair implies {}, Found {}",
+                    lb_pair_bin_array_index, active_bin_array.index
+                );
                 if swap_for_y {
                     if let Ok((_, upper_bin_id)) =
                         meteora_dlmm_sdk::dlmm::accounts::BinArray::get_bin_array_lower_upper_bin_id(
@@ -155,11 +180,13 @@ impl MeteoraDlmmPoolState {
             }
 
             loop {
+                // Wait, skipping loop start debugging for now.
+                // Just log around swap_quote_exact_in
                 let is_within_range =
                     match active_bin_array.is_bin_id_within_range(lb_pair.active_id) {
                         Ok(within) => within,
                         Err(e) => {
-                            log::debug!("Error checking bin range: {:?}", e);
+                            println!("DEBUG: Error checking range: {:?}", e);
                             return 0;
                         }
                     };

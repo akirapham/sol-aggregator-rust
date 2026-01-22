@@ -28,7 +28,7 @@ impl GrpcServiceTrait for MockGrpcService {
 }
 
 use crate::types::Token;
-use std::collections::HashMap;
+// use std::collections::HashMap;
 
 /// Mock database for testing with in-memory storage
 pub struct MockDatabase {

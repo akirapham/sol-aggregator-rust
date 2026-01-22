@@ -36,7 +36,7 @@ use tokio::signal;
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::arbitrage_monitor::ArbitrageMonitor;
 use crate::grpc::create_grpc_service;
-use crate::pool_manager::traits::DatabaseTrait;
+// use crate::pool_manager::traits::DatabaseTrait;
 use crate::pool_manager::{PoolDataProvider, PoolStateManager};
 
 #[tokio::main]

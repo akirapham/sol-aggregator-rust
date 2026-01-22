@@ -257,15 +257,20 @@ impl PoolStateManager {
         pools.insert(pool_address, Arc::new(Mutex::new(pool.clone())));
 
         let mut pair_map = self.pair_to_pools.write().await;
-        let pair_key = if token_a < token_b {
-            (token_a, token_b)
-        } else {
-            (token_b, token_a)
-        };
+
+        // Insert both directions
         pair_map
-            .entry(pair_key)
+            .entry((token_a, token_b))
             .or_insert_with(HashSet::new)
             .insert(pool_address);
+
+        if token_a != token_b {
+            pair_map
+                .entry((token_b, token_a))
+                .or_insert_with(HashSet::new)
+                .insert(pool_address);
+        }
+
         self.tick_synced_pools.lock().await.insert(pool_address);
     }
 

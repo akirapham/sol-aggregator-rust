@@ -1,0 +1,118 @@
+warning: unused variable: `user_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:323:18
+    |
+323 | ...        let (user_volume_accumulator, _) = Pubkey::fin...
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_volume_accumulator`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `global_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:329:18
+    |
+329 | ...      let (global_volume_accumulator, _) = Pubkey::fin...
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_global_volume_accumulator`
+
+    Checking aggregator-sol v0.1.0 (/Users/campv/Documents/Projects/sol-agg-rust/bins/aggregator-sol)
+warning: `aggregator-sol` (bin "aggregator-sol") generated 2 warnings
+warning: unused import: `PoolState`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:2:30
+  |
+2 | use crate::pool_data_types::{PoolState};
+  |                              ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `solana_streamer_sdk::streaming::event_parser::common::current_timestamp`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:5:5
+  |
+5 | use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `QuoteResponse`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:3:37
+  |
+3 | use crate::api::dto::{QuoteRequest, QuoteResponse};
+  |                                     ^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:5:5
+  |
+5 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `BorshSerialize`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:9:31
+  |
+9 | use borsh::{BorshDeserialize, BorshSerialize};
+  |                               ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> bins/aggregator-sol/src/tests/quotes/meteora.rs:12:5
+   |
+12 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `user_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:323:18
+    |
+323 |             let (user_volume_accumulator, _) = Pubkey::find_program_address(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_volume_accumulator`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `global_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:329:18
+    |
+329 |             let (global_volume_accumulator, _) = Pubkey::find_program_address(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_global_volume_accumulator`
+
+warning: `aggregator-sol` (bin "aggregator-sol" test) generated 16 warnings (run `cargo fix --bin "aggregator-sol" --tests` to apply 14 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 54.10s

@@ -1,0 +1,417 @@
+warning: unused variable: `user_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:323:18
+    |
+323 | ...        let (user_volume_accumulator, _) = Pubkey::fin...
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_volume_accumulator`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `global_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:329:18
+    |
+329 | ...      let (global_volume_accumulator, _) = Pubkey::fin...
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_global_volume_accumulator`
+
+    Checking aggregator-sol v0.1.0 (/Users/campv/Documents/Projects/sol-agg-rust/bins/aggregator-sol)
+warning: `aggregator-sol` (bin "aggregator-sol") generated 2 warnings
+error[E0432]: unresolved import `crate::utils::current_timestamp`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:5:5
+  |
+5 | use crate::utils::current_timestamp;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `current_timestamp` in `utils`
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+  --> bins/aggregator-sol/src/tests/quotes/pump.rs:75:23
+   |
+75 |         last_updated: current_timestamp(),
+   |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+   |
+help: consider importing this function
+   |
+ 1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+   |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/pump.rs:206:23
+    |
+206 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/pump.rs:281:23
+    |
+281 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/pump.rs:340:23
+    |
+340 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/pump.rs:412:23
+    |
+412 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/pump.rs:486:23
+    |
+486 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/pump.rs:707:23
+    |
+707 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/pump.rs:844:23
+    |
+844 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+  --> bins/aggregator-sol/src/tests/quotes/raydium.rs:80:23
+   |
+80 |         last_updated: current_timestamp(),
+   |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+   |
+help: consider importing this function
+   |
+ 1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+   |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:167:23
+    |
+167 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:259:23
+    |
+259 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:305:23
+    |
+305 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:388:23
+    |
+388 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:459:23
+    |
+459 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:535:23
+    |
+535 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/raydium.rs:576:23
+    |
+576 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/meteora.rs:271:23
+    |
+271 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/meteora.rs:359:27
+    |
+359 |             last_updated: current_timestamp(),
+    |                           ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/meteora.rs:509:23
+    |
+509 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/meteora.rs:640:23
+    |
+640 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/meteora.rs:728:23
+    |
+728 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/meteora.rs:814:27
+    |
+814 |             last_updated: current_timestamp(),
+    |                           ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+  --> bins/aggregator-sol/src/tests/quotes/orca.rs:79:23
+   |
+79 |         last_updated: current_timestamp(),
+   |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+   |
+help: consider importing this function
+   |
+ 1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+   |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/orca.rs:145:23
+    |
+145 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/orca.rs:277:23
+    |
+277 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+  --> bins/aggregator-sol/src/tests/quotes/bonk.rs:81:23
+   |
+81 |         last_updated: current_timestamp(),
+   |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+   |
+help: consider importing this function
+   |
+ 1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+   |
+
+error[E0425]: cannot find function `current_timestamp` in this scope
+   --> bins/aggregator-sol/src/tests/quotes/bonk.rs:165:23
+    |
+165 |         last_updated: current_timestamp(),
+    |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+    |
+help: consider importing this function
+    |
+  1 + use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+    |
+
+warning: unused import: `PoolState`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:2:30
+  |
+2 | use crate::pool_data_types::{PoolState};
+  |                              ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `QuoteResponse`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:3:37
+  |
+3 | use crate::api::dto::{QuoteRequest, QuoteResponse};
+  |                                     ^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:5:5
+  |
+5 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `BorshSerialize`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:9:31
+  |
+9 | use borsh::{BorshDeserialize, BorshSerialize};
+  |                               ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> bins/aggregator-sol/src/tests/quotes/meteora.rs:12:5
+   |
+12 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `user_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:323:18
+    |
+323 |             let (user_volume_accumulator, _) = Pubkey::find_program_address(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_volume_accumulator`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `global_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:329:18
+    |
+329 |             let (global_volume_accumulator, _) = Pubkey::find_program_address(
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_global_volume_accumulator`
+
+Some errors have detailed explanations: E0425, E0432.
+For more information about an error, try `rustc --explain E0425`.
+warning: `aggregator-sol` (bin "aggregator-sol" test) generated 15 warnings
+error: could not compile `aggregator-sol` (bin "aggregator-sol" test) due to 28 previous errors; 15 warnings emitted

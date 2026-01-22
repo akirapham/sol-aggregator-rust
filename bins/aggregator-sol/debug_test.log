@@ -1,0 +1,307 @@
+warning: unused import: `PoolState`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:2:30
+  |
+2 | use crate::pool_data_types::{PoolState};
+  |                              ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `solana_streamer_sdk::streaming::event_parser::common::current_timestamp`
+ --> bins/aggregator-sol/src/tests/quotes/common.rs:5:5
+  |
+5 | use solana_streamer_sdk::streaming::event_parser::common::current_timestamp;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `QuoteResponse`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:3:37
+  |
+3 | use crate::api::dto::{QuoteRequest, QuoteResponse};
+  |                                     ^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:5:5
+  |
+5 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `BorshSerialize`
+ --> bins/aggregator-sol/src/tests/quotes/pump.rs:9:31
+  |
+9 | use borsh::{BorshDeserialize, BorshSerialize};
+  |                               ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/raydium.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/meteora.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> bins/aggregator-sol/src/tests/quotes/meteora.rs:12:5
+   |
+12 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/orca.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::aggregator::DexAggregator`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:1:5
+  |
+1 | use crate::aggregator::DexAggregator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::pool_manager::PoolStateManager`
+ --> bins/aggregator-sol/src/tests/quotes/bonk.rs:3:5
+  |
+3 | use crate::pool_manager::PoolStateManager;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `user_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:323:18
+    |
+323 | ...        let (user_volume_accumulator, _) = Pubkey::fin...
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_user_volume_accumulator`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `global_volume_accumulator`
+   --> bins/aggregator-sol/src/pool_data_types/pumpfun.rs:329:18
+    |
+329 | ...      let (global_volume_accumulator, _) = Pubkey::fin...
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_global_volume_accumulator`
+
+warning: `aggregator-sol` (bin "aggregator-sol" test) generated 16 warnings (run `cargo fix --bin "aggregator-sol" --tests` to apply 14 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.29s
+     Running unittests src/main.rs (/Users/campv/Documents/Projects/sol-agg-rust/target/debug/deps/aggregator_sol-06549ddb30d1c01f)
+
+running 2 tests
+DEBUG: Deserialized CLMM State Mints: So11111111111111111111111111111111111111112 / 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R
+DEBUG: SOL Mint: So11111111111111111111111111111111111111112
+CLMM pool state: PoolState {
+    bump: [
+        254,
+    ],
+    amm_config: HfERMT5DRA6C1TAqecrJQFpmkf3wsWTMncqnj3RDg5aw,
+    owner: 57e9WjTwt6S6XJFartPW8GQmGVP9bwz215CYzKvcEgTG,
+    token_mint0: So11111111111111111111111111111111111111112,
+    token_mint1: 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,
+    token_vault0: 9Jgp8NpqEDFd5d3RQPfuRY7gMgRFByTNFmi68Ph1yvVb,
+    token_vault1: Be1CFyoPAr8aBGxpvCPD2LD21hdz2vjYNq8EcypnmgGD,
+    observation_key: DCURDhS5do6w9EytNmFxUNp3kYqXxfkv61Gs7FtLcH5a,
+    mint_decimals0: 9,
+    mint_decimals1: 6,
+    tick_spacing: 10,
+    liquidity: 26794024580574,
+    sqrt_price_x64: 6531331460802585039,
+    tick_current: -20767,
+    padding3: 0,
+    padding4: 0,
+    fee_growth_global0_x64: 9827455407938985487,
+    fee_growth_global1_x64: 691460767917589820,
+    protocol_fees_token0: 10024262,
+    protocol_fees_token1: 753764,
+    swap_in_amount_token0: 20348581027332568,
+    swap_out_amount_token1: 1244502189968589,
+    swap_in_amount_token1: 1247180538391865,
+    swap_out_amount_token0: 20377327729911623,
+    status: 0,
+    padding: [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ],
+    reward_infos: [
+        RewardInfo {
+            reward_state: 2,
+            open_time: 1767638100,
+            end_time: 1770662100,
+            last_update_time: 1769100618,
+            emissions_per_second_x64: 18300341342965825016000,
+            reward_total_emissioned: 36522384105,
+            reward_claimed: 35588559014,
+            token_mint: 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R,
+            token_vault: 8i56WTQLiTVspPx83SguzShkyxpRd3SGgaZAfjqTy9bj,
+            authority: NCV2Uo3hfW5LSZXAJe19y6SpC5K98PuQwShCSZgTki3,
+            reward_growth_global_x64: 34324358283499607,
+        },
+        RewardInfo {
+            reward_state: 0,
+            open_time: 0,
+            end_time: 0,
+            last_update_time: 0,
+            emissions_per_second_x64: 0,
+            reward_total_emissioned: 0,
+            reward_claimed: 0,
+            token_mint: 11111111111111111111111111111111,
+            token_vault: 11111111111111111111111111111111,
+            authority: 57e9WjTwt6S6XJFartPW8GQmGVP9bwz215CYzKvcEgTG,
+            reward_growth_global_x64: 0,
+        },
+        RewardInfo {
+            reward_state: 0,
+            open_time: 0,
+            end_time: 0,
+            last_update_time: 0,
+            emissions_per_second_x64: 0,
+            reward_total_emissioned: 0,
+            reward_claimed: 0,
+            token_mint: 11111111111111111111111111111111,
+            token_vault: 11111111111111111111111111111111,
+            authority: 57e9WjTwt6S6XJFartPW8GQmGVP9bwz215CYzKvcEgTG,
+            reward_growth_global_x64: 0,
+        },
+    ],
+    tick_array_bitmap: [
+        2251799813685248,
+        0,
+        274877906944,
+        0,
+        0,
+        1,
+        18179765069036918784,
+        592247540255031295,
+        257,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ],
+    total_fees_token0: 8546420657336,
+    total_fees_claimed_token0: 8391321963454,
+    total_fees_token1: 523827499564,
+    total_fees_claimed_token1: 512051348554,
+    fund_fees_token0: 30191657,
+    fund_fees_token1: 2679841,
+    open_time: 0,
+    recent_epoch: 914,
+    padding1: [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ],
+    padding2: [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ],
+}
+Real reserves: token0=3131949084501, token1=1260565938206
+Fetched 67 tick arrays
+DEBUG: Failed to find quote for So11111111111111111111111111111111111111112 -> 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R
+DEBUG: Found 0 pools in manager for this pair
+DEBUG: Token A: So11111111111111111111111111111111111111112
+DEBUG: Token B: 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R
+DEBUG: Manager Stats: Total Pools: 1, Total Pairs: 2
+DEBUG: Found 0 pools in reverse pair
+DEBUG: Found 0 pools for Token A
+
+thread 'tests::quotes::raydium::test_raydium_clmm_quote' panicked at bins/aggregator-sol/src/tests/quotes/common.rs:117:5:
+Failed to find quote
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::quotes::raydium::test_raydium_clmm_quote ... FAILED
+DEBUG: Failed to find quote for 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R -> So11111111111111111111111111111111111111112
+DEBUG: Found 0 pools in manager for this pair
+DEBUG: Token A: 4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R
+DEBUG: Token B: So11111111111111111111111111111111111111112
+DEBUG: Manager Stats: Total Pools: 1, Total Pairs: 2
+DEBUG: Found 0 pools in reverse pair
+DEBUG: Found 0 pools for Token A
+
+thread 'tests::quotes::raydium::test_raydium_clmm_quote_reverse' panicked at bins/aggregator-sol/src/tests/quotes/common.rs:117:5:
+Failed to find quote
+test tests::quotes::raydium::test_raydium_clmm_quote_reverse ... FAILED
+
+failures:
+
+failures:
+    tests::quotes::raydium::test_raydium_clmm_quote
+    tests::quotes::raydium::test_raydium_clmm_quote_reverse
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 26 filtered out; finished in 3.58s
+
+error: test failed, to rerun pass `--bin aggregator-sol`

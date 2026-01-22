@@ -59,7 +59,6 @@ impl BatchProcessor {
             event_tx,
         };
 
-
         // Start the batch processing task
         tokio::spawn(Self::process_batches(
             event_rx,
@@ -78,7 +77,6 @@ impl BatchProcessor {
         post_balances: Vec<u64>,
         post_token_balances: HashMap<String, SimplifiedTokenBalance>,
     ) {
-
         let _ = self
             .event_tx
             .send((events, accounts, post_balances, post_token_balances));
@@ -94,15 +92,13 @@ impl BatchProcessor {
         let mut timeout_interval = interval(timeout_duration);
         timeout_interval.tick().await; // Start the timer
 
-
-
         loop {
             tokio::select! {
                 // Process events as they come in
                 event = event_rx.recv() => {
                     match event {
                         Some(e) => {
- 
+
                             current_batch.push(e);
 
                             // If batch is full, process it immediately
@@ -116,8 +112,8 @@ impl BatchProcessor {
                         }
                         None => {
                             log::error!("BatchProcessor event_rx channel closed!");
-                            break; 
-                        }, 
+                            break;
+                        },
                     }
                 }
 
@@ -134,10 +130,9 @@ impl BatchProcessor {
             }
         }
 
-
         // Process any remaining events when shutting down
         if !current_batch.is_empty() {
-             if let Err(e) = batch_tx.send(current_batch) {
+            if let Err(e) = batch_tx.send(current_batch) {
                 log::error!("Failed to send final batch: {}", e);
             }
         }
@@ -148,8 +143,6 @@ impl BatchProcessor {
         pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
     ) {
-
-
         // Process events concurrently within the batch
         let tasks: Vec<_> = batch
             .into_iter()
@@ -221,7 +214,6 @@ impl GrpcService {
                              accounts,
                              post_balances,
                              post_token_balances| {
-
             batch_processor.send_event(events, accounts, post_balances, post_token_balances);
         };
 
@@ -262,17 +254,13 @@ impl GrpcServiceTrait for GrpcService {
         pool_update_sender: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
         chain_state_sender: mpsc::UnboundedSender<ChainStateUpdate>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
-
         // Spawn consumer loop FIRST to ensure it's ready to handle events
         // even if start() blocks or events arrive immediately.
         {
             let mut rx_guard = self.batch_rx.lock().await;
             if let Some(mut rx) = rx_guard.take() {
-
                 // Spawn consumer loop
                 tokio::spawn(async move {
-
                     while let Some(batch) = rx.recv().await {
                         // log::info!("Consumer loop received batch of size {}", batch.len());
                         BatchProcessor::process_batch(
@@ -288,7 +276,7 @@ impl GrpcServiceTrait for GrpcService {
                 log::error!("FAILED TO TAKE BATCH RX - Already taken?");
             }
         }
-        
+
         // THEN Start gRPC subscription
         // If this blocks, it's fine because the consumer is already running in a separate task.
         if let Err(e) = self.start().await {

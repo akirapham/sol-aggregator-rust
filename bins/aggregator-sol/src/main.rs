@@ -347,14 +347,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup signal handlers for graceful shutdown
     let shutdown_tx_ctrl_c = shutdown_tx.clone();
     tokio::spawn(async move {
-        println!("SIGINT handler registered and waiting...");
+        log::info!("SIGINT handler registered and waiting...");
         match signal::ctrl_c().await {
             Ok(()) => {
-                println!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
+                log::info!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
                 let _ = shutdown_tx_ctrl_c.send(());
             }
             Err(err) => {
-                eprintln!("Failed to listen for SIGINT: {}", err);
+                log::error!("Failed to listen for SIGINT: {}", err);
             }
         }
     });
@@ -362,15 +362,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup signal handlers for SIGTERM
     let shutdown_tx_sigterm = shutdown_tx.clone();
     tokio::spawn(async move {
-        println!("SIGTERM handler registered and waiting...");
+        log::info!("SIGTERM handler registered and waiting...");
         match signal::unix::signal(signal::unix::SignalKind::terminate()) {
             Ok(mut signal) => {
                 signal.recv().await;
-                println!("Received SIGTERM, initiating graceful shutdown...");
+                log::info!("Received SIGTERM, initiating graceful shutdown...");
                 let _ = shutdown_tx_sigterm.send(());
             }
             Err(err) => {
-                eprintln!("Failed to listen for SIGTERM: {}", err);
+                log::error!("Failed to listen for SIGTERM: {}", err);
             }
         }
     });
@@ -382,20 +382,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool_manager_shutdown = pool_manager.clone();
     let mut shutdown_rx_handler = shutdown_tx.subscribe();
     tokio::spawn(async move {
-        shutdown_rx_handler.recv().await.ok();
+        log::info!("Save task waiting for shutdown signal...");
+        match shutdown_rx_handler.recv().await {
+            Ok(_) => log::info!("Save task received shutdown signal"),
+            Err(e) => log::error!("Save task failed to receive shutdown signal: {}", e),
+        }
 
-        println!("Saving pools to database before shutdown...");
-        // Add a small delay to simulate work and ensure logs are seen if it was too fast
-        // tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        log::info!("Saving pools to database before shutdown...");
 
         if let Err(e) = pool_manager_shutdown.save_pools().await {
-            eprintln!("Failed to save pools: {}", e);
+            log::error!("Failed to save pools: {}", e);
         } else {
-            println!("Pools saved successfully");
+            log::info!("Pools saved successfully");
         }
 
         // Signal that save is complete
         let _ = save_complete_tx.send(());
+        log::info!("Save complete signal sent");
     });
 
     // Run the server with graceful shutdown that waits for data save

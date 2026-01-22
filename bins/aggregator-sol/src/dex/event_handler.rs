@@ -95,7 +95,6 @@ pub fn handle_dex_event(
     pool_update_tx: mpsc::UnboundedSender<Vec<PoolUpdateEvent>>,
     chain_state_update_tx: mpsc::UnboundedSender<ChainStateUpdate>,
 ) {
-
     let mut pool_update_events = vec![];
     // loop over events and match their types
     for event in events {

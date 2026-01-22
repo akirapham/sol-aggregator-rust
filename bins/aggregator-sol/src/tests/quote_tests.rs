@@ -2603,6 +2603,9 @@ async fn test_pumpfun_quote_simulation_reverse() {
     use base64::Engine;
     use borsh::{BorshDeserialize, BorshSerialize};
     use solana_sdk::transaction::Transaction;
+    use solana_client::rpc_config::RpcSimulateTransactionConfig;
+    use solana_commitment_config::CommitmentConfig;
+    use solana_sdk::instruction::Instruction;
 
     #[derive(BorshDeserialize, Debug)]
     struct BondingCurveRaw {
@@ -2679,82 +2682,158 @@ async fn test_pumpfun_quote_simulation_reverse() {
         arbitrage_monitor: None,
     });
 
-    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
-    let input_amount = 1_000_000; // 1 Token (6 decimals)
+    // -------------------------------------------------------------------------
+    // Composite Simulation: Buy -> Sell (Atomic)
+    // -------------------------------------------------------------------------
 
-    let request = QuoteRequest {
-        input_token: token_mint_address.to_string(),
-        output_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+
+    // 1. Get BUY Quote (SOL -> Token)
+    let buy_input_amount = 100_000_000; // 0.1 SOL
+    let buy_request = QuoteRequest {
+        input_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+        output_token: token_mint_address.to_string(),
         user_wallet: user_wallet_str.clone(),
-        input_amount,
+        input_amount: buy_input_amount,
         slippage_bps: 100,
     };
 
-    println!("Calling get_quote handler (Reverse/Sell)...");
-    let result =
-        crate::api::handlers::get_quote(axum::extract::State(state), axum::Json(request)).await;
+    println!("Getting Buy Quote...");
+    let buy_result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::Json(buy_request),
+    ).await.expect("Buy request failed");
 
-    match result {
-        Ok(axum::Json(response)) => {
-            println!("Got Quote Response (Sell)!");
-            println!("Output SOL: {}", response.output_amount);
+    let buy_response = match buy_result {
+        axum::Json(res) => res,
+    };
 
-            let tx_bytes = base64::engine::general_purpose::STANDARD
-                .decode(&response.transaction)
-                .expect("Failed to decode base64 transaction");
+    let buy_tx_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&buy_response.transaction)
+        .expect("Failed to decode buy transaction");
+    
+    let (buy_transaction, _): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&buy_tx_bytes, bincode::config::standard())
+            .expect("Failed to deserialize buy transaction");
 
-            let (transaction, _): (Transaction, usize) =
-                bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
-                    .expect("Failed to deserialize transaction");
+    // 2. Get SELL Quote (Token -> SOL)
+    // Sell half of what we bought
+    let buy_output_amount: u64 = buy_response.output_amount;
+    let sell_input_amount = buy_output_amount / 2;
 
-            println!("Simulating transaction on-chain...");
-            let simulation = rpc_client.simulate_transaction(&transaction).await;
+    println!("Getting Sell Quote (Amount: {})...", sell_input_amount);
+    let sell_request = QuoteRequest {
+        input_token: token_mint_address.to_string(),
+        output_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+        user_wallet: user_wallet_str.clone(),
+        input_amount: sell_input_amount,
+        slippage_bps: 100,
+    };
 
-            match simulation {
-                Ok(sim_result) => {
-                    println!("Simulation Result: {:#?}", sim_result);
+    let sell_result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::Json(sell_request),
+    ).await.expect("Sell request failed");
 
-                    // For Sell, we expect error 6023 (NotEnoughTokensToSell) since test wallet has no tokens
-                    // This confirms the instruction structure is correct and reached the Sell logic
-                    if let Some(err) = sim_result.value.err {
-                        let is_balance_error = format!("{:?}", err).contains("Custom(6023)");
-                        assert!(
-                            is_balance_error,
-                            "Expected NotEnoughTokensToSell error (6023), got: {:?}",
-                            err
-                        );
+    let sell_response = match sell_result {
+        axum::Json(res) => res,
+    };
 
-                        // Assert compute units consumed (should be reasonable even with error)
-                        let units_consumed = sim_result
-                            .value
-                            .units_consumed
-                            .expect("Should have units consumed");
-                        assert!(units_consumed > 0, "Should consume compute units");
-                        assert!(
-                            units_consumed < 100_000,
-                            "Should not consume excessive compute units"
-                        );
+    let sell_tx_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&sell_response.transaction)
+        .expect("Failed to decode sell transaction");
+    
+    let (sell_transaction, _): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&sell_tx_bytes, bincode::config::standard())
+            .expect("Failed to deserialize sell transaction");
 
-                        // Verify logs contain "Instruction: Sell" to confirm we reached Sell logic
-                        if let Some(logs) = &sim_result.value.logs {
-                            let reached_sell =
-                                logs.iter().any(|log| log.contains("Instruction: Sell"));
-                            assert!(reached_sell, "Should reach Sell instruction logic");
-                        }
+    // 3. Merge Instructions Helper check
+    // Since we are running on mainnet fork basically (simulation), we need correct recent blockhash.
+    let recent_blockhash = buy_transaction.message.recent_blockhash;
 
-                        println!("✅ Sell instruction verified! Error 6023 confirms correct account structure. Consumed {} compute units", units_consumed);
+    // Helper to extract instructions
+    let get_instructions = |tx: &Transaction| -> Vec<Instruction> {
+        let message = &tx.message;
+        message.instructions.iter().map(|ix| {
+            Instruction {
+                program_id: message.account_keys[ix.program_id_index as usize],
+                accounts: ix.accounts.iter().map(|&acc_idx| {
+                    let idx = acc_idx as usize;
+                    let is_signer = idx < message.header.num_required_signatures as usize;
+                    let is_writable = if is_signer {
+                        idx < (message.header.num_required_signatures - message.header.num_readonly_signed_accounts) as usize
                     } else {
-                        panic!("Expected error 6023 (NotEnoughTokensToSell) since test wallet has no tokens");
+                        idx < (message.account_keys.len() - message.header.num_readonly_unsigned_accounts as usize)
+                    };
+                    
+                    solana_sdk::instruction::AccountMeta {
+                        pubkey: message.account_keys[idx],
+                        is_signer,
+                        is_writable,
                     }
-                }
-                Err(e) => {
-                    panic!("RPC Error: {}", e);
+                }).collect(),
+                data: ix.data.clone(),
+            }
+        }).collect::<Vec<_>>()
+    };
+
+    let mut instructions = get_instructions(&buy_transaction);
+    let sell_instructions = get_instructions(&sell_transaction);
+    
+    // Naively append sell instructions.
+    instructions.extend(sell_instructions);
+
+    // 4. Build Atomic Transaction
+    let composite_transaction = Transaction::new_with_payer(
+        &instructions,
+        Some(&payer),
+    );
+     // Update blockhash
+    let mut composite_transaction = composite_transaction;
+    composite_transaction.message.recent_blockhash = recent_blockhash;
+
+    // 5. Simulate Atomic Transaction
+    println!("Simulating Composite Buy -> Sell Transaction...");
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false, 
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::processed()),
+        ..RpcSimulateTransactionConfig::default()
+    };
+
+    let simulation = rpc_client.simulate_transaction_with_config(&composite_transaction, config).await;
+
+    match simulation {
+        Ok(sim_result) => {
+            println!("Composite Simulation Result: {:#?}", sim_result);
+            
+            if let Some(logs) = &sim_result.value.logs {
+                for log in logs {
+                    println!("  {}", log);
                 }
             }
+
+            // Assert no errors
+            assert!(
+                sim_result.value.err.is_none(),
+                "Composite Simulation should succeed. Error: {:?}",
+                sim_result.value.err
+            );
+
+            // Assert compute units consumed
+            let units_consumed = sim_result
+                .value
+                .units_consumed
+                .expect("Should have units consumed");
+            assert!(units_consumed > 0, "Should consume compute units");
+
+            println!(
+                "✅ Composite PumpFun Simulation Successful! Consumed {} compute units",
+                units_consumed
+            );
         }
-        Err((status, axum::Json(error_res))) => {
-            panic!("Quote request failed: {} - {}", status, error_res.error);
-        }
+        Err(e) => panic!("RPC Error during Composite simulation: {}", e),
     }
 }
 
@@ -2925,6 +3004,9 @@ async fn test_pumpswap_quote_simulation_reverse() {
     use base64::Engine;
     use borsh::{BorshDeserialize, BorshSerialize};
     use solana_sdk::transaction::Transaction;
+    use solana_client::rpc_config::RpcSimulateTransactionConfig;
+    use solana_commitment_config::CommitmentConfig;
+    use solana_sdk::instruction::Instruction;
     use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::types::{
         Pool as PumpSwapPoolRaw, POOL_SIZE,
     };
@@ -3011,66 +3093,158 @@ async fn test_pumpswap_quote_simulation_reverse() {
         arbitrage_monitor: None,
     });
 
-    // Test Sell: Token -> SOL
-    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
-    let input_amount = 1_000_000; // 1 Token
+    // -------------------------------------------------------------------------
+    // Composite Simulation: Buy -> Sell (Atomic)
+    // -------------------------------------------------------------------------
 
-    let request = QuoteRequest {
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+
+    // 1. Get BUY Quote (SOL -> Token)
+    let buy_input_amount = 100_000_000; // 0.1 SOL
+    let buy_request = QuoteRequest {
+        input_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
+        output_token: token_mint_address.to_string(),
+        user_wallet: user_wallet_str.clone(),
+        input_amount: buy_input_amount,
+        slippage_bps: 100,
+    };
+
+    println!("Getting Buy Quote...");
+    let buy_result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::Json(buy_request),
+    ).await.expect("Buy request failed");
+
+    let buy_response = match buy_result {
+        axum::Json(res) => res,
+    };
+
+    let buy_tx_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&buy_response.transaction)
+        .expect("Failed to decode buy transaction");
+    
+    let (buy_transaction, _): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&buy_tx_bytes, bincode::config::standard())
+            .expect("Failed to deserialize buy transaction");
+
+    // 2. Get SELL Quote (Token -> SOL)
+    // Sell half of what we bought
+    let buy_output_amount: u64 = buy_response.output_amount;
+    let sell_input_amount = buy_output_amount / 2;
+
+    println!("Getting Sell Quote (Amount: {})...", sell_input_amount);
+    let sell_request = QuoteRequest {
         input_token: token_mint_address.to_string(),
         output_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
         user_wallet: user_wallet_str.clone(),
-        input_amount,
-        slippage_bps: 100, // 1%
+        input_amount: sell_input_amount,
+        slippage_bps: 100,
     };
 
-    println!("Calling get_quote handler (Sell)...");
-    let result =
-        crate::api::handlers::get_quote(axum::extract::State(state), axum::Json(request)).await;
+    let sell_result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::Json(sell_request),
+    ).await.expect("Sell request failed");
 
-    match result {
-        Ok(axum::Json(response)) => {
-            println!("Got Sell Quote Response!");
-            println!("Transaction Base64: {}", response.transaction);
+    let sell_response = match sell_result {
+        axum::Json(res) => res,
+    };
 
-            // Decode Transaction
-            let tx_bytes = base64::engine::general_purpose::STANDARD
-                .decode(&response.transaction)
-                .expect("Failed to decode base64 transaction");
+    let sell_tx_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&sell_response.transaction)
+        .expect("Failed to decode sell transaction");
+    
+    let (sell_transaction, _): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&sell_tx_bytes, bincode::config::standard())
+            .expect("Failed to deserialize sell transaction");
 
-            let (transaction, _): (Transaction, usize) =
-                bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
-                    .expect("Failed to deserialize transaction");
+    // 3. Merge Instructions Helper check
+    // Since we are running on mainnet fork basically (simulation), we need correct recent blockhash.
+    let recent_blockhash = buy_transaction.message.recent_blockhash;
 
-            // Simulate Transaction
-            println!("Simulating Sell transaction on-chain...");
-            let simulation = rpc_client.simulate_transaction(&transaction).await;
-
-            match simulation {
-                Ok(sim_result) => {
-                    println!("Sell Simulation Result: {:#?}", sim_result);
-
-                    if let Some(err) = sim_result.value.err {
-                        if let Some(logs) = &sim_result.value.logs {
-                            for log in logs {
-                                println!("  {}", log);
-                            }
-                        }
-
-                        println!(
-                            "✅ Sell Simulation Finished (Error expected due to token balance)"
-                        );
+    // Helper to extract instructions
+    let get_instructions = |tx: &Transaction| -> Vec<Instruction> {
+        let message = &tx.message;
+        message.instructions.iter().map(|ix| {
+            Instruction {
+                program_id: message.account_keys[ix.program_id_index as usize],
+                accounts: ix.accounts.iter().map(|&acc_idx| {
+                    let idx = acc_idx as usize;
+                    let is_signer = idx < message.header.num_required_signatures as usize;
+                    let is_writable = if is_signer {
+                        idx < (message.header.num_required_signatures - message.header.num_readonly_signed_accounts) as usize
                     } else {
-                        panic!("Sell Simulation should probably fail due to lack of tokens");
+                        idx < (message.account_keys.len() - message.header.num_readonly_unsigned_accounts as usize)
+                    };
+                    
+                    solana_sdk::instruction::AccountMeta {
+                        pubkey: message.account_keys[idx],
+                        is_signer,
+                        is_writable,
                     }
-                }
-                Err(e) => panic!("RPC Error during Sell simulation: {}", e),
+                }).collect(),
+                data: ix.data.clone(),
             }
-        }
-        Err((status, axum::Json(error_res))) => {
-            panic!(
-                "Sell Quote request failed: {} - {}",
-                status, error_res.error
+        }).collect::<Vec<_>>()
+    };
+
+    let mut instructions = get_instructions(&buy_transaction);
+    let sell_instructions = get_instructions(&sell_transaction);
+    
+    // Naively append sell instructions. IDEMPOTENT ATZ creation should handle duplicates.
+    instructions.extend(sell_instructions);
+
+    // 4. Build Atomic Transaction
+    let composite_transaction = Transaction::new_with_payer(
+        &instructions,
+        Some(&payer),
+    );
+     // Update blockhash
+    let mut composite_transaction = composite_transaction;
+    composite_transaction.message.recent_blockhash = recent_blockhash;
+
+    // 5. Simulate Atomic Transaction
+    println!("Simulating Composite Buy -> Sell Transaction...");
+    // Use sig_verify: false because we cannot sign for this user
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false, 
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::processed()),
+        ..RpcSimulateTransactionConfig::default()
+    };
+
+    let simulation = rpc_client.simulate_transaction_with_config(&composite_transaction, config).await;
+
+    match simulation {
+        Ok(sim_result) => {
+            println!("Composite Simulation Result: {:#?}", sim_result);
+            
+            if let Some(logs) = &sim_result.value.logs {
+                for log in logs {
+                    println!("  {}", log);
+                }
+            }
+
+            // Assert no errors
+            assert!(
+                sim_result.value.err.is_none(),
+                "Composite Simulation should succeed. Error: {:?}",
+                sim_result.value.err
+            );
+
+            // Assert compute units consumed
+            let units_consumed = sim_result
+                .value
+                .units_consumed
+                .expect("Should have units consumed");
+            assert!(units_consumed > 0, "Should consume compute units");
+
+            println!(
+                "✅ Composite PumpSwap Simulation Successful! Consumed {} compute units",
+                units_consumed
             );
         }
+        Err(e) => panic!("RPC Error during Composite simulation: {}", e),
     }
 }

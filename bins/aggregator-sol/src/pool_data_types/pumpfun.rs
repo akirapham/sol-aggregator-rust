@@ -343,13 +343,13 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 is_token_2022,
             ));
             // Derive user_volume_accumulator from PumpFun Program ID
-            let (user_volume_accumulator, _) = Pubkey::find_program_address(
+            let (_user_volume_accumulator, _) = Pubkey::find_program_address(
                 &[b"user_volume_accumulator", params.user_wallet.as_ref()],
                 &pumpf_functions::accounts::PUMPFUN,
             );
 
             // Derive global_volume_accumulator from PumpFun Program ID
-            let (global_volume_accumulator, _) = Pubkey::find_program_address(
+            let (_global_volume_accumulator, _) = Pubkey::find_program_address(
                 &[b"global_volume_accumulator"],
                 &pumpf_functions::accounts::PUMPFUN,
             );

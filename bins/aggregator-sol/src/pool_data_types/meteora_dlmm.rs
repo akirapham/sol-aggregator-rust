@@ -66,10 +66,10 @@ impl MeteoraDlmmPoolState {
 
         // Convert to commons types
         let mut lb_pair = functions::to_commons_lb_pair(self);
-        let bin_arrays = functions::get_commons_bin_arrays(self);
+        let _bin_arrays = functions::get_commons_bin_arrays(self);
 
         // Convert Pubkey to anchor_lang::prelude::Pubkey
-        let lb_pair_pubkey = anchor_lang::prelude::Pubkey::from(self.address.to_bytes());
+        let _lb_pair_pubkey = anchor_lang::prelude::Pubkey::from(self.address.to_bytes());
 
         // Skip transfer fee calculation - use amount_in directly as transfer_fee_excluded_amount_in
         let mut amount_left = input_amount;
@@ -92,7 +92,7 @@ impl MeteoraDlmmPoolState {
         }
 
         // Convert bitmap_extension if present
-        let bitmap_extension_commons = self
+        let _bitmap_extension_commons = self
             .bitmap_extension
             .as_ref()
             .map(|ext| functions::to_commons_bitmap_extension(self, ext));
@@ -429,7 +429,7 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
 
         // Get bin arrays needed for the swap
         let lb_pair_anchor = common_functions::to_pubkey(&self.address);
-        let bitmap_extension_commons = self
+        let _bitmap_extension_commons = self
             .bitmap_extension
             .as_ref()
             .map(|ext| functions::to_commons_bitmap_extension(self, ext));
@@ -437,7 +437,7 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         let bin_array_pubkeys = match meteora_dlmm_sdk::quote::get_bin_array_pubkeys_for_swap(
             lb_pair_anchor,
             &functions::to_commons_lb_pair(self),
-            bitmap_extension_commons.as_ref(),
+            _bitmap_extension_commons.as_ref(),
             swap_for_y,
             1, // Number of bin arrays to fetch
         ) {

@@ -289,20 +289,8 @@ use crate::pool_data_types::common::functions as common_functions;
 use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::types::SwapParams;
 use async_trait::async_trait;
-use borsh::BorshSerialize;
-use solana_program::instruction::{AccountMeta, Instruction};
+use solana_program::instruction::Instruction;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
-
-#[derive(BorshSerialize)]
-struct SwapParameters2 {
-    /// When SwapMode::ExactIn: amount_in. When SwapMode::ExactOut: amount_out
-    pub amount_0: u64,
-    /// When SwapMode::ExactIn: minimum_amount_out. When SwapMode::ExactOut: maximum_amount_in
-    pub amount_1: u64,
-    /// Swap mode: 0 = ExactIn, 1 = PartialFill, 2 = ExactOut
-    pub swap_mode: u8,
-}
-
 #[async_trait]
 impl BuildSwapInstruction for MeteoraDammV2PoolState {
     async fn build_swap_instruction(

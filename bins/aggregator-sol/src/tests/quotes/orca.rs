@@ -463,7 +463,8 @@ async fn test_orca_whirlpool_quote_simulation() {
 
     println!("Calling get_quote handler...");
     let result =
-        crate::api::handlers::get_quote(axum::extract::State(state), axum::Json(request)).await;
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await;
 
     match result {
         Ok(axum::Json(response)) => {
@@ -683,7 +684,7 @@ async fn test_orca_whirlpool_quote_simulation_reverse() {
     println!("Getting Buy Quote...");
     let buy_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(buy_request),
+        axum::extract::Query(buy_request),
     )
     .await
     .expect("Buy request failed");
@@ -714,7 +715,7 @@ async fn test_orca_whirlpool_quote_simulation_reverse() {
 
     let sell_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(sell_request),
+        axum::extract::Query(sell_request),
     )
     .await
     .expect("Sell request failed");

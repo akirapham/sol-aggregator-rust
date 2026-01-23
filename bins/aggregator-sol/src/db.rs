@@ -79,7 +79,7 @@ impl DatabaseTrait for Database {
                     .push_bind(token_a.to_string())
                     .push_bind(token_b.to_string())
                     .push_bind(sqlx::types::Json(pool))
-                    .push_bind(chrono::Utc::now());
+                    .push_bind(pool.last_updated() as i64);
             });
 
             query_builder.push(

@@ -723,9 +723,11 @@ async fn test_raydium_amm_v4_quote_simulation() {
     };
 
     println!("Calling get_quote handler (Raydium V4 Forward)...");
-    let result =
-        crate::api::handlers::get_quote(axum::extract::State(state.clone()), axum::Json(request))
-            .await;
+    let result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::extract::Query(request),
+    )
+    .await;
 
     match result {
         Ok(axum::Json(response)) => {
@@ -885,7 +887,7 @@ async fn test_raydium_amm_v4_quote_simulation_reverse() {
     println!("Getting Buy Quote...");
     let buy_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(buy_request),
+        axum::extract::Query(buy_request),
     )
     .await
     .expect("Buy request failed");
@@ -916,7 +918,7 @@ async fn test_raydium_amm_v4_quote_simulation_reverse() {
 
     let sell_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(sell_request),
+        axum::extract::Query(sell_request),
     )
     .await
     .expect("Sell request failed");
@@ -1111,9 +1113,11 @@ async fn test_raydium_cpmm_quote_simulation() {
     };
 
     println!("Calling get_quote handler (Raydium CPMM Forward)...");
-    let result =
-        crate::api::handlers::get_quote(axum::extract::State(state.clone()), axum::Json(request))
-            .await;
+    let result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::extract::Query(request),
+    )
+    .await;
 
     match result {
         Ok(axum::Json(response)) => {
@@ -1253,7 +1257,7 @@ async fn test_raydium_cpmm_quote_simulation_reverse() {
     println!("Getting Buy Quote...");
     let buy_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(buy_request),
+        axum::extract::Query(buy_request),
     )
     .await
     .expect("Buy request failed");
@@ -1284,7 +1288,7 @@ async fn test_raydium_cpmm_quote_simulation_reverse() {
 
     let sell_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(sell_request),
+        axum::extract::Query(sell_request),
     )
     .await
     .expect("Sell request failed");
@@ -1522,9 +1526,11 @@ async fn test_raydium_clmm_quote_simulation() {
     };
 
     println!("Requesting Quote for 0.1 SOL -> RAY...");
-    let result =
-        crate::api::handlers::get_quote(axum::extract::State(state.clone()), axum::Json(request))
-            .await;
+    let result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::extract::Query(request),
+    )
+    .await;
 
     match result {
         Ok(axum::Json(response)) => {
@@ -1696,7 +1702,7 @@ async fn test_raydium_clmm_quote_simulation_reverse() {
     println!("Requesting Buy Quote for 0.1 SOL -> RAY...");
     let buy_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(buy_request),
+        axum::extract::Query(buy_request),
     )
     .await
     .expect("Buy quote failed");
@@ -1731,7 +1737,7 @@ async fn test_raydium_clmm_quote_simulation_reverse() {
     );
     let sell_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(sell_request),
+        axum::extract::Query(sell_request),
     )
     .await
     .expect("Sell quote failed");

@@ -337,7 +337,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("Server running on http://0.0.0.0:{}", port);
     log::info!("API endpoints:");
-    log::info!("  POST /quote - Get swap quotes");
+    log::info!("  GET  /quote - Get swap quotes");
+    log::info!("  GET  /quote-debug - Debug quote parameters");
     log::info!("  GET  /pools/:token0/:token1 - Get pools for token pair");
     log::info!("  GET  /health - Health check");
 

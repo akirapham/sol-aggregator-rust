@@ -212,7 +212,7 @@ impl PoolStateManager {
         let token_cache_clone = manager.token_cache.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(15 * 60));
+            let mut interval = tokio::time::interval(Duration::from_secs(30 * 60));
             loop {
                 interval.tick().await;
                 log::info!("Starting periodic save to Postgres...");
@@ -240,7 +240,18 @@ impl PoolStateManager {
                     log::info!("Saved {} tokens to Postgres", tokens.len());
                 }
                 if let Err(e) = db_clone.save_pools(&pools).await {
-                    log::error!("Failed to save pools to Postgres: {}", e);
+                    // Check if it's a foreign key violation (Postgres error code 23503)
+                    let error_msg = e.to_string();
+                    if error_msg.contains("violates foreign key constraint") {
+                        // This is expected during startup/high load when tokens haven't been fetched yet
+                        // We can just log a warning and retry next time
+                        log::warn!(
+                            "Skipping pool save due to missing tokens (FK violation). Will retry next cycle. Error: {}",
+                            error_msg
+                        );
+                    } else {
+                        log::error!("Failed to save pools to Postgres: {}", e);
+                    }
                 } else {
                     log::info!("Saved {} pools to Postgres", pools.len());
                 }

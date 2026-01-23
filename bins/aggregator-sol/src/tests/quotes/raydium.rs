@@ -92,7 +92,8 @@ async fn test_raydium_amm_v4_quote() {
     pool_manager.inject_pool(pool_state).await;
 
     // Test swap: SOL -> PINPIN (base is PINPIN/coin, quote is SOL/pc)
-    verify_quote(
+    // Test Round Trip: SOL -> PINPIN -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(),
@@ -106,6 +107,7 @@ async fn test_raydium_amm_v4_quote() {
         },
         1_000_000_000, // 1 SOL
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -177,7 +179,8 @@ async fn test_raydium_cpmm_quote() {
     pool_manager.inject_pool(pool_state).await;
 
     // Test swap: SOL -> SURGE (token0 is SOL, token1 is SURGE)
-    verify_quote(
+    // Test Round Trip: SOL -> SURGE -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(),
@@ -191,6 +194,7 @@ async fn test_raydium_cpmm_quote() {
         },
         1_000_000_000, // 1 SOL
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -325,7 +329,8 @@ async fn test_raydium_clmm_quote() {
     pool_manager.inject_pool(pool_state).await;
 
     // Test swap: SOL -> RAY (token0 is SOL, token1 is RAY)
-    verify_quote(
+    // Test Round Trip: SOL -> RAY -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(),
@@ -339,6 +344,7 @@ async fn test_raydium_clmm_quote() {
         },
         1_000_000_000, // 1 SOL
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -412,8 +418,8 @@ async fn test_raydium_amm_v4_quote_reverse() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: PINPIN -> SOL (reverse direction)
-    verify_quote(
+    // Test Round Trip: PINPIN -> SOL -> PINPIN
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -427,6 +433,7 @@ async fn test_raydium_amm_v4_quote_reverse() {
         wsol_token(),
         100_000_000, // Amount of PINPIN to swap
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -481,8 +488,8 @@ async fn test_raydium_cpmm_quote_reverse() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: SURGE -> SOL (reverse direction)
-    verify_quote(
+    // Test Round Trip: SURGE -> SOL -> SURGE
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -496,6 +503,7 @@ async fn test_raydium_cpmm_quote_reverse() {
         wsol_token(),
         1_000_000_000,
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -599,8 +607,8 @@ async fn test_raydium_clmm_quote_reverse() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: RAY -> SOL (reverse direction)
-    verify_quote(
+    // Test Round Trip: RAY -> SOL -> RAY
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -614,6 +622,7 @@ async fn test_raydium_clmm_quote_reverse() {
         wsol_token(),
         1_000_000_000,
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -1777,7 +1786,7 @@ async fn test_raydium_clmm_quote_simulation_reverse() {
     };
 
     let mut instructions = get_instructions(&buy_transaction);
-    let mut sell_instructions = get_instructions(&sell_transaction);
+    let sell_instructions = get_instructions(&sell_transaction);
 
     instructions.extend(sell_instructions);
 

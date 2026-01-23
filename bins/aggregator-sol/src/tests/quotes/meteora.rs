@@ -1542,7 +1542,6 @@ async fn test_meteora_dbc_quote_simulation_reverse() {
     println!("Simulation successful! Logs: {:#?}", result.value.logs);
 }
 
-
 #[tokio::test]
 async fn test_meteora_dlmm_quote_simulation() {
     let _ = env_logger::builder()
@@ -1680,7 +1679,9 @@ async fn test_meteora_dlmm_quote_simulation() {
 
     // Add WSOL wrapping for SOL input
     let mut all_instructions = Vec::new();
-    all_instructions.extend(sol_trade_sdk::trading::common::handle_wsol(&payer, amount_in));
+    all_instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
+        &payer, amount_in,
+    ));
     all_instructions.extend(swap_instructions);
     all_instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
 
@@ -1861,7 +1862,10 @@ async fn test_meteora_dlmm_quote_simulation_reverse() {
     let mut instructions = Vec::new();
 
     // Add WSOL wrapping for buy (SOL -> RALPH)
-    instructions.extend(sol_trade_sdk::trading::common::handle_wsol(&payer, buy_amount_in));
+    instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
+        &payer,
+        buy_amount_in,
+    ));
     instructions.extend(buy_instructions);
 
     // Add sell instructions (RALPH -> SOL)
@@ -1910,7 +1914,7 @@ async fn test_meteora_dlmm_quote_vs_jupiter() {
     // Meteora DLMM Pool: SOL-RALPH
     let pool_address = Pubkey::from_str("6b9ZdnykBXZwRqw1xuS4McYxghAwocwZzrwijzcUVcxP").unwrap();
     let ralph_mint = Pubkey::from_str("8116V1BW9zaXUM6pVhWVaAduKrLcEBi3RGXedKTrBAGS").unwrap();
-    
+
     // Fetch real pool state
     let rpc_client = pool_manager.get_rpc_client();
     let account = rpc_client
@@ -2046,20 +2050,22 @@ async fn test_meteora_dlmm_quote_vs_jupiter() {
             }
 
             let jup_json: serde_json::Value = resp.json().await.expect("Failed to parse JSON");
-            
+
             let jup_out_amount_str = jup_json["outAmount"].as_str().expect("Missing outAmount");
-            let jup_out_amount: u64 = jup_out_amount_str.parse().expect("Failed to parse outAmount");
+            let jup_out_amount: u64 = jup_out_amount_str
+                .parse()
+                .expect("Failed to parse outAmount");
 
             println!("Jupiter JSON: {:#?}", jup_json);
             println!("Jupiter Output Amount: {}", jup_out_amount);
-            
+
             // Check route plan
             if let Some(route_plan) = jup_json["routePlan"].as_array() {
                 println!("Jupiter Route Plan Length: {}", route_plan.len());
                 for (i, step) in route_plan.iter().enumerate() {
                     let label = step["swapInfo"]["label"].as_str().unwrap_or("Unknown");
                     let amm_key = step["swapInfo"]["ammKey"].as_str().unwrap_or("Unknown");
-                     println!("Step {}: {} (AMM: {})", i, label, amm_key);
+                    println!("Step {}: {} (AMM: {})", i, label, amm_key);
                 }
             }
 
@@ -2072,15 +2078,22 @@ async fn test_meteora_dlmm_quote_vs_jupiter() {
             println!("Out quote output amount: {:#?}", local_quote.output_amount);
             let diff_percent = (diff as f64 / jup_out_amount as f64) * 100.0;
             println!("Difference: {} ({}%)", diff, diff_percent);
-            
+
             // Note: Local calculation may underestimate for large swaps because we only fetch
             // nearby bin arrays during quote calculation. For production routing, all necessary
             // bin arrays are fetched. Jupiter has access to all bin arrays.
             // Accept up to 10% difference for this comparison test.
-            assert!(diff_percent < 10.0, "Difference too high: {}%", diff_percent);
-        },
+            assert!(
+                diff_percent < 10.0,
+                "Difference too high: {}%",
+                diff_percent
+            );
+        }
         Err(e) => {
-            println!("Failed to fetch Jupiter quote (likely network/DNS issue): {}", e);
+            println!(
+                "Failed to fetch Jupiter quote (likely network/DNS issue): {}",
+                e
+            );
             println!("Skipping comparison.");
         }
     }

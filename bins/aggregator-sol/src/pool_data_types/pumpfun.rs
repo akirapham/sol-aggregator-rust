@@ -157,19 +157,21 @@ impl BuildSwapInstruction for PumpfunPoolState {
         };
         if is_buy {
             // ========================================
-            // BUY: SOL -> Token
+            // BUY: SOL -> Token (Exact SOL In)
             // ========================================
-            // Calculate expected token output
-            let buy_token_amount = get_buy_token_amount_from_sol_amount(
+            // 1. Calculate expected token output for the given input SOL
+            // Note: pumpf_functions::get_buy_token_amount_from_sol_amount calculates the virtual curve output.
+            let expected_token_amount = get_buy_token_amount_from_sol_amount(
                 self.virtual_token_reserves as u128,
                 self.virtual_sol_reserves as u128,
                 self.real_token_reserves as u128,
                 self.creator,
                 params.input_amount,
             );
-            // Calculate max SOL cost with slippage
-            let max_sol_cost =
-                params.input_amount + (params.input_amount * params.slippage_bps as u64) / 10000;
+
+            // 2. Calculate min_tokens_out (Apply slippage)
+            let min_tokens_out =
+                functions::calculate_slippage(expected_token_amount, params.slippage_bps)?;
 
             let bonding_curve_addr = if self.address == Pubkey::default() {
                 pumpf_functions::get_bonding_curve_pda(&params.output_token.address)
@@ -219,25 +221,35 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 &pumpf_functions::accounts::PUMPFUN,
             );
 
-            // Derive global_volume_accumulator from PumFun Program ID (Standard behavior)
-            // Even though error logs suggested pAMM expectation, the mainnet account state
-            // suggests alignment with PumpFun ownership.
+            // Derive global_volume_accumulator from PumFun Program ID
             let (global_volume_accumulator, _) = Pubkey::find_program_address(
                 &[b"global_volume_accumulator"],
                 &pumpf_functions::accounts::PUMPFUN,
             );
 
-            // Build instruction data (8 byte discriminator + 8 byte amount + 8 byte max cost)
-            let mut buy_data = [0u8; 24];
-            buy_data[..8].copy_from_slice(&[102, 6, 61, 18, 1, 218, 235, 234]); // Buy method ID
-            buy_data[8..16].copy_from_slice(&buy_token_amount.to_le_bytes());
-            buy_data[16..24].copy_from_slice(&max_sol_cost.to_le_bytes());
+            // Build instruction data for buy_exact_sol_in
+            // Discriminator: [56, 252, 116, 8, 158, 223, 205, 95]
+            // Args: spendable_sol_in (u64), min_tokens_out (u64), track_volume (OptionBool)
+            let mut buy_data = Vec::with_capacity(25);
+            buy_data.extend_from_slice(&[56, 252, 116, 8, 158, 223, 205, 95]);
+            buy_data.extend_from_slice(&params.input_amount.to_le_bytes()); // spendable_sol_in
+            buy_data.extend_from_slice(&min_tokens_out.to_le_bytes()); // min_tokens_out
+            buy_data.push(0); // track_volume: OptionBool { val: false } (encoded as 0u8)
+
             // Build accounts array
-            // Account Structure for Standard Buy (Post-Migration):
-            // 0..8: Standard Token Trade Accounts
+            // Account Structure for buy_exact_sol_in (Same as buy):
+            // 0: Global
+            // 1: Fee Recipient
+            // 2: Mint
+            // 3: Bonding Curve
+            // 4: Associated Bonding Curve
+            // 5: Associated User
+            // 6: User
+            // 7: System Program
+            // 8: Token Program
             // 9: Creator Vault
             // 10: Event Authority
-            // 11: Program (PumpFun ID)
+            // 11: Program
             // 12: Global Volume Accumulator
             // 13: User Volume Accumulator
             // 14: Fee Config

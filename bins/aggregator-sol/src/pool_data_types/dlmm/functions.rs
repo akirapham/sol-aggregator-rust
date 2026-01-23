@@ -25,7 +25,7 @@ pub fn to_commons_lb_pair(pool: &MeteoraDlmmPoolState) -> meteora_dlmm_sdk::dlmm
             // Sanitize protocol_share (max 10000 bps)
             protocol_share: if pool.lbpair.parameters.protocol_share > 10000 {
                 // log::warn!("Sanitizing corrupt protocol_share: {}", pool.lbpair.parameters.protocol_share);
-                0 
+                0
             } else {
                 pool.lbpair.parameters.protocol_share
             },

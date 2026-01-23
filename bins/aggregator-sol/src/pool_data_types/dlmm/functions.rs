@@ -13,12 +13,29 @@ pub fn to_commons_lb_pair(pool: &MeteoraDlmmPoolState) -> meteora_dlmm_sdk::dlmm
             filter_period: pool.lbpair.parameters.filter_period,
             decay_period: pool.lbpair.parameters.decay_period,
             reduction_factor: pool.lbpair.parameters.reduction_factor,
-            variable_fee_control: pool.lbpair.parameters.variable_fee_control,
+            variable_fee_control: if pool.lbpair.parameters.variable_fee_control > 1000000 {
+                // log::warn!("Sanitizing corrupt variable_fee_control: {}", pool.lbpair.parameters.variable_fee_control);
+                0
+            } else {
+                pool.lbpair.parameters.variable_fee_control
+            },
             max_volatility_accumulator: pool.lbpair.parameters.max_volatility_accumulator,
             min_bin_id: pool.lbpair.parameters.min_bin_id,
             max_bin_id: pool.lbpair.parameters.max_bin_id,
-            protocol_share: pool.lbpair.parameters.protocol_share,
-            base_fee_power_factor: pool.lbpair.parameters.base_fee_power_factor,
+            // Sanitize protocol_share (max 10000 bps)
+            protocol_share: if pool.lbpair.parameters.protocol_share > 10000 {
+                // log::warn!("Sanitizing corrupt protocol_share: {}", pool.lbpair.parameters.protocol_share);
+                0 
+            } else {
+                pool.lbpair.parameters.protocol_share
+            },
+            // Sanitize base_fee_power_factor (usually 0, definitely not > 1)
+            base_fee_power_factor: if pool.lbpair.parameters.base_fee_power_factor > 1 {
+                // log::warn!("Sanitizing corrupt base_fee_power_factor: {}", pool.lbpair.parameters.base_fee_power_factor);
+                0
+            } else {
+                pool.lbpair.parameters.base_fee_power_factor
+            },
             _padding: pool.lbpair.parameters._padding,
         },
         v_parameters: meteora_dlmm_sdk::dlmm::types::VariableParameters {
@@ -141,4 +158,34 @@ pub fn get_commons_bin_arrays(
         bin_arrays.insert(pubkey, bin_array);
     }
     bin_arrays
+}
+
+/// Convert a single raw BinArray to meteora_dlmm_sdk format
+pub fn get_commons_bin_array_from_raw(
+    bin_array: &solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::BinArray,
+) -> meteora_dlmm_sdk::dlmm::accounts::BinArray {
+    let mut bins = [meteora_dlmm_sdk::dlmm::types::Bin::default(); 70];
+    for (i, bin) in bin_array.bins.iter().enumerate() {
+        if i < 70 {
+            bins[i] = meteora_dlmm_sdk::dlmm::types::Bin {
+                amount_x: bin.amount_x,
+                amount_y: bin.amount_y,
+                price: bin.price,
+                liquidity_supply: bin.liquidity_supply,
+                reward_per_token_stored: bin.reward_per_token_stored,
+                fee_amount_x_per_token_stored: bin.fee_amount_x_per_token_stored,
+                fee_amount_y_per_token_stored: bin.fee_amount_y_per_token_stored,
+                amount_x_in: bin.amount_x_in,
+                amount_y_in: bin.amount_y_in,
+            };
+        }
+    }
+
+    meteora_dlmm_sdk::dlmm::accounts::BinArray {
+        index: bin_array.index,
+        version: 0,
+        lb_pair: anchor_lang::prelude::Pubkey::from(bin_array.lb_pair.to_bytes()),
+        bins,
+        _padding: [0; 7],
+    }
 }

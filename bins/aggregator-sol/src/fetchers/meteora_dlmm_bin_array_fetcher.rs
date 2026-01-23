@@ -32,7 +32,7 @@ impl MeteoraDlmmBinArrayFetcher {
 
         let mut all_bin_array_pubkeys = std::collections::HashSet::new();
 
-        const TAKE_COUNT: u8 = 10;
+        const TAKE_COUNT: u8 = 50; // Increased from 10 to fetch more bin arrays
 
         // Swap for Y (X -> Y)
         if let Ok(pubkeys_for_y) = meteora_dlmm_sdk::quote::get_bin_array_pubkeys_for_swap(

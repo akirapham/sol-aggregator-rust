@@ -368,6 +368,7 @@ impl BuildSwapInstruction for DbcPoolState {
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // Determine input/output mints based on trade direction
         let base_mint = self.base_mint;

@@ -110,12 +110,16 @@ impl PumpSwapPoolState {
     }
 }
 
+use solana_client::nonblocking::rpc_client::RpcClient;
+use std::sync::Arc;
+
 #[async_trait]
 impl BuildSwapInstruction for PumpSwapPoolState {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
         _amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&Arc<RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         let pool = self.address;
         let base_mint = self.base_mint;

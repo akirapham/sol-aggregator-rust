@@ -104,6 +104,7 @@ pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
     async fn add_arbitrage_token(&self, token: Pubkey) -> Result<(), String>;
     async fn remove_arbitrage_token(&self, token: &Pubkey) -> Result<(), String>;
     async fn get_chain_state(&self) -> ChainStateUpdate;
+    fn get_rpc_client(&self) -> Option<&Arc<RpcClient>>;
 }
 
 /// In-memory pool state manager with real-time updates
@@ -2054,5 +2055,9 @@ impl PoolDataProvider for PoolStateManager {
 
     async fn get_chain_state(&self) -> ChainStateUpdate {
         self.get_chain_state().await
+    }
+
+    fn get_rpc_client(&self) -> Option<&Arc<RpcClient>> {
+        Some(&self.rpc_client)
     }
 }

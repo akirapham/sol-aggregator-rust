@@ -860,8 +860,11 @@ impl DexAggregator {
             priority,
         };
 
+        // Get optional RPC client from pool manager
+        let rpc_client = self.pool_manager.get_rpc_client();
+
         step.pool_state
-            .build_swap_instruction(&params, amm_config_fetcher)
+            .build_swap_instruction(&params, amm_config_fetcher, rpc_client)
             .await
             .map_err(|e| {
                 log::error!(

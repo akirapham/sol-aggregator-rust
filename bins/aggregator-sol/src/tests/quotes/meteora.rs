@@ -1,8 +1,12 @@
+use crate::aggregator::DexAggregator;
+use crate::api::dto::QuoteRequest;
 use crate::pool_data_types::*;
 use crate::tests::quotes::common::*;
 use crate::types::Token;
 use borsh::BorshDeserialize;
+use solana_client::rpc_config::{CommitmentConfig, RpcSimulateTransactionConfig};
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::transaction::Transaction;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dbc::types::{
     PoolConfig as MeteoraDbcConfigRaw, VirtualPool as MeteoraDbcPoolRaw, POOL_CONFIG_SIZE,
     VIRTUAL_POOL_SIZE,
@@ -830,4 +834,342 @@ async fn test_meteora_damm_v2_quote_reverse() {
         pool_address,
     )
     .await;
+}
+
+#[tokio::test]
+async fn test_meteora_damm_quote_simulation() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, config) = create_test_setup(vec!["meteora_dammv2"]).await;
+
+    // Meteora DAMM V2 Pool: SOL-RALPH
+    let pool_address = Pubkey::from_str("DbyK8gEiXwNeh2zFW2Lo1svUQ1WkHAeQyNDsRaKQ6BHf").unwrap();
+    let token_b_mint = Pubkey::from_str("CxWPdDBqxVo3fnTMRTvNuSrd4gkp78udSrFvkVDBAGS").unwrap(); // RALPH
+
+    // Fetch real pool state
+    let rpc_client = pool_manager.get_rpc_client();
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch pool account");
+    let raw_pool = MeteoraDammV2PoolRaw::try_from_slice(&account.data)
+        .expect("Failed to deserialize DAMM V2 pool");
+
+    let pool_state =
+        PoolState::MeteoraDammV2(Box::new(crate::pool_data_types::MeteoraDammV2PoolState {
+            slot: 0,
+            transaction_index: Some(0),
+            address: pool_address,
+            pool_fees: raw_pool.pool_fees,
+            token_a_mint: raw_pool.token_a_mint,
+            token_b_mint: raw_pool.token_b_mint,
+            token_a_vault: raw_pool.token_a_vault,
+            token_b_vault: raw_pool.token_b_vault,
+            whitelisted_vault: raw_pool.whitelisted_vault,
+            partner: raw_pool.partner,
+            liquidity: raw_pool.liquidity,
+            protocol_a_fee: raw_pool.protocol_a_fee,
+            protocol_b_fee: raw_pool.protocol_b_fee,
+            partner_a_fee: raw_pool.partner_a_fee,
+            partner_b_fee: raw_pool.partner_b_fee,
+            sqrt_min_price: raw_pool.sqrt_min_price,
+            sqrt_max_price: raw_pool.sqrt_max_price,
+            sqrt_price: raw_pool.sqrt_price,
+            activation_point: raw_pool.activation_point,
+            activation_type: raw_pool.activation_type,
+            pool_status: raw_pool.pool_status,
+            token_a_flag: raw_pool.token_a_flag,
+            token_b_flag: raw_pool.token_b_flag,
+            collect_fee_mode: raw_pool.collect_fee_mode,
+            pool_type: raw_pool.pool_type,
+            version: raw_pool.version,
+            fee_a_per_liquidity: raw_pool.fee_a_per_liquidity,
+            fee_b_per_liquidity: raw_pool.fee_b_per_liquidity,
+            permanent_lock_liquidity: raw_pool.permanent_lock_liquidity,
+            metrics: raw_pool.metrics,
+            creator: raw_pool.creator,
+            reward_infos: raw_pool.reward_infos,
+            liquidity_usd: 1_000_000.0,
+            last_updated: u64::MAX,
+        }));
+
+    pool_manager.inject_pool(pool_state).await;
+
+    // Inject tokens
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: token_b_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    // Create App State
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+
+    // 2. Perform Quote (SOL -> RALPH)
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string(); // Random active wallet
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+    let amount_in = 100_000_000; // 0.1 SOL
+
+    let swap_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: Token {
+            address: token_b_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        input_amount: amount_in,
+        slippage_bps: 300,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    println!(
+        "Requesting Quote: {} -> {}",
+        swap_params.input_token.address, swap_params.output_token.address
+    );
+
+    let quote = aggregator
+        .get_swap_route(&swap_params)
+        .await
+        .expect("Failed to get buy quote");
+
+    // For single hop, we can assume route has 1 path, 1 step
+    let _step = &quote.paths[0].steps[0];
+    // Find the pool state again (we injected it, but aggregator might have cloned it)
+    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+
+    let instructions = pool
+        .build_swap_instruction(&swap_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build swap instruction");
+
+    println!("Simulating transaction...");
+    // Create transaction
+    let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let mut message = solana_sdk::message::Message::new(&instructions, Some(&payer));
+    message.recent_blockhash = recent_blockhash;
+    let transaction = Transaction::new_unsigned(message);
+
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::confirmed()),
+        encoding: None,
+        accounts: None,
+        min_context_slot: None,
+        inner_instructions: true,
+    };
+
+    let result = rpc_client
+        .simulate_transaction_with_config(&transaction, config)
+        .await
+        .expect("Simulation failed");
+
+    if let Some(err) = result.value.err {
+        println!("Simulation Logs: {:#?}", result.value.logs);
+        panic!("Simulation error: {:?}", err);
+    }
+
+    println!("Simulation successful! Logs: {:#?}", result.value.logs);
+}
+
+#[tokio::test]
+async fn test_meteora_damm_quote_simulation_reverse() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, _config) = create_test_setup(vec!["meteora_dammv2"]).await;
+
+    // Meteora DAMM V2 Pool: SOL-RALPH
+    let pool_address = Pubkey::from_str("DbyK8gEiXwNeh2zFW2Lo1svUQ1WkHAeQyNDsRaKQ6BHf").unwrap();
+    let token_b_mint = Pubkey::from_str("CxWPdDBqxVo3fnTMRTvNuSrd4gkp78udSrFvkVDBAGS").unwrap(); // RALPH
+
+    // Fetch real pool state
+    let rpc_client = pool_manager.get_rpc_client();
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch pool account");
+    let raw_pool = MeteoraDammV2PoolRaw::try_from_slice(&account.data)
+        .expect("Failed to deserialize DAMM V2 pool");
+
+    let pool_state =
+        PoolState::MeteoraDammV2(Box::new(crate::pool_data_types::MeteoraDammV2PoolState {
+            slot: 0,
+            transaction_index: Some(0),
+            address: pool_address,
+            pool_fees: raw_pool.pool_fees,
+            token_a_mint: raw_pool.token_a_mint,
+            token_b_mint: raw_pool.token_b_mint,
+            token_a_vault: raw_pool.token_a_vault,
+            token_b_vault: raw_pool.token_b_vault,
+            whitelisted_vault: raw_pool.whitelisted_vault,
+            partner: raw_pool.partner,
+            liquidity: raw_pool.liquidity,
+            protocol_a_fee: raw_pool.protocol_a_fee,
+            protocol_b_fee: raw_pool.protocol_b_fee,
+            partner_a_fee: raw_pool.partner_a_fee,
+            partner_b_fee: raw_pool.partner_b_fee,
+            sqrt_min_price: raw_pool.sqrt_min_price,
+            sqrt_max_price: raw_pool.sqrt_max_price,
+            sqrt_price: raw_pool.sqrt_price,
+            activation_point: raw_pool.activation_point,
+            activation_type: raw_pool.activation_type,
+            pool_status: raw_pool.pool_status,
+            token_a_flag: raw_pool.token_a_flag,
+            token_b_flag: raw_pool.token_b_flag,
+            collect_fee_mode: raw_pool.collect_fee_mode,
+            pool_type: raw_pool.pool_type,
+            version: raw_pool.version,
+            fee_a_per_liquidity: raw_pool.fee_a_per_liquidity,
+            fee_b_per_liquidity: raw_pool.fee_b_per_liquidity,
+            permanent_lock_liquidity: raw_pool.permanent_lock_liquidity,
+            metrics: raw_pool.metrics,
+            creator: raw_pool.creator,
+            reward_infos: raw_pool.reward_infos,
+            liquidity_usd: 1_000_000.0,
+            last_updated: u64::MAX,
+        }));
+
+    pool_manager.inject_pool(pool_state).await;
+
+    // Inject tokens
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: token_b_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string(); // Random active wallet
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+
+    // 1. First Buy RALPH with SOL to ensure we have valid input amount calculation
+    // Actually we can just simulate the Sell if we assume user has tokens.
+    // But for reverse calculation test, we simulate: Token -> SOL
+    let amount_in = 100_000_000; // 0.1 RALPH (assuming 9 decimals)
+
+    // 3. Build Transaction
+    let _swap_params = crate::types::SwapParams {
+        input_token: Token {
+            address: token_b_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        output_token: wsol_token(),
+        input_amount: amount_in,
+        slippage_bps: 50,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    // 4. Verification: Use Composite Transaction (Buy -> Sell) to ensure user has tokens
+    println!("Simulating Composite Transaction (Buy -> Sell)...");
+
+    // Find the pool state again
+    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+
+    // 4.1 Build BUY Instruction (SOL -> RALPH)
+    let buy_amount_in = 1_000_000_000; // 1 SOL
+    let buy_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: Token {
+            address: token_b_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        input_amount: buy_amount_in,
+        slippage_bps: 300,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let buy_instructions = pool
+        .build_swap_instruction(&buy_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build buy instruction");
+
+    // 4.2 Build SELL Instruction (RALPH -> SOL)
+    // We assume we get some RALPH from buy (approx price 1 SOL ~ X RALPH).
+    // Let's just sell what we asked to sell in original test, or a safe amount.
+    let sell_amount_in = amount_in; // 0.1 RALPH (from original test setup)
+
+    let sell_params = crate::types::SwapParams {
+        input_token: Token {
+            address: token_b_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        output_token: wsol_token(),
+        input_amount: sell_amount_in,
+        slippage_bps: 300,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let sell_instructions = pool
+        .build_swap_instruction(&sell_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build sell instruction");
+
+    // 4.3 Combine Instructions
+    let mut instructions = Vec::new();
+    instructions.extend(buy_instructions);
+    instructions.extend(sell_instructions);
+
+    // Create transaction
+    let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let mut message = solana_sdk::message::Message::new(&instructions, Some(&payer));
+    message.recent_blockhash = recent_blockhash;
+    let transaction = Transaction::new_unsigned(message);
+
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::confirmed()),
+        encoding: None,
+        accounts: None,
+        min_context_slot: None,
+        inner_instructions: true,
+    };
+
+    let result = rpc_client
+        .simulate_transaction_with_config(&transaction, config)
+        .await
+        .expect("Simulation failed");
+
+    if let Some(err) = result.value.err {
+        println!("Simulation Logs: {:#?}", result.value.logs);
+        panic!("Simulation error: {:?}", err);
+    }
+
+    println!("Simulation successful! Logs: {:#?}", result.value.logs);
 }

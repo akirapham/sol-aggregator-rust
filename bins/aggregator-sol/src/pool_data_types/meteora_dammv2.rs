@@ -7,7 +7,15 @@ pub use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dammv2:
 };
 use std::str::FromStr;
 
+use crate::utils::utils_functions::replace_key_in_instructions;
 use serde_with::{json::JsonString, serde_as, DisplayFromStr};
+use sol_trade_sdk::common::gas_fee_strategy::GasFeeStrategy;
+use sol_trade_sdk::instruction::meteora_damm_v2::MeteoraDammV2InstructionBuilder;
+use sol_trade_sdk::swqos::TradeType;
+use sol_trade_sdk::trading::core::params::{MeteoraDammV2Params, SwapParams as SdkSwapParams};
+use sol_trade_sdk::trading::core::traits::InstructionBuilder;
+use solana_sdk::signature::{Keypair, Signer};
+use std::sync::Arc;
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,7 +124,24 @@ impl MeteoraDammV2PoolState {
         let pool = cp_amm::state::Pool {
             pool_fees: cp_amm::state::fee::PoolFeesStruct {
                 base_fee: cp_amm::state::fee::BaseFeeStruct {
-                    base_fee_info: cp_amm::state::BaseFeeInfo::default(), // Use Default
+                    base_fee_info: cp_amm::state::BaseFeeInfo {
+                        data: {
+                            let mut data = [0u8; 32];
+                            data[0..8].copy_from_slice(
+                                &self.pool_fees.base_fee.cliff_fee_numerator.to_le_bytes(),
+                            );
+                            data[8] = 0; // Force mode 0 (ConstantProduct) as 254 is rejected by SDK
+                            data[9..14].copy_from_slice(&self.pool_fees.base_fee.padding_0);
+                            data[14..16].copy_from_slice(
+                                &self.pool_fees.base_fee.first_factor.to_le_bytes(),
+                            );
+                            data[16..24].copy_from_slice(&self.pool_fees.base_fee.second_factor);
+                            data[24..32].copy_from_slice(
+                                &self.pool_fees.base_fee.third_factor.to_le_bytes(),
+                            );
+                            data
+                        },
+                    },
                     // cliff_fee_numerator: self.pool_fees.base_fee.cliff_fee_numerator, // Removed
                     // base_fee_mode: self.pool_fees.base_fee.base_fee_mode, // Mapped above
                     // padding_0: self.pool_fees.base_fee.padding_0, // Removed
@@ -284,141 +309,181 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
-        let input_mint = params.input_token.address;
+        let dummy_keypair = Keypair::new();
+        let dummy_payer = Arc::new(dummy_keypair);
 
-        // Determine swap direction (a_to_b = true if input is token A)
-        let a_to_b = input_mint == self.token_a_mint;
-
-        // Determine token programs based on token flags
-        let token_a_program = if self.token_a_flag == 1 {
-            spl_token_2022::id()
-        } else {
-            spl_token::id()
-        };
-
-        let token_b_program = if self.token_b_flag == 1 {
-            spl_token_2022::id()
-        } else {
-            spl_token::id()
-        };
-
-        // Convert to anchor Pubkey for ATA derivation
-        let user_wallet_anchor = common_functions::to_pubkey(&params.user_wallet);
-        let token_a_mint_anchor = common_functions::to_pubkey(&self.token_a_mint);
-        let token_b_mint_anchor = common_functions::to_pubkey(&self.token_b_mint);
-
-        // Derive user token accounts
-        let user_token_a_account = get_associated_token_address_with_program_id(
-            &user_wallet_anchor,
-            &token_a_mint_anchor,
-            &token_a_program,
-        );
-        let user_token_b_account = get_associated_token_address_with_program_id(
-            &user_wallet_anchor,
-            &token_b_mint_anchor,
-            &token_b_program,
-        );
-
-        // Determine which account is input and which is output
-        let (input_token_account, output_token_account) = if a_to_b {
-            (user_token_a_account, user_token_b_account)
-        } else {
-            (user_token_b_account, user_token_a_account)
-        };
-
-        // Derive pool authority PDA
-        let program_id = Self::get_program_id();
-        let (pool_authority, _) = Pubkey::find_program_address(&[b"pool_authority"], &program_id);
-
-        // Derive event authority PDA (required for #[event_cpi])
-        let (event_authority, _) =
-            Pubkey::find_program_address(&[b"__event_authority"], &program_id);
+        // Helper to convert to Anchor Pubkey
+        let to_anchor = |bytes: [u8; 32]| anchor_lang::prelude::Pubkey::from(bytes);
+        // Helper to convert to Solana SDK Pubkey
+        let to_sdk = |bytes: [u8; 32]| solana_sdk::pubkey::Pubkey::new_from_array(bytes);
 
         // Calculate minimum output based on slippage
-        let estimated_output =
-            self.calculate_output_amount(&input_mint, params.input_amount, amm_config_fetcher);
+        let estimated_output = self.calculate_output_amount(
+            &params.input_token.address,
+            params.input_amount,
+            amm_config_fetcher,
+        );
 
-        let minimum_amount_out =
+        let amount_out =
             common_functions::calculate_slippage(estimated_output, params.slippage_bps)?;
 
-        let accounts = vec![
-            AccountMeta::new_readonly(pool_authority, false),
-            AccountMeta::new(self.address, false),
-            AccountMeta::new(common_functions::to_address(&input_token_account), false),
-            AccountMeta::new(common_functions::to_address(&output_token_account), false),
-            AccountMeta::new(self.token_a_vault, false),
-            AccountMeta::new(self.token_b_vault, false),
-            AccountMeta::new_readonly(self.token_a_mint, false),
-            AccountMeta::new_readonly(self.token_b_mint, false),
-            AccountMeta::new_readonly(params.user_wallet, true),
-            AccountMeta::new_readonly(common_functions::to_address(&token_a_program), false),
-            AccountMeta::new_readonly(common_functions::to_address(&token_b_program), false),
-            AccountMeta::new_readonly(program_id, false),
-            AccountMeta::new_readonly(event_authority, false),
-            AccountMeta::new_readonly(program_id, false),
-        ];
+        let protocol_params = Box::new(MeteoraDammV2Params {
+            pool: self.address,
+            token_a_vault: self.token_a_vault,
+            token_b_vault: self.token_b_vault,
+            token_a_mint: self.token_a_mint,
+            token_b_mint: self.token_b_mint,
+            token_a_program: if self.token_a_flag == 1 {
+                spl_token_2022::id().to_bytes().into()
+            } else {
+                spl_token::id().to_bytes().into()
+            },
+            token_b_program: if self.token_b_flag == 1 {
+                spl_token_2022::id().to_bytes().into()
+            } else {
+                spl_token::id().to_bytes().into()
+            },
+        });
 
-        // Build instruction data for swap2
-        // Discriminator for swap2: sha256("global:swap2")[:8]
-        let discriminator: [u8; 8] = [0x41, 0x4b, 0x3f, 0x4c, 0xeb, 0x5b, 0x5b, 0x88];
-        let swap_mode_exact_in: u8 = 0; // SwapMode::ExactIn
-
-        let args = SwapParameters2 {
-            amount_0: params.input_amount,
-            amount_1: minimum_amount_out,
-            swap_mode: swap_mode_exact_in,
-        };
-
-        let mut data = Vec::with_capacity(8 + 17); // 8 discriminator + 8 + 8 + 1
-        data.extend_from_slice(&discriminator);
-        args.serialize(&mut data).map_err(|e| e.to_string())?;
-
-        let swap_ix = Instruction {
-            program_id,
-            accounts,
-            data,
-        };
-
-        // Build instruction
-        let mut instructions = Vec::new();
-
-        // Determine which token program to use for input and output
-        let (input_token_program_id, output_token_program_id, input_mint, output_mint) = if a_to_b {
-            (
-                token_a_program,
-                token_b_program,
-                self.token_a_mint,
-                self.token_b_mint,
-            )
+        let trade_type = if params.input_token.address == self.token_b_mint {
+            TradeType::Buy
         } else {
-            (
-                token_b_program,
-                token_a_program,
-                self.token_b_mint,
-                self.token_a_mint,
-            )
+            TradeType::Sell
         };
 
-        // Create ATA for input token if needed (idempotent)
-        instructions.push(common_functions::create_ata_instruction(
-            params.user_wallet,
-            common_functions::to_address(&input_token_account),
-            input_mint,
-            input_token_program_id == spl_token_2022::id(),
-        ));
+        // Determine Program IDs (returns solana_program::Pubkey)
+        let input_program_id = if params.input_token.address == self.token_a_mint {
+            if self.token_a_flag == 1 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            }
+        } else {
+            if self.token_b_flag == 1 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            }
+        };
 
-        // Create ATA for output token if needed (idempotent)
-        instructions.push(common_functions::create_ata_instruction(
-            params.user_wallet,
-            common_functions::to_address(&output_token_account),
-            output_mint,
-            output_token_program_id == spl_token_2022::id(),
-        ));
+        let output_program_id = if params.output_token.address == self.token_a_mint {
+            if self.token_a_flag == 1 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            }
+        } else {
+            if self.token_b_flag == 1 {
+                spl_token_2022::id()
+            } else {
+                spl_token::id()
+            }
+        };
 
-        // Add swap instruction
-        instructions.push(swap_ix);
+        let sdk_params = SdkSwapParams {
+            rpc: None,
+            payer: dummy_payer.clone(),
+            trade_type,
+            input_mint: params.input_token.address,
+            input_token_program: None, // SDK should infer from protocol_params or default
+            output_mint: params.output_token.address,
+            output_token_program: None, // SDK should infer from protocol_params or default
+            input_amount: Some(params.input_amount),
+            slippage_basis_points: Some(params.slippage_bps as u64),
+            address_lookup_table_account: None,
+            recent_blockhash: None,
+            data_size_limit: 200_000,
+            wait_transaction_confirmed: false,
+            protocol_params,
+            open_seed_optimize: false,
+            swqos_clients: vec![],
+            middleware_manager: None,
+            durable_nonce: None,
+            with_tip: false,
+            create_input_mint_ata: false,
+            close_input_mint_ata: false,
+            create_output_mint_ata: true,
+            close_output_mint_ata: false,
+            fixed_output_amount: Some(amount_out),
+            gas_fee_strategy: GasFeeStrategy::new(),
+            simulate: false,
+        };
 
-        Ok(instructions)
+        let builder = MeteoraDammV2InstructionBuilder;
+
+        let instructions_future = if params.input_token.address == self.token_b_mint {
+            builder.build_buy_instructions(&sdk_params)
+        } else {
+            builder.build_sell_instructions(&sdk_params)
+        };
+
+        let mut instructions = instructions_future.await.map_err(|e| e.to_string())?;
+
+        // Patch Instructions: Replace Dummy Payer -> User Wallet
+        replace_key_in_instructions(
+            &mut instructions,
+            &dummy_payer.pubkey(),
+            &params.user_wallet,
+        );
+
+        // Patch Instructions: Replace Derived ATAs
+        // 1. Output ATA
+        let dummy_output_ata_anchor = get_associated_token_address_with_program_id(
+            &to_anchor(dummy_payer.pubkey().to_bytes()), // Anchor
+            &to_anchor(params.output_token.address.to_bytes()), // Anchor
+            &to_anchor(output_program_id.to_bytes()),    // Anchor
+        );
+        let user_output_ata_anchor = get_associated_token_address_with_program_id(
+            &to_anchor(params.user_wallet.to_bytes()),
+            &to_anchor(params.output_token.address.to_bytes()),
+            &to_anchor(output_program_id.to_bytes()),
+        );
+
+        let dummy_output_ata = to_sdk(dummy_output_ata_anchor.to_bytes());
+        let user_output_ata = to_sdk(user_output_ata_anchor.to_bytes());
+
+        replace_key_in_instructions(&mut instructions, &dummy_output_ata, &user_output_ata);
+
+        // 2. Input ATA
+        let dummy_input_ata_anchor = get_associated_token_address_with_program_id(
+            &to_anchor(dummy_payer.pubkey().to_bytes()),
+            &to_anchor(params.input_token.address.to_bytes()),
+            &to_anchor(input_program_id.to_bytes()),
+        );
+        let user_input_ata_anchor = get_associated_token_address_with_program_id(
+            &to_anchor(params.user_wallet.to_bytes()),
+            &to_anchor(params.input_token.address.to_bytes()),
+            &to_anchor(input_program_id.to_bytes()),
+        );
+
+        let dummy_input_ata = to_sdk(dummy_input_ata_anchor.to_bytes());
+        let user_input_ata = to_sdk(user_input_ata_anchor.to_bytes());
+
+        replace_key_in_instructions(&mut instructions, &dummy_input_ata, &user_input_ata);
+
+        // Handle WSOL Wrapping/Unwrapping logic
+        let mut final_instructions = Vec::new();
+        let wsol_mint = "So11111111111111111111111111111111111111112";
+        let is_input_wsol = params.input_token.address.to_string() == wsol_mint;
+        let is_output_wsol = params.output_token.address.to_string() == wsol_mint;
+
+        if is_input_wsol {
+            final_instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
+                &params.user_wallet,
+                params.input_amount,
+            ));
+        }
+
+        final_instructions.extend(instructions);
+
+        if is_output_wsol {
+            final_instructions.extend(sol_trade_sdk::trading::common::close_wsol(
+                &params.user_wallet,
+            ));
+        }
+
+        Ok(final_instructions)
     }
 }

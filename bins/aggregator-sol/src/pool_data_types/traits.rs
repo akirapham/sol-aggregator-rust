@@ -22,11 +22,15 @@ pub trait GetAmmConfig: Send + Sync {
 use crate::types::SwapParams;
 use solana_sdk::instruction::Instruction;
 
+use solana_client::nonblocking::rpc_client::RpcClient;
+use std::sync::Arc;
+
 #[async_trait]
 pub trait BuildSwapInstruction: Send + Sync {
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
+        rpc_client: Option<&Arc<RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String>;
 }

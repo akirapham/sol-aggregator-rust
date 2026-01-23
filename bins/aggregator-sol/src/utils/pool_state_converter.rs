@@ -242,6 +242,7 @@ pub fn pool_update_event_to_pool_state(
                     platform_fee: bonk_pool_update.platform_fee,
                     global_config: bonk_pool_update.global_config,
                     platform_config: bonk_pool_update.platform_config,
+                    platform_fee_wallet: Pubkey::default(),
                     base_mint: bonk_pool_update.base_mint,
                     quote_mint: bonk_pool_update.quote_mint,
                     base_vault: bonk_pool_update.base_vault,

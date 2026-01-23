@@ -30,6 +30,7 @@ pub struct PoolsResponse {
 
 #[derive(Deserialize, Serialize, Validate)]
 pub struct QuoteRequest {
+    #[serde(rename = "inputMint")]
     #[validate(length(
         min = 32,
         max = 44,
@@ -37,6 +38,7 @@ pub struct QuoteRequest {
     ))]
     pub input_token: String,
 
+    #[serde(rename = "outputMint")]
     #[validate(length(
         min = 32,
         max = 44,
@@ -44,6 +46,7 @@ pub struct QuoteRequest {
     ))]
     pub output_token: String,
 
+    #[serde(rename = "userPublicKey")]
     #[validate(length(
         min = 32,
         max = 44,
@@ -51,9 +54,11 @@ pub struct QuoteRequest {
     ))]
     pub user_wallet: String,
 
+    #[serde(rename = "amount")]
     #[validate(range(min = 1, message = "Input amount must be greater than 0"))]
     pub input_amount: u64,
 
+    #[serde(rename = "slippageBps")]
     #[validate(range(
         min = 0,
         max = 10000,

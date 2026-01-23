@@ -60,7 +60,7 @@ pub fn create_router(
     // Public routes (no auth required)
     Router::new()
         .route("/health", get(handlers::health_check))
-        .route("/quote", post(handlers::get_quote))
+        .route("/quote", get(handlers::get_quote))
         .route("/pools/{token0}/{token1}", get(handlers::get_pools))
         .route(
             "/token/{token_address}/pools",

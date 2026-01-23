@@ -258,10 +258,12 @@ async fn test_bonk_quote_simulation() {
         quote_mint, base_mint, amount_in
     );
 
-    let result =
-        crate::api::handlers::get_quote(axum::extract::State(state.clone()), axum::Json(request))
-            .await
-            .expect("Quote request failed");
+    let result = crate::api::handlers::get_quote(
+        axum::extract::State(state.clone()),
+        axum::extract::Query(request),
+    )
+    .await
+    .expect("Quote request failed");
 
     let response = match result {
         axum::Json(res) => res,
@@ -429,7 +431,7 @@ async fn test_bonk_quote_simulation_reverse() {
     println!("Requesting Buy Quote (USD -> BONK)...");
     let buy_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(buy_request),
+        axum::extract::Query(buy_request),
     )
     .await
     .expect("Buy quote failed");
@@ -461,7 +463,7 @@ async fn test_bonk_quote_simulation_reverse() {
     println!("Requesting Sell Quote (BONK -> USD)...");
     let sell_result = crate::api::handlers::get_quote(
         axum::extract::State(state.clone()),
-        axum::Json(sell_request),
+        axum::extract::Query(sell_request),
     )
     .await
     .expect("Sell quote failed");

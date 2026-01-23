@@ -10,7 +10,7 @@ use crate::types::SwapStep;
 use crate::types::{ExecutionPriority, SwapParams};
 use crate::utils::tokens_equal;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -114,7 +114,7 @@ pub async fn get_pool_stats(
 
 pub async fn get_quote(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<QuoteRequest>,
+    Query(request): Query<QuoteRequest>,
 ) -> Result<Json<QuoteResponse>, (StatusCode, Json<ErrorResponse>)> {
     let start_time = Instant::now();
 

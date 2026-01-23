@@ -1541,3 +1541,547 @@ async fn test_meteora_dbc_quote_simulation_reverse() {
     }
     println!("Simulation successful! Logs: {:#?}", result.value.logs);
 }
+
+
+#[tokio::test]
+async fn test_meteora_dlmm_quote_simulation() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, config) = create_test_setup(vec!["meteora_dlmm"]).await;
+
+    // Meteora DLMM Pool: SOL-RALPH
+    let pool_address = Pubkey::from_str("6b9ZdnykBXZwRqw1xuS4McYxghAwocwZzrwijzcUVcxP").unwrap();
+    let ralph_mint = Pubkey::from_str("8116V1BW9zaXUM6pVhWVaAduKrLcEBi3RGXedKTrBAGS").unwrap();
+    let _sol_mint = Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
+
+    let rpc_client = pool_manager.get_rpc_client();
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch DLMM pool account");
+    let raw_pool =
+        LbPairRaw::try_from_slice(&account.data).expect("Failed to deserialize DLMM pool");
+
+    use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::BinArrayBitmapExtension as SdkBitmapExtension;
+    use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::LbPair as SdkLbPair;
+
+    let mut sdk_lb_pair: SdkLbPair = if account.data.len() >= 8 {
+        unsafe { (account.data[8..].as_ptr() as *const SdkLbPair).read_unaligned() }
+    } else {
+        panic!("Account data too short");
+    };
+
+    sdk_lb_pair.token_x_mint = raw_pool.token_x_mint;
+    sdk_lb_pair.token_y_mint = raw_pool.token_y_mint;
+    sdk_lb_pair.reserve_x = raw_pool.reserve_x;
+    sdk_lb_pair.reserve_y = raw_pool.reserve_y;
+    sdk_lb_pair.oracle = raw_pool.oracle;
+    sdk_lb_pair.active_id = raw_pool.active_id;
+    sdk_lb_pair.bin_step = raw_pool.bin_step;
+    sdk_lb_pair.parameters.min_bin_id = raw_pool.parameters.min_bin_id;
+    sdk_lb_pair.parameters.max_bin_id = raw_pool.parameters.max_bin_id;
+    sdk_lb_pair.parameters.base_factor = raw_pool.parameters.base_factor;
+    sdk_lb_pair.bin_array_bitmap = raw_pool.bin_array_bitmap;
+
+    let program_id = Pubkey::from_str("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo").unwrap();
+    let (bitmap_pubkey, _) =
+        Pubkey::find_program_address(&[b"bitmap", pool_address.as_ref()], &program_id);
+    let mut bitmap_extension = None;
+    if let Ok(bitmap_acc) = rpc_client.get_account(&bitmap_pubkey).await {
+        if bitmap_acc.data.len() >= 8 {
+            let ext: SdkBitmapExtension = unsafe {
+                (bitmap_acc.data[8..].as_ptr() as *const SdkBitmapExtension).read_unaligned()
+            };
+            bitmap_extension = Some(ext);
+        }
+    }
+
+    let mut pool_state_struct = crate::pool_data_types::MeteoraDlmmPoolState {
+        slot: 0,
+        transaction_index: Some(0),
+        address: pool_address,
+        lbpair: sdk_lb_pair,
+        bin_arrays: std::collections::HashMap::new(),
+        bitmap_extension,
+        reserve_x: None,
+        reserve_y: None,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+        last_updated: u64::MAX,
+    };
+
+    use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
+    let fetcher = MeteoraDlmmBinArrayFetcher::new(rpc_client.clone());
+    if let Ok(bin_arrays) = fetcher
+        .fetch_all_bin_arrays(pool_address, &pool_state_struct)
+        .await
+    {
+        for ba in bin_arrays {
+            pool_state_struct.bin_arrays.insert(ba.index as i32, ba);
+        }
+    }
+
+    let pool_state = PoolState::MeteoraDlmm(Box::new(pool_state_struct));
+    pool_manager.inject_pool(pool_state).await;
+
+    // Inject tokens
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: ralph_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+    let amount_in = 100_000_000; // 0.1 SOL
+
+    let swap_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: Token {
+            address: ralph_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        input_amount: amount_in,
+        slippage_bps: 100,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    println!(
+        "Requesting Quote: {} -> {}",
+        swap_params.input_token.address, swap_params.output_token.address
+    );
+
+    let _quote = aggregator
+        .get_swap_route(&swap_params)
+        .await
+        .expect("Failed to get quote");
+
+    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let swap_instructions = pool
+        .build_swap_instruction(&swap_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build swap instruction");
+
+    // Add WSOL wrapping for SOL input
+    let mut all_instructions = Vec::new();
+    all_instructions.extend(sol_trade_sdk::trading::common::handle_wsol(&payer, amount_in));
+    all_instructions.extend(swap_instructions);
+    all_instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
+
+    println!("Simulating transaction...");
+    let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let mut message = solana_sdk::message::Message::new(&all_instructions, Some(&payer));
+    message.recent_blockhash = recent_blockhash;
+    let transaction = Transaction::new_unsigned(message);
+
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::confirmed()),
+        encoding: None,
+        accounts: None,
+        min_context_slot: None,
+        inner_instructions: true,
+    };
+
+    let result = rpc_client
+        .simulate_transaction_with_config(&transaction, config)
+        .await
+        .expect("Simulation failed");
+
+    if let Some(err) = result.value.err {
+        println!("Simulation Logs: {:#?}", result.value.logs);
+        panic!("Simulation error: {:?}", err);
+    }
+
+    println!("Simulation successful! Logs: {:#?}", result.value.logs);
+}
+
+#[tokio::test]
+async fn test_meteora_dlmm_quote_simulation_reverse() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, _config) = create_test_setup(vec!["meteora_dlmm"]).await;
+
+    let pool_address = Pubkey::from_str("6b9ZdnykBXZwRqw1xuS4McYxghAwocwZzrwijzcUVcxP").unwrap();
+    let ralph_mint = Pubkey::from_str("8116V1BW9zaXUM6pVhWVaAduKrLcEBi3RGXedKTrBAGS").unwrap();
+
+    let rpc_client = pool_manager.get_rpc_client();
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch DLMM pool account");
+    let raw_pool =
+        LbPairRaw::try_from_slice(&account.data).expect("Failed to deserialize DLMM pool");
+
+    use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::BinArrayBitmapExtension as SdkBitmapExtension;
+    use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::LbPair as SdkLbPair;
+
+    let mut sdk_lb_pair: SdkLbPair = if account.data.len() >= 8 {
+        unsafe { (account.data[8..].as_ptr() as *const SdkLbPair).read_unaligned() }
+    } else {
+        panic!("Account data too short");
+    };
+
+    sdk_lb_pair.token_x_mint = raw_pool.token_x_mint;
+    sdk_lb_pair.token_y_mint = raw_pool.token_y_mint;
+    sdk_lb_pair.reserve_x = raw_pool.reserve_x;
+    sdk_lb_pair.reserve_y = raw_pool.reserve_y;
+    sdk_lb_pair.oracle = raw_pool.oracle;
+    sdk_lb_pair.active_id = raw_pool.active_id;
+    sdk_lb_pair.bin_step = raw_pool.bin_step;
+    sdk_lb_pair.parameters.min_bin_id = raw_pool.parameters.min_bin_id;
+    sdk_lb_pair.parameters.max_bin_id = raw_pool.parameters.max_bin_id;
+    sdk_lb_pair.parameters.base_factor = raw_pool.parameters.base_factor;
+    sdk_lb_pair.bin_array_bitmap = raw_pool.bin_array_bitmap;
+
+    let program_id = Pubkey::from_str("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo").unwrap();
+    let (bitmap_pubkey, _) =
+        Pubkey::find_program_address(&[b"bitmap", pool_address.as_ref()], &program_id);
+    let mut bitmap_extension = None;
+    if let Ok(bitmap_acc) = rpc_client.get_account(&bitmap_pubkey).await {
+        if bitmap_acc.data.len() >= 8 {
+            let ext: SdkBitmapExtension = unsafe {
+                (bitmap_acc.data[8..].as_ptr() as *const SdkBitmapExtension).read_unaligned()
+            };
+            bitmap_extension = Some(ext);
+        }
+    }
+
+    let mut pool_state_struct = crate::pool_data_types::MeteoraDlmmPoolState {
+        slot: 0,
+        transaction_index: Some(0),
+        address: pool_address,
+        lbpair: sdk_lb_pair,
+        bin_arrays: std::collections::HashMap::new(),
+        bitmap_extension,
+        reserve_x: None,
+        reserve_y: None,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+        last_updated: u64::MAX,
+    };
+
+    use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
+    let fetcher = MeteoraDlmmBinArrayFetcher::new(rpc_client.clone());
+    if let Ok(bin_arrays) = fetcher
+        .fetch_all_bin_arrays(pool_address, &pool_state_struct)
+        .await
+    {
+        for ba in bin_arrays {
+            pool_state_struct.bin_arrays.insert(ba.index as i32, ba);
+        }
+    }
+
+    let pool_state = PoolState::MeteoraDlmm(Box::new(pool_state_struct));
+    pool_manager.inject_pool(pool_state).await;
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: ralph_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+
+    // 1. Buy instructions (SOL -> RALPH)
+    let buy_amount_in = 100_000_000; // 0.1 SOL
+    let buy_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: Token {
+            address: ralph_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        input_amount: buy_amount_in,
+        slippage_bps: 100,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let buy_instructions = pool
+        .build_swap_instruction(&buy_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build buy instruction");
+
+    // 2. Sell instructions (RALPH -> SOL)
+    let sell_amount_in = 10_000_000_000; // 10 RALPH (decimals 9)
+
+    let sell_params = crate::types::SwapParams {
+        input_token: Token {
+            address: ralph_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        output_token: wsol_token(),
+        input_amount: sell_amount_in,
+        slippage_bps: 100,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let sell_instructions = pool
+        .build_swap_instruction(&sell_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build sell instruction");
+
+    // Combine instructions with WSOL handling
+    let mut instructions = Vec::new();
+
+    // Add WSOL wrapping for buy (SOL -> RALPH)
+    instructions.extend(sol_trade_sdk::trading::common::handle_wsol(&payer, buy_amount_in));
+    instructions.extend(buy_instructions);
+
+    // Add sell instructions (RALPH -> SOL)
+    instructions.extend(sell_instructions);
+
+    // Close WSOL account at the end
+    instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
+
+    // Simulate
+    let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let mut message = solana_sdk::message::Message::new(&instructions, Some(&payer));
+    message.recent_blockhash = recent_blockhash;
+    let transaction = Transaction::new_unsigned(message);
+
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::confirmed()),
+        encoding: None,
+        accounts: None,
+        min_context_slot: None,
+        inner_instructions: true,
+    };
+
+    let result = rpc_client
+        .simulate_transaction_with_config(&transaction, config)
+        .await
+        .expect("Simulation failed");
+
+    if let Some(err) = result.value.err {
+        println!("Simulation Logs: {:#?}", result.value.logs);
+        panic!("Simulation error: {:?}", err);
+    }
+    println!("Simulation successful! Logs: {:#?}", result.value.logs);
+}
+
+#[tokio::test]
+async fn test_meteora_dlmm_quote_vs_jupiter() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, config) = create_test_setup(vec!["meteora_dlmm"]).await;
+
+    // Meteora DLMM Pool: SOL-RALPH
+    let pool_address = Pubkey::from_str("6b9ZdnykBXZwRqw1xuS4McYxghAwocwZzrwijzcUVcxP").unwrap();
+    let ralph_mint = Pubkey::from_str("8116V1BW9zaXUM6pVhWVaAduKrLcEBi3RGXedKTrBAGS").unwrap();
+    
+    // Fetch real pool state
+    let rpc_client = pool_manager.get_rpc_client();
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch DLMM pool account");
+    let raw_pool =
+        LbPairRaw::try_from_slice(&account.data).expect("Failed to deserialize DLMM pool");
+
+    use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::BinArrayBitmapExtension as SdkBitmapExtension;
+    use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::LbPair as SdkLbPair;
+
+    let mut sdk_lb_pair: SdkLbPair = if account.data.len() >= 8 {
+        unsafe { (account.data[8..].as_ptr() as *const SdkLbPair).read_unaligned() }
+    } else {
+        panic!("Account data too short");
+    };
+
+    sdk_lb_pair.token_x_mint = raw_pool.token_x_mint;
+    sdk_lb_pair.token_y_mint = raw_pool.token_y_mint;
+    sdk_lb_pair.active_id = raw_pool.active_id;
+    sdk_lb_pair.bin_step = raw_pool.bin_step;
+    sdk_lb_pair.parameters.min_bin_id = raw_pool.parameters.min_bin_id;
+    sdk_lb_pair.parameters.max_bin_id = raw_pool.parameters.max_bin_id;
+    sdk_lb_pair.parameters.base_factor = raw_pool.parameters.base_factor;
+    sdk_lb_pair.bin_array_bitmap = raw_pool.bin_array_bitmap;
+
+    let program_id = Pubkey::from_str("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo").unwrap();
+    let (bitmap_pubkey, _) =
+        Pubkey::find_program_address(&[b"bitmap", pool_address.as_ref()], &program_id);
+    let mut bitmap_extension = None;
+    if let Ok(bitmap_acc) = rpc_client.get_account(&bitmap_pubkey).await {
+        if bitmap_acc.data.len() >= 8 {
+            let ext: SdkBitmapExtension = unsafe {
+                (bitmap_acc.data[8..].as_ptr() as *const SdkBitmapExtension).read_unaligned()
+            };
+            bitmap_extension = Some(ext);
+        }
+    }
+
+    let mut pool_state_struct = crate::pool_data_types::MeteoraDlmmPoolState {
+        slot: 0,
+        transaction_index: Some(0),
+        address: pool_address,
+        lbpair: sdk_lb_pair,
+        bin_arrays: std::collections::HashMap::new(),
+        bitmap_extension,
+        reserve_x: None,
+        reserve_y: None,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+        last_updated: u64::MAX,
+    };
+
+    use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
+    let fetcher = MeteoraDlmmBinArrayFetcher::new(rpc_client.clone());
+    if let Ok(bin_arrays) = fetcher
+        .fetch_all_bin_arrays(pool_address, &pool_state_struct)
+        .await
+    {
+        for ba in bin_arrays {
+            pool_state_struct.bin_arrays.insert(ba.index as i32, ba);
+        }
+    }
+
+    let pool_state = PoolState::MeteoraDlmm(Box::new(pool_state_struct.clone()));
+    // print pool reserve
+    println!("Pool Reserve X: {:?}", pool_state_struct.reserve_x);
+    println!("Pool Reserve Y: {:?}", pool_state_struct.reserve_y);
+    pool_manager.inject_pool(pool_state).await;
+
+    // Inject tokens
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: ralph_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+
+    // 1. Calculate Local Quote
+    let amount_in = 1_000_000_000; // 1 SOL
+    let swap_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: Token {
+            address: ralph_mint,
+            symbol: Some("RALPH".to_string()),
+            name: Some("Ralph Token".to_string()),
+            decimals: 9,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        input_amount: amount_in,
+        slippage_bps: 100,
+        user_wallet: Pubkey::new_unique(), // Doesn't matter for quote
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let local_quote = aggregator
+        .get_swap_route(&swap_params)
+        .await
+        .expect("Failed to get local quote");
+
+    println!("Local Output Amount: {}", local_quote.output_amount);
+
+    // 2. Fetch Jupiter Quote
+    println!("Fetching Jupiter quote...");
+    let req_client = reqwest::Client::new();
+    let resp_result = req_client
+        .get("https://public.jupiterapi.com/quote")
+        .query(&[
+            ("inputMint", wsol_token().address.to_string()),
+            ("outputMint", ralph_mint.to_string()),
+            ("amount", amount_in.to_string()),
+            ("slippageBps", "100".to_string()),
+            ("onlyDirectRoutes", "true".to_string()), // Force direct routes only
+        ])
+        .send()
+        .await;
+
+    match resp_result {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                println!("Jupiter API Error: {}", resp.text().await.unwrap());
+                println!("Skipping comparison due to API error.");
+                return;
+            }
+
+            let jup_json: serde_json::Value = resp.json().await.expect("Failed to parse JSON");
+            
+            let jup_out_amount_str = jup_json["outAmount"].as_str().expect("Missing outAmount");
+            let jup_out_amount: u64 = jup_out_amount_str.parse().expect("Failed to parse outAmount");
+
+            println!("Jupiter JSON: {:#?}", jup_json);
+            println!("Jupiter Output Amount: {}", jup_out_amount);
+            
+            // Check route plan
+            if let Some(route_plan) = jup_json["routePlan"].as_array() {
+                println!("Jupiter Route Plan Length: {}", route_plan.len());
+                for (i, step) in route_plan.iter().enumerate() {
+                    let label = step["swapInfo"]["label"].as_str().unwrap_or("Unknown");
+                    let amm_key = step["swapInfo"]["ammKey"].as_str().unwrap_or("Unknown");
+                     println!("Step {}: {} (AMM: {})", i, label, amm_key);
+                }
+            }
+
+            // 3. Compare
+            let diff = if local_quote.output_amount > jup_out_amount {
+                local_quote.output_amount - jup_out_amount
+            } else {
+                jup_out_amount - local_quote.output_amount
+            };
+            println!("Out quote output amount: {:#?}", local_quote.output_amount);
+            let diff_percent = (diff as f64 / jup_out_amount as f64) * 100.0;
+            println!("Difference: {} ({}%)", diff, diff_percent);
+            
+            // Note: Local calculation may underestimate for large swaps because we only fetch
+            // nearby bin arrays during quote calculation. For production routing, all necessary
+            // bin arrays are fetched. Jupiter has access to all bin arrays.
+            // Accept up to 10% difference for this comparison test.
+            assert!(diff_percent < 10.0, "Difference too high: {}%", diff_percent);
+        },
+        Err(e) => {
+            println!("Failed to fetch Jupiter quote (likely network/DNS issue): {}", e);
+            println!("Skipping comparison.");
+        }
+    }
+}

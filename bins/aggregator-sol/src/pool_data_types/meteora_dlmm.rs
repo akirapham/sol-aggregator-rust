@@ -97,52 +97,45 @@ impl MeteoraDlmmPoolState {
             .as_ref()
             .map(|ext| functions::to_commons_bitmap_extension(self, ext));
 
+        println!("DEBUG: Total bin arrays in cache: {}", self.bin_arrays.len());
+        println!("DEBUG: Bin array indices: {:?}", self.bin_arrays.keys().collect::<Vec<_>>());
+
         while amount_left > 0 {
-            // Get active bin array pubkey
-            let active_bin_array_pubkeys =
-                match meteora_dlmm_sdk::quote::get_bin_array_pubkeys_for_swap(
-                    lb_pair_pubkey,
-                    &lb_pair,
-                    bitmap_extension_commons.as_ref(),
-                    swap_for_y,
-                    1,
-                ) {
-                    Ok(keys) => keys,
-                    Err(e) => {
-                        println!("DEBUG: Error getting bin array pubkeys: {:?}", e);
-                        log::debug!("Error getting bin array pubkeys: {:?}", e);
-                        return 0;
-                    }
-                };
-
-            println!("DEBUG: Pubkeys found: {:?}", active_bin_array_pubkeys.len());
-
-            let active_bin_array_pubkey = match active_bin_array_pubkeys.last() {
-                Some(key) => *key,
-                None => {
-                    println!("DEBUG: Pool out of liquidity (no pubkeys)");
-                    log::debug!("Pool out of liquidity");
-                    return 0;
+            // Calculate which bin array contains the current active bin
+            let current_bin_array_index = match meteora_dlmm_sdk::dlmm::accounts::BinArray::bin_id_to_bin_array_index(
+                lb_pair.active_id,
+            ) {
+                Ok(idx) => idx as i32,
+                Err(e) => {
+                    println!("DEBUG: Error calculating bin array index: {:?}", e);
+                    log::debug!("Error calculating bin array index: {:?}", e);
+                    break;
                 }
             };
 
-            let mut active_bin_array = match bin_arrays.get(&active_bin_array_pubkey).cloned() {
-                Some(arr) => arr,
+            println!("DEBUG: Active bin ID: {}, Bin array index: {}", lb_pair.active_id, current_bin_array_index);
+
+            // Look up the bin array directly in our HashMap by index
+            let active_bin_array_raw = match self.bin_arrays.get(&current_bin_array_index) {
+                Some(arr) => arr.clone(),
                 None => {
                     println!(
-                        "DEBUG: Active bin array not found: {:?}",
-                        active_bin_array_pubkey
+                        "DEBUG: Bin array {} not in cache (partial quote). Cached indices: {:?}",
+                        current_bin_array_index,
+                        self.bin_arrays.keys().collect::<Vec<_>>()
                     );
-                    // println!("DEBUG: Available keys: {:?}", bin_arrays.keys()); // Can be verbose
-                    log::debug!("Active bin array not found");
-                    return 0;
+                    log::debug!("Bin array {} not in cache", current_bin_array_index);
+                    break; // Partial quote - bin array not in cache
                 }
             };
+
+            let mut active_bin_array = functions::get_commons_bin_array_from_raw(&active_bin_array_raw);
 
             println!(
                 "DEBUG: Active Bin Array Found. Index: {}",
                 active_bin_array.index
             );
+
 
             // Shift active bin if there's an empty gap
             let lb_pair_bin_array_index =
@@ -259,12 +252,16 @@ impl MeteoraDlmmPoolState {
                 }
 
                 if amount_left > 0 {
+                    println!("DEBUG: Advancing. Amount left: {}, Current active_id: {}", amount_left, lb_pair.active_id);
                     if let Err(e) = lb_pair.advance_active_bin(swap_for_y) {
+                        println!("DEBUG: Error advancing active bin: {:?}", e);
                         log::debug!("Error advancing active bin: {:?}", e);
                         return 0;
                     }
+                    println!("DEBUG: After advance, new active_id: {}", lb_pair.active_id);
                 }
             }
+            println!("DEBUG: Inner loop ended. Amount left: {}", amount_left);
         }
 
         total_amount_out

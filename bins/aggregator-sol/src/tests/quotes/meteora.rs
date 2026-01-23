@@ -1173,3 +1173,371 @@ async fn test_meteora_damm_quote_simulation_reverse() {
 
     println!("Simulation successful! Logs: {:#?}", result.value.logs);
 }
+
+#[tokio::test]
+async fn test_meteora_dbc_quote_simulation() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, config) = create_test_setup(vec!["meteora_dbc"]).await;
+
+    // Meteora DBC Pool: SOL-Token
+    // Pool Address: 6pd7brdZYj8V7Rgo4trnHEvbokc5EjzxZTP1NdMk9sWu
+    let pool_address = Pubkey::from_str("6pd7brdZYj8V7Rgo4trnHEvbokc5EjzxZTP1NdMk9sWu").unwrap();
+    let token_mint = Pubkey::from_str("6yXTqNnj8PGbJosD6dvpQLFVxaDNpkQmPo7fMxLeUh6A").unwrap();
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url,
+    ));
+
+    // Fetch real pool state
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch pool account");
+
+    // Deserialize Meteora DBC pool state (skip 8-byte discriminator)
+    let dbc_pool = MeteoraDbcPoolRaw::try_from_slice(&account.data[8..8 + VIRTUAL_POOL_SIZE])
+        .expect("Failed to deserialize Meteora DBC pool");
+
+    // Fetch PoolConfig
+    let config_account = rpc_client
+        .get_account(&dbc_pool.config)
+        .await
+        .expect("Failed to fetch Meteora DBC config account");
+    let dbc_config =
+        MeteoraDbcConfigRaw::try_from_slice(&config_account.data[8..8 + POOL_CONFIG_SIZE])
+            .expect("Failed to deserialize Meteora DBC config");
+
+    // Fetch token vault accounts to get real reserves
+    let vault_base_account = rpc_client
+        .get_account(&dbc_pool.base_vault)
+        .await
+        .expect("Failed to fetch base vault");
+    let vault_quote_account = rpc_client
+        .get_account(&dbc_pool.quote_vault)
+        .await
+        .expect("Failed to fetch quote vault");
+
+    let base_reserve = u64::from_le_bytes(vault_base_account.data[64..72].try_into().unwrap());
+    let quote_reserve = u64::from_le_bytes(vault_quote_account.data[64..72].try_into().unwrap());
+
+    let pool_state = PoolState::MeteoraDbc(Box::new(DbcPoolState {
+        slot: 100,
+        transaction_index: None,
+        address: pool_address,
+        config: dbc_pool.config,
+        creator: dbc_pool.creator,
+        base_mint: dbc_pool.base_mint,
+        base_vault: dbc_pool.base_vault,
+        quote_vault: dbc_pool.quote_vault,
+        base_reserve,
+        quote_reserve,
+        protocol_base_fee: dbc_pool.protocol_base_fee,
+        protocol_quote_fee: dbc_pool.protocol_quote_fee,
+        partner_base_fee: dbc_pool.partner_base_fee,
+        partner_quote_fee: dbc_pool.partner_quote_fee,
+        sqrt_price: dbc_pool.sqrt_price,
+        activation_point: dbc_pool.activation_point,
+        pool_type: dbc_pool.pool_type,
+        is_migrated: dbc_pool.is_migrated,
+        is_partner_withdraw_surplus: dbc_pool.is_partner_withdraw_surplus,
+        is_protocol_withdraw_surplus: dbc_pool.is_protocol_withdraw_surplus,
+        migration_progress: dbc_pool.migration_progress,
+        is_withdraw_leftover: dbc_pool.is_withdraw_leftover,
+        is_creator_withdraw_surplus: dbc_pool.is_creator_withdraw_surplus,
+        migration_fee_withdraw_status: dbc_pool.migration_fee_withdraw_status,
+        finish_curve_timestamp: dbc_pool.finish_curve_timestamp,
+        creator_base_fee: dbc_pool.creator_base_fee,
+        creator_quote_fee: dbc_pool.creator_quote_fee,
+        liquidity_usd: 1_000_000.0,
+        last_updated: u64::MAX,
+        pool_config: Some(dbc_config.clone()),
+        volatility_tracker: Some(dbc_pool.volatility_tracker),
+    }));
+
+    pool_manager.inject_pool(pool_state).await;
+
+    // Inject tokens
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: token_mint,
+            symbol: Some("TOKEN".to_string()),
+            name: Some("Meteora DBC Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    // Create App State
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+
+    // Perform Quote (SOL -> Token)
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string(); // Random active wallet
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+    let amount_in = 1_000_000_000; // 1 SOL
+
+    let swap_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: Token {
+            address: token_mint,
+            symbol: Some("TOKEN".to_string()),
+            name: Some("Meteora DBC Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        input_amount: amount_in,
+        slippage_bps: 100,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    println!(
+        "Requesting Quote: {} -> {}",
+        swap_params.input_token.address, swap_params.output_token.address
+    );
+
+    let quote = aggregator
+        .get_swap_route(&swap_params)
+        .await
+        .expect("Failed to get buy quote");
+
+    // Get instructions
+    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let mut instructions = pool
+        .build_swap_instruction(&swap_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build swap instruction");
+
+    // Add WSOL wrapping for SOL input (prepend to instructions)
+    let wsol_instructions = sol_trade_sdk::trading::common::handle_wsol(&payer, amount_in);
+    let mut all_instructions = Vec::new();
+    all_instructions.extend(wsol_instructions);
+    all_instructions.extend(instructions);
+    // Add WSOL unwrapping (close WSOL account)
+    all_instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
+
+    println!("Simulating transaction...");
+    // Create transaction
+    let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let mut message = solana_sdk::message::Message::new(&all_instructions, Some(&payer));
+    message.recent_blockhash = recent_blockhash;
+    let transaction = Transaction::new_unsigned(message);
+
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::confirmed()),
+        encoding: None,
+        accounts: None,
+        min_context_slot: None,
+        inner_instructions: true,
+    };
+
+    let result = rpc_client
+        .simulate_transaction_with_config(&transaction, config)
+        .await
+        .expect("Simulation failed");
+
+    if let Some(err) = result.value.err {
+        println!("Simulation Logs: {:#?}", result.value.logs);
+        panic!("Simulation error: {:?}", err);
+    }
+
+    println!("Simulation successful! Logs: {:#?}", result.value.logs);
+}
+
+#[tokio::test]
+async fn test_meteora_dbc_quote_simulation_reverse() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, config) = create_test_setup(vec!["meteora_dbc"]).await;
+
+    // Meteora DBC Pool: SOL-Token
+    let pool_address = Pubkey::from_str("6pd7brdZYj8V7Rgo4trnHEvbokc5EjzxZTP1NdMk9sWu").unwrap();
+    let token_mint = Pubkey::from_str("6yXTqNnj8PGbJosD6dvpQLFVxaDNpkQmPo7fMxLeUh6A").unwrap();
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url,
+    ));
+
+    // Fetch real pool state
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch pool account");
+    let dbc_pool = MeteoraDbcPoolRaw::try_from_slice(&account.data[8..8 + VIRTUAL_POOL_SIZE])
+        .expect("Failed to deserialize Meteora DBC pool");
+
+    let config_account = rpc_client
+        .get_account(&dbc_pool.config)
+        .await
+        .expect("Failed to fetch Meteora DBC config account");
+    let dbc_config =
+        MeteoraDbcConfigRaw::try_from_slice(&config_account.data[8..8 + POOL_CONFIG_SIZE])
+            .expect("Failed to deserialize Meteora DBC config");
+
+    let vault_base_account = rpc_client
+        .get_account(&dbc_pool.base_vault)
+        .await
+        .expect("Failed to fetch base vault");
+    let vault_quote_account = rpc_client
+        .get_account(&dbc_pool.quote_vault)
+        .await
+        .expect("Failed to fetch quote vault");
+
+    let base_reserve = u64::from_le_bytes(vault_base_account.data[64..72].try_into().unwrap());
+    let quote_reserve = u64::from_le_bytes(vault_quote_account.data[64..72].try_into().unwrap());
+
+    let pool_state = PoolState::MeteoraDbc(Box::new(DbcPoolState {
+        slot: 100,
+        transaction_index: None,
+        address: pool_address,
+        config: dbc_pool.config,
+        creator: dbc_pool.creator,
+        base_mint: dbc_pool.base_mint,
+        base_vault: dbc_pool.base_vault,
+        quote_vault: dbc_pool.quote_vault,
+        base_reserve,
+        quote_reserve,
+        protocol_base_fee: dbc_pool.protocol_base_fee,
+        protocol_quote_fee: dbc_pool.protocol_quote_fee,
+        partner_base_fee: dbc_pool.partner_base_fee,
+        partner_quote_fee: dbc_pool.partner_quote_fee,
+        sqrt_price: dbc_pool.sqrt_price,
+        activation_point: dbc_pool.activation_point,
+        pool_type: dbc_pool.pool_type,
+        is_migrated: dbc_pool.is_migrated,
+        is_partner_withdraw_surplus: dbc_pool.is_partner_withdraw_surplus,
+        is_protocol_withdraw_surplus: dbc_pool.is_protocol_withdraw_surplus,
+        migration_progress: dbc_pool.migration_progress,
+        is_withdraw_leftover: dbc_pool.is_withdraw_leftover,
+        is_creator_withdraw_surplus: dbc_pool.is_creator_withdraw_surplus,
+        migration_fee_withdraw_status: dbc_pool.migration_fee_withdraw_status,
+        finish_curve_timestamp: dbc_pool.finish_curve_timestamp,
+        creator_base_fee: dbc_pool.creator_base_fee,
+        creator_quote_fee: dbc_pool.creator_quote_fee,
+        liquidity_usd: 1_000_000.0,
+        last_updated: u64::MAX,
+        pool_config: Some(dbc_config.clone()),
+        volatility_tracker: Some(dbc_pool.volatility_tracker),
+    }));
+
+    pool_manager.inject_pool(pool_state).await;
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: token_mint,
+            symbol: Some("TOKEN".to_string()),
+            name: Some("Meteora DBC Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+
+    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string(); // Random active wallet
+    let payer = Pubkey::from_str(&user_wallet_str).unwrap();
+
+    // 1. Buy instructions (SOL -> Token)
+    let buy_amount_in = 1_000_000_000; // 1 SOL
+    let buy_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: Token {
+            address: token_mint,
+            symbol: Some("TOKEN".to_string()),
+            name: Some("Meteora DBC Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        input_amount: buy_amount_in,
+        slippage_bps: 100,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let buy_instructions = pool
+        .build_swap_instruction(&buy_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build buy instruction");
+
+    // 2. Sell instructions (Token -> SOL)
+    // Increase sell amount to avoid "zero after slippage" error (decimals 6, so 100_000_000 = 100 tokens)
+    let sell_amount_in = 100_000_000;
+
+    let sell_params = crate::types::SwapParams {
+        input_token: Token {
+            address: token_mint,
+            symbol: Some("TOKEN".to_string()),
+            name: Some("Meteora DBC Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        },
+        output_token: wsol_token(),
+        input_amount: sell_amount_in,
+        slippage_bps: 300,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let sell_instructions = pool
+        .build_swap_instruction(&sell_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build sell instruction");
+
+    // Combine instructions with WSOL handling
+    let mut instructions = Vec::new();
+
+    // Add WSOL wrapping for buy (SOL -> Token)
+    instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
+        &payer,
+        buy_amount_in,
+    ));
+    instructions.extend(buy_instructions);
+
+    // Add sell instructions (Token -> SOL)
+    instructions.extend(sell_instructions);
+
+    // Close WSOL account at the end
+    instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
+
+    // Simulate
+    let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let mut message = solana_sdk::message::Message::new(&instructions, Some(&payer));
+    message.recent_blockhash = recent_blockhash;
+    let transaction = Transaction::new_unsigned(message);
+
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::confirmed()),
+        encoding: None,
+        accounts: None,
+        min_context_slot: None,
+        inner_instructions: true,
+    };
+
+    let result = rpc_client
+        .simulate_transaction_with_config(&transaction, config)
+        .await
+        .expect("Simulation failed");
+
+    if let Some(err) = result.value.err {
+        println!("Simulation Logs: {:#?}", result.value.logs);
+        panic!("Simulation error: {:?}", err);
+    }
+    println!("Simulation successful! Logs: {:#?}", result.value.logs);
+}

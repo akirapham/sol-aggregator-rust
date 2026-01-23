@@ -127,6 +127,7 @@ impl BuildSwapInstruction for RaydiumCpmmPoolState {
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<solana_sdk::instruction::Instruction>, String> {
         let mut instructions = Vec::new();
 

@@ -327,6 +327,7 @@ impl BuildSwapInstruction for WhirlpoolPoolState {
         &self,
         params: &SwapParams,
         _amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // 1. Determine swap direction
         let specified_token_a = tokens_equal(&params.input_token.address, &self.token_mint_a);

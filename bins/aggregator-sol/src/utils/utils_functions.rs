@@ -3,6 +3,7 @@ use crate::error::DexAggregatorError;
 use crate::error::Result;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 
 /// Parse a base58 string to Pubkey
@@ -26,4 +27,16 @@ pub fn tokens_equal(token_a: &Pubkey, token_b: &Pubkey) -> bool {
 
 pub fn get_sol_mint() -> Pubkey {
     parse_pubkey(WSOL_MINT).unwrap()
+}
+
+/// Iterates through instructions and replaces a specific public key with another in all AccountMeta.
+/// This is used to replace the dummy signer from SDK with the actual user wallet.
+pub fn replace_key_in_instructions(instructions: &mut [Instruction], from: &Pubkey, to: &Pubkey) {
+    for ix in instructions.iter_mut() {
+        for account in ix.accounts.iter_mut() {
+            if account.pubkey == *from {
+                account.pubkey = *to;
+            }
+        }
+    }
 }

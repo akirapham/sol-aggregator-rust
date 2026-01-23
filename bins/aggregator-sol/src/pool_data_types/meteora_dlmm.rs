@@ -324,6 +324,7 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         let input_mint = params.input_token.address;
 

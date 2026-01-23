@@ -295,6 +295,7 @@ impl BuildSwapInstruction for RaydiumClmmPoolState {
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // 1. Determine direction (zero_for_one)
         let zero_for_one = params.input_token.address == self.token_mint0;

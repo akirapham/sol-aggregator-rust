@@ -111,14 +111,20 @@ impl PumpfunPoolState {
     }
 }
 
+use solana_client::nonblocking::rpc_client::RpcClient;
+use std::sync::Arc;
+
 #[async_trait]
 impl BuildSwapInstruction for PumpfunPoolState {
     /// Build PumpFun swap instruction
     async fn build_swap_instruction(
         &self,
         params: &SwapParams,
-        _amm_config_fetcher: &dyn GetAmmConfig,
+        amm_config_fetcher: &dyn GetAmmConfig,
+        rpc_client: Option<&Arc<RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
+        let _ = amm_config_fetcher;
+        let _ = rpc_client;
         // Determine if this is a buy (SOL -> Token) or sell (Token -> SOL)
         let is_buy = tokens_equal(&params.input_token.address, &get_sol_mint());
 

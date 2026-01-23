@@ -122,6 +122,7 @@ impl BuildSwapInstruction for RaydiumAmmV4PoolState {
         &self,
         params: &SwapParams,
         _amm_config_fetcher: &dyn GetAmmConfig,
+        _rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // Determine if this is a buy (WSOL/USDC -> Token) or sell (Token -> WSOL/USDC)
         let is_wsol = self.base_mint == constants::WSOL_TOKEN_ACCOUNT

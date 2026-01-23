@@ -347,6 +347,7 @@ impl BuildSwapInstruction for PoolState {
         &self,
         params: &SwapParams,
         amm_config_fetcher: &dyn GetAmmConfig,
+        rpc_client: Option<&std::sync::Arc<solana_client::nonblocking::rpc_client::RpcClient>>,
     ) -> std::result::Result<Vec<Instruction>, String> {
         // Validation
         if params.input_amount == 0 {
@@ -361,68 +362,70 @@ impl BuildSwapInstruction for PoolState {
 
         match self {
             PoolState::Pumpfun(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("Pumpfun build_swap_instruction error: {}", e);
                     e
                 }),
             PoolState::PumpSwap(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("PumpSwap build_swap_instruction error: {}", e);
                     e
                 }),
             PoolState::RaydiumAmmV4(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("RaydiumAmmV4 build_swap_instruction error: {}", e);
                     e
                 }),
             PoolState::RaydiumCpmm(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("RaydiumCpmm build_swap_instruction error: {}", e);
                     e
                 }),
-            PoolState::Bonk(_state) => {
-                let e = "Bonk BuildSwapInstruction not yet implemented".to_string();
-                log::error!("{}", e);
-                Err(e)
-            }
+            PoolState::Bonk(state) => state
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
+                .await
+                .map_err(|e| {
+                    log::error!("Bonk build_swap_instruction error: {}", e);
+                    e
+                }),
             PoolState::RadyiumClmm(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("RadyiumClmm build_swap_instruction error: {}", e);
                     e
                 }),
             PoolState::MeteoraDbc(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("MeteoraDbc build_swap_instruction error: {}", e);
                     e
                 }),
             PoolState::OrcaWhirlpool(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("OrcaWhirlpool build_swap_instruction error: {}", e);
                     e
                 }),
             PoolState::MeteoraDammV2(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("MeteoraDammV2 build_swap_instruction error: {}", e);
                     e
                 }),
             PoolState::MeteoraDlmm(state) => state
-                .build_swap_instruction(params, amm_config_fetcher)
+                .build_swap_instruction(params, amm_config_fetcher, rpc_client)
                 .await
                 .map_err(|e| {
                     log::error!("MeteoraDlmm build_swap_instruction error: {}", e);

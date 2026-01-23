@@ -39,6 +39,9 @@ pub fn test_token(mint: Pubkey) -> Token {
 }
 
 pub async fn create_test_setup(_protocols: Vec<&str>) -> (Arc<PoolStateManager>, AggregatorConfig) {
+    // Load .env file if it exists
+    dotenv::dotenv().ok();
+
     let mut config = AggregatorConfig::default();
     config.rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
@@ -109,6 +112,103 @@ pub async fn verify_quote(
         route.output_amount,
         output_token.symbol.unwrap_or_default(),
         first_step.dex
+    );
+}
+
+pub async fn verify_quote_round_trip(
+    pool_manager: Arc<PoolStateManager>,
+    config: AggregatorConfig,
+    input_token: Token,
+    output_token: Token,
+    input_amount: u64,
+    expected_pool: Pubkey,
+    tolerance_bps: u64,
+) {
+    let aggregator = Arc::new(DexAggregator::new(config.clone(), pool_manager.clone()));
+
+    // 1. Buy: Input -> Output
+    let buy_params = SwapParams {
+        input_token: input_token.clone(),
+        output_token: output_token.clone(),
+        input_amount,
+        slippage_bps: 50,
+        user_wallet: Pubkey::new_unique(),
+        priority: ExecutionPriority::High,
+    };
+
+    let buy_result = aggregator.get_swap_route(&buy_params).await;
+    assert!(buy_result.is_some(), "Failed to get BUY quote");
+    let buy_route = buy_result.unwrap();
+    let amount_out = buy_route.output_amount;
+
+    println!(
+        "Buy Quote: {} {} -> {} {}",
+        input_amount,
+        input_token.symbol.as_deref().unwrap_or("?"),
+        amount_out,
+        output_token.symbol.as_deref().unwrap_or("?")
+    );
+
+    // 2. Sell: Output -> Input (Reverse)
+    let sell_params = SwapParams {
+        input_token: output_token.clone(),
+        output_token: input_token.clone(),
+        input_amount: amount_out,
+        slippage_bps: 50,
+        user_wallet: Pubkey::new_unique(),
+        priority: ExecutionPriority::High,
+    };
+
+    let sell_result = aggregator.get_swap_route(&sell_params).await;
+    assert!(sell_result.is_some(), "Failed to get SELL quote (Reverse)");
+    let sell_route = sell_result.unwrap();
+    let amount_reversed = sell_route.output_amount;
+
+    println!(
+        "Sell Quote: {} {} -> {} {}",
+        amount_out,
+        output_token.symbol.as_deref().unwrap_or("?"),
+        amount_reversed,
+        input_token.symbol.as_deref().unwrap_or("?")
+    );
+
+    // 3. Verify Difference
+    let diff = if amount_reversed > input_amount {
+        amount_reversed - input_amount
+    } else {
+        input_amount - amount_reversed
+    };
+
+    // Check tolerance
+    // tolerance_bps = 100 means 1%
+    // max_allowed_diff = input_amount * tolerance_bps / 10000
+    let max_diff = (input_amount as u128 * tolerance_bps as u128 / 10000) as u64;
+
+    assert!(
+        diff <= max_diff,
+        "Reverse quote verification failed! Input: {}, Reversed: {}, Diff: {}, MaxDiff: {} ({} bps)",
+        input_amount,
+        amount_reversed,
+        diff,
+        max_diff,
+        tolerance_bps
+    );
+
+    // Also assert pool usage
+    let first_step = &buy_route.paths[0].steps[0];
+    assert_eq!(
+        first_step.pool_address, expected_pool,
+        "Buy Route selected wrong pool"
+    );
+    let first_step_sell = &sell_route.paths[0].steps[0];
+    assert_eq!(
+        first_step_sell.pool_address, expected_pool,
+        "Sell Route selected wrong pool"
+    );
+
+    println!(
+        "✅ Round Trip Verification Successful (Diff: {} <= {})",
+        diff, max_diff
     );
 }
 

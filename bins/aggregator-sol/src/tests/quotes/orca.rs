@@ -165,8 +165,8 @@ async fn test_orca_whirlpool_quote() {
         pools.len()
     );
 
-    // Test swap: SOL -> BONK (token_a is SOL, token_b is BONK)
-    verify_quote(
+    // Test Round Trip: SOL -> BONK -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(),
@@ -180,6 +180,7 @@ async fn test_orca_whirlpool_quote() {
         },
         1_000_000_000, // 1 SOL
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -288,8 +289,8 @@ async fn test_orca_whirlpool_quote_reverse() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: BONK -> SOL (reverse direction)
-    verify_quote(
+    // Test Round Trip: BONK -> SOL -> BONK
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -303,6 +304,7 @@ async fn test_orca_whirlpool_quote_reverse() {
         wsol_token(),
         1_000_000_000,
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -720,6 +722,31 @@ async fn test_orca_whirlpool_quote_simulation_reverse() {
     let sell_response = match sell_result {
         axum::Json(res) => res,
     };
+
+    println!("Sell Quote Output: {}", sell_response.output_amount);
+
+    // Verify Round Trip (approx 50% of initial input)
+    // Buy Input: 100_000_000 SOL
+    // Sell Input: 50% of tokens from Buy
+    // Expected Return: approx 50_000_000 SOL
+    let expected_return = buy_input_amount / 2;
+    let actual_return = sell_response.output_amount;
+    let diff = if actual_return > expected_return {
+        actual_return - expected_return
+    } else {
+        expected_return - actual_return
+    };
+
+    // Tolerance 1% (Orca Whirlpool is concentrated liquidity, low slippage)
+    let max_diff = expected_return * 1 / 100;
+    assert!(
+        diff <= max_diff,
+        "Orca Simulation Reverse Verification Failed: Expected ~{}, Got {}, Diff {}",
+        expected_return,
+        actual_return,
+        diff
+    );
+    println!("✅ Orca Round Trip Verification Passed (Diff: {})", diff);
 
     let sell_tx_bytes = base64::engine::general_purpose::STANDARD
         .decode(&sell_response.transaction)

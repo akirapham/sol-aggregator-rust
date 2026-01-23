@@ -236,9 +236,13 @@ impl PoolStateManager {
 
                 if let Err(e) = db_clone.save_tokens(&tokens).await {
                     log::error!("Failed to save tokens to Postgres: {}", e);
+                } else {
+                    log::info!("Saved {} tokens to Postgres", tokens.len());
                 }
                 if let Err(e) = db_clone.save_pools(&pools).await {
                     log::error!("Failed to save pools to Postgres: {}", e);
+                } else {
+                    log::info!("Saved {} pools to Postgres", pools.len());
                 }
             }
         });

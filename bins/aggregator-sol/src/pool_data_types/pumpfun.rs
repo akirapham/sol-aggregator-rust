@@ -76,13 +76,31 @@ impl PumpfunPoolState {
 
         let is_buy = tokens_equal(input_token, &get_sol_mint());
         if is_buy {
-            get_buy_token_amount_from_sol_amount(
-                self.virtual_token_reserves as u128,
-                self.virtual_sol_reserves as u128,
-                self.real_token_reserves as u128,
-                self.creator,
-                input_amount,
-            )
+            let x = self.virtual_token_reserves as u128;
+            let y = self.virtual_sol_reserves as u128;
+            let dy = input_amount as u128;
+
+            if x == 0 || y == 0 {
+                return 0;
+            }
+
+            // 1% Fee on Input SOL
+            let fee = dy / 100;
+            let dy_net = dy.saturating_sub(fee);
+
+            // xy = k
+            // (y + dy_net) * (x - dx) = xy
+            // x - dx = xy / (y + dy_net)
+            // dx = x - (xy / (y + dy_net))
+            // dx = (x * (y + dy_net) - xy) / (y + dy_net)
+            // dx = (xy + x*dy_net - xy) / (y + dy_net)
+            // dx = (x * dy_net) / (y + dy_net)
+
+            let numerator = x.checked_mul(dy_net).unwrap_or(0);
+            let denominator = y.checked_add(dy_net).unwrap_or(u128::MAX);
+
+            let amount_out = numerator.checked_div(denominator).unwrap_or(0);
+            amount_out as u64
         } else {
             get_sell_sol_amount_from_token_amount(
                 self.virtual_token_reserves as u128,
@@ -166,13 +184,18 @@ impl BuildSwapInstruction for PumpfunPoolState {
             // ========================================
             // 1. Calculate expected token output for the given input SOL
             // Note: pumpf_functions::get_buy_token_amount_from_sol_amount calculates the virtual curve output.
-            let expected_token_amount = get_buy_token_amount_from_sol_amount(
-                self.virtual_token_reserves as u128,
-                self.virtual_sol_reserves as u128,
-                self.real_token_reserves as u128,
-                self.creator,
-                params.input_amount,
-            );
+            // Manual calc consistent with calculate_output_amount
+            let x = self.virtual_token_reserves as u128;
+            let y = self.virtual_sol_reserves as u128;
+            let dy = params.input_amount as u128; // Input SOL
+
+            let fee = dy / 100;
+            let dy_net = dy.saturating_sub(fee);
+
+            let numerator = x.checked_mul(dy_net).unwrap_or(0);
+            let denominator = y.checked_add(dy_net).unwrap_or(u128::MAX);
+
+            let expected_token_amount = (numerator.checked_div(denominator).unwrap_or(0)) as u64;
 
             // 2. Calculate min_tokens_out (Apply slippage)
             let min_tokens_out =

@@ -214,7 +214,8 @@ async fn test_pumpfun_quote() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    verify_quote(
+    // Test Round Trip: SOL -> PUMP -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -226,8 +227,9 @@ async fn test_pumpfun_quote() {
             logo_uri: None,
         },
         wsol_token(),
-        1_000_000,
+        10_000_000,
         bonding_curve_address,
+        400, // 4% tolerance (1% fee x2 + slippage)
     )
     .await;
 }
@@ -287,7 +289,8 @@ async fn test_pumpswap_quote() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    verify_quote(
+    // Test Round Trip: SOL -> Token -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(),
@@ -299,8 +302,9 @@ async fn test_pumpswap_quote() {
             is_token_2022: false,
             logo_uri: None,
         },
-        1_000_000_000,
+        10_000_000,
         pool_address,
+        400, // 4% tolerance
     )
     .await;
 }
@@ -348,10 +352,10 @@ async fn test_pumpfun_quote_reverse() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    verify_quote(
+    // Test Round Trip: PUMP -> SOL -> PUMP
+    verify_quote_round_trip(
         pool_manager,
         config,
-        wsol_token(),
         Token {
             address: token_mint_address,
             symbol: Some("PUMP".to_string()),
@@ -360,8 +364,10 @@ async fn test_pumpfun_quote_reverse() {
             is_token_2022: true,
             logo_uri: None,
         },
-        100_000_000,
+        wsol_token(),
+        10_000_000,
         bonding_curve_address,
+        400, // 4% tolerance
     )
     .await;
 }
@@ -430,7 +436,8 @@ async fn test_pumpswap_quote_reverse() {
         })
         .await;
 
-    verify_quote(
+    // Test Round Trip: Token -> SOL -> Token
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -442,8 +449,9 @@ async fn test_pumpswap_quote_reverse() {
             logo_uri: None,
         },
         wsol_token(),
-        1_000_000_000,
+        10_000_000,
         pool_address,
+        400, // 4% tolerance
     )
     .await;
 }
@@ -568,6 +576,31 @@ async fn test_pumpfun_quote_simulation_reverse() {
     let sell_response = match sell_result {
         axum::Json(res) => res,
     };
+
+    println!("Sell Quote Output: {}", sell_response.output_amount);
+
+    // Verify Round Trip (should regain approx 50% of input value)
+    // Initial Buy Input: 100_000_000 SOL
+    // Sell Input: 50% of Buy Output (approx 50M SOL worth of Tokens)
+    // Expected Output: approx 50_000_000 SOL
+    let expected_return = buy_input_amount / 2;
+    let actual_return = sell_response.output_amount;
+    let diff = if actual_return > expected_return {
+        actual_return - expected_return
+    } else {
+        expected_return - actual_return
+    };
+
+    // Tolerance 4% (PumpFun)
+    let max_diff = expected_return * 4 / 100;
+    assert!(
+        diff <= max_diff,
+        "PumpFun Simulation Reverse Verification Failed: Expected ~{}, Got {}, Diff {}",
+        expected_return,
+        actual_return,
+        diff
+    );
+    println!("✅ PumpFun Round Trip Verification Passed (Diff: {})", diff);
 
     let sell_tx_bytes = base64::engine::general_purpose::STANDARD
         .decode(&sell_response.transaction)
@@ -932,6 +965,31 @@ async fn test_pumpswap_quote_simulation_reverse() {
     let sell_response = match sell_result {
         axum::Json(res) => res,
     };
+
+    println!("Sell Quote Output: {}", sell_response.output_amount);
+
+    // Verify Round Trip (should regain approx 50% of input value)
+    // Initial Buy Input: 100_000_000 SOL
+    // Sell Input: 50% of Buy Output (approx 50M SOL worth of Tokens)
+    // Expected Output: approx 50_000_000 SOL
+    let expected_return = buy_input_amount / 2;
+    let actual_return = sell_response.output_amount;
+    let diff = if actual_return > expected_return {
+        actual_return - expected_return
+    } else {
+        expected_return - actual_return
+    };
+
+    // Tolerance 2% (PumpFun)
+    let max_diff = expected_return * 2 / 100;
+    assert!(
+        diff <= max_diff,
+        "PumpFun Simulation Reverse Verification Failed: Expected ~{}, Got {}, Diff {}",
+        expected_return,
+        actual_return,
+        diff
+    );
+    println!("✅ PumpFun Round Trip Verification Passed (Diff: {})", diff);
 
     let sell_tx_bytes = base64::engine::general_purpose::STANDARD
         .decode(&sell_response.transaction)

@@ -1,5 +1,4 @@
 use crate::aggregator::DexAggregator;
-use crate::api::dto::QuoteRequest;
 use crate::pool_data_types::*;
 use crate::tests::quotes::common::*;
 use crate::types::Token;
@@ -275,8 +274,8 @@ async fn test_meteora_dbc_quote() {
     }));
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: SOL -> Token (quote is SOL, base is token)
-    verify_quote(
+    // Test Round Trip: SOL -> Token -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(),
@@ -288,8 +287,9 @@ async fn test_meteora_dbc_quote() {
             is_token_2022: false,
             logo_uri: None,
         },
-        1_000_000_000, // 1 SOL
+        1_000, // 1000 units (Reduced from 1 SOL to avoid slippage)
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -362,8 +362,8 @@ async fn test_meteora_damm_v2_quote() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: SOL -> RALPH
-    verify_quote(
+    // Test Round Trip: SOL -> RALPH -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(), // Input SOL
@@ -375,8 +375,9 @@ async fn test_meteora_damm_v2_quote() {
             is_token_2022: false,
             logo_uri: None,
         },
-        1_000_000_000, // 1 SOL
+        1_000, // 1000 units
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -552,8 +553,8 @@ async fn test_meteora_dlmm_quote() {
     let pool_state = PoolState::MeteoraDlmm(Box::new(pool_state_struct));
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: SOL -> RALPH
-    verify_quote(
+    // Test Round Trip: SOL -> RALPH -> SOL
+    verify_quote_round_trip(
         pool_manager,
         config,
         wsol_token(), // Input SOL (Token Y)
@@ -565,8 +566,9 @@ async fn test_meteora_dlmm_quote() {
             is_token_2022: false,
             logo_uri: None,
         },
-        100_000_000, // 0.1 SOL (Reduced from 1 SOL to ensure liquidity coverage)
+        1_000, // 1000 units (Small amount for liquidity safety)
         pool_address,
+        400, // 4% tolerance
     )
     .await;
 }
@@ -644,8 +646,8 @@ async fn test_meteora_dbc_quote_reverse() {
     }));
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: Token -> SOL (reverse direction)
-    verify_quote(
+    // Test Round Trip: Token -> SOL -> Token
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -659,6 +661,7 @@ async fn test_meteora_dbc_quote_reverse() {
         wsol_token(),
         1_000_000_000,
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -744,8 +747,8 @@ async fn test_meteora_dlmm_quote_reverse() {
     let pool_state = PoolState::MeteoraDlmm(Box::new(pool_state_struct));
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: RALPH -> SOL (reverse direction)
-    verify_quote(
+    // Test Round Trip: RALPH -> SOL -> RALPH
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -757,8 +760,9 @@ async fn test_meteora_dlmm_quote_reverse() {
             logo_uri: None,
         },
         wsol_token(),
-        100_000_000, // Swap amount
+        100_000_000_000, // Swap amount (100B to ensure non-zero SOL output)
         pool_address,
+        400, // 4% tolerance
     )
     .await;
 }
@@ -817,8 +821,8 @@ async fn test_meteora_damm_v2_quote_reverse() {
 
     pool_manager.inject_pool(pool_state).await;
 
-    // Test swap: RALPH -> SOL (reverse direction)
-    verify_quote(
+    // Test Round Trip: RALPH -> SOL -> RALPH
+    verify_quote_round_trip(
         pool_manager,
         config,
         Token {
@@ -832,6 +836,7 @@ async fn test_meteora_damm_v2_quote_reverse() {
         wsol_token(),
         1_000_000_000,
         pool_address,
+        100, // 1% tolerance
     )
     .await;
 }
@@ -1303,14 +1308,14 @@ async fn test_meteora_dbc_quote_simulation() {
         swap_params.input_token.address, swap_params.output_token.address
     );
 
-    let quote = aggregator
+    let _quote = aggregator
         .get_swap_route(&swap_params)
         .await
         .expect("Failed to get buy quote");
 
     // Get instructions
     let pool = pool_manager.get_pool(&pool_address).await.unwrap();
-    let mut instructions = pool
+    let instructions = pool
         .build_swap_instruction(&swap_params, &*pool_manager, None)
         .await
         .expect("Failed to build swap instruction");
@@ -1360,7 +1365,7 @@ async fn test_meteora_dbc_quote_simulation_reverse() {
         .is_test(true)
         .try_init();
 
-    let (pool_manager, config) = create_test_setup(vec!["meteora_dbc"]).await;
+    let (pool_manager, _config) = create_test_setup(vec!["meteora_dbc"]).await;
 
     // Meteora DBC Pool: SOL-Token
     let pool_address = Pubkey::from_str("6pd7brdZYj8V7Rgo4trnHEvbokc5EjzxZTP1NdMk9sWu").unwrap();

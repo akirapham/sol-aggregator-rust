@@ -356,9 +356,6 @@ impl BuildSwapInstruction for PoolState {
         if params.input_token.address == params.output_token.address {
             return Err("Input and output tokens are the same".to_string());
         }
-        if params.slippage_bps > 500 {
-            return Err("Slippage tolerance exceeds maximum allowed (5%)".to_string());
-        }
 
         match self {
             PoolState::Pumpfun(state) => state

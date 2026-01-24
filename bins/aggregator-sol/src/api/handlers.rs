@@ -175,7 +175,12 @@ pub async fn get_quote(
     };
 
     // Get best route using the aggregator
-    match state.aggregator.get_swap_route(&swap_params).await {
+    let exclude_pools: HashSet<Pubkey> = HashSet::new();
+    match state
+        .aggregator
+        .get_swap_route_with_exclude(&swap_params, &exclude_pools, true)
+        .await
+    {
         Some(best_route) => {
             // first, get all swap step started from the input token
             let mut swap_routes: Vec<SwapStep> = vec![];

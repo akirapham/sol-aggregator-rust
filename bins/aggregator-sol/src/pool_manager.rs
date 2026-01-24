@@ -1293,10 +1293,10 @@ impl PoolStateManager {
     }
 
     /// Check if a pool is stale (hasn't been updated since app startup)
-    /// Returns true if the pool's last update was before the application started
+    /// Returns true if the pool's last update was before the application started + 10 seconds
     fn is_pool_stale(&self, pool: &PoolState) -> bool {
         let pool_last_update = SystemTime::UNIX_EPOCH + Duration::from_micros(pool.last_updated());
-        pool_last_update < self.startup_time
+        pool_last_update < self.startup_time + Duration::from_secs(10)
     }
 
     pub async fn is_pool_tick_synced(&self, pool_address: &Pubkey) -> bool {

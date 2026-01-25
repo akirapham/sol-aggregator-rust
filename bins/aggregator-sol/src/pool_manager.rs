@@ -3,7 +3,7 @@ pub mod traits;
 
 use crate::pool_manager::traits::{DatabaseTrait, GrpcServiceTrait, PriceServiceTrait};
 
-use crate::fetchers::common::{fetch_account_data, fetch_token};
+use crate::fetchers::common::{fetch_account_data, fetch_multiple_accounts, fetch_token};
 use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
 use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
@@ -13,6 +13,7 @@ use crate::pool_data_types::{
     RaydiumClmmAmmConfig, RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig,
     WhirlpoolPoolState, WhirlpoolPoolUpdate,
 };
+use crate::pool_discovery::PoolDiscovery;
 use crate::types::Token;
 use crate::types::{AggregatorConfig, ChainStateUpdate, PoolUpdateEvent};
 use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
@@ -24,7 +25,6 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::{
@@ -146,6 +146,8 @@ pub struct PoolStateManager {
     config: AggregatorConfig,
     /// Meteora DBC config cache (config_address -> PoolConfig)
     dbc_configs: Arc<RwLock<HashMap<Pubkey, dbc::PoolConfig>>>,
+    /// PumpFun discovery service
+    pumpfun_discovery: Arc<crate::pool_discovery::pumpfun::PumpFunDiscovery>,
 }
 
 #[allow(dead_code)]
@@ -154,15 +156,24 @@ impl PoolStateManager {
     pub async fn new(
         grpc_service: Arc<dyn GrpcServiceTrait>,
         config: AggregatorConfig,
-        _rpc_client: Arc<RpcClient>,
+        rpc_client: Arc<RpcClient>,
         price_service: Arc<dyn PriceServiceTrait>,
         arbitrage_pool_tx: broadcast::Sender<ArbitragePoolUpdate>,
         db: Arc<dyn DatabaseTrait>,
     ) -> Self {
+        let (chain_state_update_tx, chain_state_update_rx) = mpsc::unbounded_channel();
         let (pool_update_tx, pool_update_rx) = mpsc::unbounded_channel::<Vec<PoolUpdateEvent>>();
-        let (chain_state_update_tx, chain_state_update_rx) =
-            mpsc::unbounded_channel::<ChainStateUpdate>();
-        broadcast::channel::<ArbitragePoolUpdate>(1000);
+
+        let chain_state = Arc::new(Mutex::new(ChainStateUpdate {
+            slot: 0,
+            block_time: 0,
+            block_hash: String::new(),
+        }));
+
+        // Initialize PumpFun discovery
+        let pumpfun_discovery = Arc::new(crate::pool_discovery::pumpfun::PumpFunDiscovery::new(
+            rpc_client.clone(),
+        ));
 
         let mut manager = Self {
             grpc_service,
@@ -171,25 +182,23 @@ impl PoolStateManager {
             dex_pools: Arc::new(RwLock::new(HashMap::new())),
             token_cache: Arc::new(RwLock::new(HashMap::new())),
             pool_update_tx,
-            rpc_client: Arc::new(RpcClient::new_with_commitment(
-                config.rpc_url.clone(),
-                CommitmentConfig::processed(),
-            )),
+            rpc_client,
             arbitrage_pool_tx,
             pending_updates: Arc::new(Mutex::new(HashMap::new())),
             pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
-            db: db.clone(),
+            pending_pools_to_fetch_tick_arrays: Arc::new(Mutex::new(HashSet::new())),
+            tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
+            db,
             price_service,
-            chain_state: Arc::new(Mutex::new(ChainStateUpdate::default())),
+            chain_state,
             chain_state_update_tx,
             raydium_clmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
             raydium_cpmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
-            pending_pools_to_fetch_tick_arrays: Arc::new(Mutex::new(HashSet::new())),
-            tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
             arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
             startup_time: SystemTime::now(),
             config,
             dbc_configs: Arc::new(RwLock::new(HashMap::new())),
+            pumpfun_discovery,
         };
 
         // Load data from DB on startup
@@ -305,6 +314,10 @@ impl PoolStateManager {
         let (chain_state_update_tx, _) = mpsc::unbounded_channel();
         let (arbitrage_pool_tx, _) = broadcast::channel(1);
 
+        let pumpfun_discovery = Arc::new(crate::pool_discovery::pumpfun::PumpFunDiscovery::new(
+            rpc_client.clone(),
+        ));
+
         Self {
             grpc_service: Arc::new(MockGrpcService),
             pools: Arc::new(RwLock::new(HashMap::new())),
@@ -328,6 +341,7 @@ impl PoolStateManager {
             startup_time: SystemTime::now(),
             config,
             dbc_configs: Arc::new(RwLock::new(HashMap::new())),
+            pumpfun_discovery,
         }
     }
 
@@ -339,14 +353,112 @@ impl PoolStateManager {
         self.chain_state_update_tx.clone()
     }
 
+    /// Start pool discovery task
+    pub fn start_pool_discovery_task(&self) {
+        let discovery = self.pumpfun_discovery.clone();
+
+        // Clone Arcs to use in spawned task
+        let pools_cache = self.pools.clone();
+        let pair_to_pools_cache = self.pair_to_pools.clone();
+        let dex_pools_cache = self.dex_pools.clone();
+        let db = self.db.clone();
+
+        tokio::spawn(async move {
+            log::info!("Starting PumpFun pool discovery task (one-time)...");
+
+            // Initial delay to let other things settle
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            log::info!("Running PumpFun top runner discovery...");
+            match discovery.discover_top_pools(1000).await {
+                Ok(discovered_pools) => {
+                    log::info!("Discovered {} PumpFun pools", discovered_pools.len());
+                    if !discovered_pools.is_empty() {
+                        let mut new_pools_count = 0;
+                        let mut pools_to_save = Vec::new();
+
+                        // Scope for write locks
+                        {
+                            let mut pools = pools_cache.write().await;
+                            let mut pair_map = pair_to_pools_cache.write().await;
+                            let mut dex_map = dex_pools_cache.write().await;
+
+                            for pool in discovered_pools {
+                                let pool_address = pool.address();
+
+                                // Only add if not exists
+                                if !pools.contains_key(&pool_address) {
+                                    let (token_a, token_b) = pool.get_tokens();
+
+                                    pools.insert(pool_address, Arc::new(Mutex::new(pool.clone())));
+
+                                    // Update pair map
+                                    pair_map
+                                        .entry((token_a, token_b))
+                                        .or_insert_with(HashSet::new)
+                                        .insert(pool_address);
+
+                                    if token_a != token_b {
+                                        pair_map
+                                            .entry((token_b, token_a))
+                                            .or_insert_with(HashSet::new)
+                                            .insert(pool_address);
+                                    }
+
+                                    // Update dex map (assuming PumpFun dex type)
+                                    dex_map
+                                        .entry(pool.dex())
+                                        .or_insert_with(HashSet::new)
+                                        .insert(pool_address);
+
+                                    pools_to_save.push(pool);
+                                    new_pools_count += 1;
+                                }
+                            }
+                        }
+
+                        if new_pools_count > 0 {
+                            log::info!(
+                                "Injected {} new PumpFun pools into manager",
+                                new_pools_count
+                            );
+                            // Save to DB
+                            if let Err(e) = db.save_pools(&pools_to_save).await {
+                                log::error!("Failed to save discovered pools to DB: {}", e);
+                            } else {
+                                log::info!("Saved {} new pools to DB", pools_to_save.len());
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Pipeline discovery failed: {}", e);
+                }
+            }
+        });
+    }
+
     pub async fn start(&self) {
+        log::info!("🏁 PoolStateManager::start() called!");
+        println!("PoolStateManager::start() called via stdout");
+
+        log::info!("🔹 Starting pool discovery task...");
+        self.start_pool_discovery_task();
+
+        log::info!("🔹 Starting tick array fetcher/flusher...");
+        self.start_tick_array_fetcher_flusher();
+
         let grpc_service = self.grpc_service.clone();
         let pool_tx = self.get_pool_update_sender();
         let chain_tx = self.get_chain_state_update_sender();
 
+        log::info!("🔹 Spawning gRPC subscription task...");
         tokio::spawn(async move {
+            log::info!("📡 gRPC subscription task executing...");
             if let Err(e) = grpc_service.subscribe_pool_updates(pool_tx, chain_tx).await {
-                log::error!("gRPC subscription failed: {}", e);
+                log::error!("❌ gRPC subscription failed: {}", e);
+            } else {
+                log::info!("✅ gRPC subscription active");
             }
         });
     }
@@ -1761,39 +1873,84 @@ impl PoolStateManager {
             log::info!("Rebuilt {} DEX mappings", dex_pools_write.len());
         }
 
-        // fetching amm configs from on-chain
-        {
+        // fetching amm configs from on-chain in background to avoid blocking startup
+        let rpc_client = self.rpc_client.clone();
+        let raydium_clmm_amm_config_cache = self.raydium_clmm_amm_config_cache.clone();
+        let raydium_cpmm_amm_config_cache = self.raydium_cpmm_amm_config_cache.clone();
+
+        tokio::spawn(async move {
+            log::info!("Starting background fetch of Raydium AMM configs...");
+
             // fetch clmm configs
-            for amm_config in raydium_clmm_amm_configs_set.iter() {
-                if let Err(e) = self.get_raydium_clmm_amm_config(amm_config).await {
-                    log::error!(
-                        "Failed to fetch Raydium CLMM AMM config {:?}: {:?}",
-                        amm_config,
-                        e
-                    );
+            let clmm_configs_to_fetch: Vec<Pubkey> = {
+                 let cache = raydium_clmm_amm_config_cache.read().await;
+                 raydium_clmm_amm_configs_set.iter().filter(|&k| !cache.contains_key(k)).cloned().collect()
+            };
+
+            if !clmm_configs_to_fetch.is_empty() {
+                log::info!("Fetching {} Raydium CLMM AMM configs...", clmm_configs_to_fetch.len());
+                match fetch_multiple_accounts(&rpc_client, &clmm_configs_to_fetch).await {
+                    Ok(results) => {
+                         let mut cache_write = raydium_clmm_amm_config_cache.write().await;
+                         for (i, opt_data) in results.into_iter().enumerate() {
+                             let amm_config = clmm_configs_to_fetch[i];
+                             if let Some(data) = opt_data {
+                                 if data.len() < 8 {
+                                     continue;
+                                 }
+                                  match RaydiumClmmAmmConfig::try_from_slice(&data[8..]) {
+                                      Ok(config) => {
+                                          cache_write.insert(amm_config, config);
+                                      }
+                                      Err(e) => log::error!("Failed to deserialize RaydiumClmmAmmConfig {}: {}", amm_config, e),
+                                  }
+                             }
+                         }
+                    }
+                     Err(e) => log::error!("Failed to fetch Raydium CLMM AMM configs: {}", e),
                 }
             }
 
             // fetch cpmm configs
-            for amm_config in raydium_cpmm_amm_configs_set.iter() {
-                if let Err(e) = self.get_raydium_cpmm_amm_config(amm_config).await {
-                    log::error!(
-                        "Failed to fetch Raydium CPMM AMM config {:?}: {:?}",
-                        amm_config,
-                        e
-                    );
+            let cpmm_configs_to_fetch: Vec<Pubkey> = {
+                 let cache = raydium_cpmm_amm_config_cache.read().await;
+                 raydium_cpmm_amm_configs_set.iter().filter(|&k| !cache.contains_key(k)).cloned().collect()
+            };
+            
+            if !cpmm_configs_to_fetch.is_empty() {
+                 log::info!("Fetching {} Raydium CPMM AMM configs...", cpmm_configs_to_fetch.len());
+                 match fetch_multiple_accounts(&rpc_client, &cpmm_configs_to_fetch).await {
+                    Ok(results) => {
+                         let mut cache_write = raydium_cpmm_amm_config_cache.write().await;
+                         for (i, opt_data) in results.into_iter().enumerate() {
+                             let amm_config = cpmm_configs_to_fetch[i];
+                             if let Some(data) = opt_data {
+                                 if data.len() < 8 {
+                                     continue;
+                                 }
+                                  match RaydiumCpmmAmmConfig::try_from_slice(&data[8..]) {
+                                      Ok(config) => {
+                                          cache_write.insert(amm_config, config);
+                                      }
+                                      Err(e) => log::error!("Failed to deserialize RaydiumCpmmAmmConfig {}: {}", amm_config, e),
+                                  }
+                             }
+                         }
+                    }
+                     Err(e) => log::error!("Failed to fetch Raydium CPMM AMM configs: {}", e),
                 }
             }
 
+
             log::info!(
-                "Loaded {} Raydium CLMM AMM configs from on-chain",
+                "Loaded {} Raydium CLMM AMM configs from on-chain (background task complete)",
                 raydium_clmm_amm_configs_set.len()
             );
             log::info!(
-                "Loaded {} Raydium CPMM AMM configs from on-chain",
+                "Loaded {} Raydium CPMM AMM configs from on-chain (background task complete)",
                 raydium_cpmm_amm_configs_set.len()
             );
-        }
+        });
     }
 
     /// Save in-memory data to Database

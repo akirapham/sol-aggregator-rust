@@ -125,3 +125,58 @@ pub async fn fetch_account_data(
         "Failed to fetch account data".to_string(),
     ))
 }
+
+pub async fn fetch_multiple_accounts(
+    rpc_client: &Arc<RpcClient>,
+    accounts: &[Pubkey],
+) -> Result<Vec<Option<Vec<u8>>>, DexAggregatorError> {
+    const CHUNK_SIZE: usize = 50; // Solana limit is often 100, we stick to safe 50
+    const MAX_RETRIES: u32 = 3;
+    const INITIAL_BACKOFF: u64 = 200;
+
+    let mut all_results = Vec::with_capacity(accounts.len());
+
+    for chunk in accounts.chunks(CHUNK_SIZE) {
+        let mut fetched = false;
+        for attempt in 0..MAX_RETRIES {
+            match rpc_client.get_multiple_accounts(chunk).await {
+                Ok(accounts_data) => {
+                    // map Account to Option<Vec<u8>>
+                    let data_only: Vec<Option<Vec<u8>>> = accounts_data
+                        .into_iter()
+                        .map(|acc| acc.map(|a| a.data))
+                        .collect();
+                    all_results.extend(data_only);
+                    fetched = true;
+                    break;
+                }
+                Err(e) => {
+                    if attempt == MAX_RETRIES - 1 {
+                         return Err(DexAggregatorError::RpcError(format!(
+                            "Failed to fetch multiple accounts after {} retries: {}",
+                            MAX_RETRIES, e
+                        )));
+                    }
+                    log::warn!(
+                        "Failed to fetch batch of {} accounts, retrying... ({}/{}): {}",
+                        chunk.len(),
+                        attempt + 1,
+                        MAX_RETRIES,
+                        e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        INITIAL_BACKOFF * 2u64.pow(attempt),
+                    ))
+                    .await;
+                }
+            }
+        }
+        if !fetched {
+             return Err(DexAggregatorError::RpcError(
+                "Failed to fetch batch of accounts".to_string(),
+            ));
+        }
+    }
+    
+    Ok(all_results)
+}

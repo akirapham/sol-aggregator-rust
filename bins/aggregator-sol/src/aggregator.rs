@@ -109,7 +109,7 @@ impl DexAggregator {
         let mut base_to_output_pool_addresses_by_pair: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> =
             HashMap::new();
 
-        if direct_only {
+        if !direct_only {
             // Loop over BASE_TOKENS to find hop routes
             for base_token in BASE_TOKENS.iter() {
                 let base_token_key = Pubkey::from_str(base_token).unwrap();

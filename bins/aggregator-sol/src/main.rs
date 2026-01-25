@@ -11,6 +11,7 @@ pub mod error;
 pub mod fetchers;
 pub mod grpc;
 pub mod pool_data_types;
+pub mod pool_discovery;
 pub mod pool_manager;
 #[cfg(test)]
 pub mod tests;
@@ -90,7 +91,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start pool manager
     let pool_manager_clone = pool_manager.clone();
     tokio::spawn(async move {
+        log::info!("🚀 Spawning pool_manager.start() task...");
         pool_manager_clone.start().await;
+        log::info!(
+            "✅ pool_manager.start() returned (should be long running or completely spawned)"
+        );
     });
 
     // 2. Create and configure the aggregator

@@ -152,7 +152,7 @@ pub async fn fetch_multiple_accounts(
                 }
                 Err(e) => {
                     if attempt == MAX_RETRIES - 1 {
-                         return Err(DexAggregatorError::RpcError(format!(
+                        return Err(DexAggregatorError::RpcError(format!(
                             "Failed to fetch multiple accounts after {} retries: {}",
                             MAX_RETRIES, e
                         )));
@@ -172,11 +172,11 @@ pub async fn fetch_multiple_accounts(
             }
         }
         if !fetched {
-             return Err(DexAggregatorError::RpcError(
+            return Err(DexAggregatorError::RpcError(
                 "Failed to fetch batch of accounts".to_string(),
             ));
         }
     }
-    
+
     Ok(all_results)
 }

@@ -94,8 +94,6 @@ impl PumpFunDiscovery {
             text.chars().take(200).collect::<String>()
         ))
     }
-
-
 }
 
 #[async_trait]
@@ -137,41 +135,43 @@ impl PoolDiscovery for PumpFunDiscovery {
             }
         }
 
-        log::info!("Processing {} unique coins (batch fetching on-chain data)", unique_coins.len());
+        log::info!(
+            "Processing {} unique coins (batch fetching on-chain data)",
+            unique_coins.len()
+        );
 
         let mut discovered_pools = Vec::new();
-        
+
         // Prepare list of bonding curve addresses to fetch
         let mut bonding_curves = Vec::with_capacity(unique_coins.len());
         let mut bonding_curve_to_coin_map = std::collections::HashMap::new();
 
         for coin in &unique_coins {
-             if let Ok(pubkey) = Pubkey::try_from(coin.bonding_curve.as_str()) {
-                 bonding_curves.push(pubkey);
-                 bonding_curve_to_coin_map.insert(pubkey, coin);
-             } else {
-                 log::warn!("Invalid bonding curve pubkey for coin {}", coin.mint);
-             }
+            if let Ok(pubkey) = Pubkey::try_from(coin.bonding_curve.as_str()) {
+                bonding_curves.push(pubkey);
+                bonding_curve_to_coin_map.insert(pubkey, coin);
+            } else {
+                log::warn!("Invalid bonding curve pubkey for coin {}", coin.mint);
+            }
         }
 
-        
         let batch_results = fetch_multiple_accounts(&self.rpc_client, &bonding_curves).await?;
-        
+
         for (i, account_option) in batch_results.into_iter().enumerate() {
             if let Some(data) = account_option {
-                 let curve_pubkey = bonding_curves[i];
-                 if let Some(coin) = bonding_curve_to_coin_map.get(&curve_pubkey) {
-                     // Parse data
-                     if data.len() < 8 {
-                         log::warn!("Account data too short for bonding curve {}", curve_pubkey);
-                         continue;
-                     }
-                     
-                     let mut data_slice = &data[8..];
-                     match BondingCurveRaw::deserialize(&mut data_slice) {
-                         Ok(raw_state) => {
-                             if let Ok(mint) = Pubkey::try_from(coin.mint.as_str()) {
-                                 let state = PumpfunPoolState {
+                let curve_pubkey = bonding_curves[i];
+                if let Some(coin) = bonding_curve_to_coin_map.get(&curve_pubkey) {
+                    // Parse data
+                    if data.len() < 8 {
+                        log::warn!("Account data too short for bonding curve {}", curve_pubkey);
+                        continue;
+                    }
+
+                    let mut data_slice = &data[8..];
+                    match BondingCurveRaw::deserialize(&mut data_slice) {
+                        Ok(raw_state) => {
+                            if let Ok(mint) = Pubkey::try_from(coin.mint.as_str()) {
+                                let state = PumpfunPoolState {
                                     slot: 0,
                                     transaction_index: None,
                                     address: curve_pubkey,
@@ -188,13 +188,17 @@ impl PoolDiscovery for PumpFunDiscovery {
                                     is_mayhem_mode: raw_state.is_mayhem_mode,
                                 };
                                 discovered_pools.push(PoolState::Pumpfun(state));
-                             }
-                         },
-                         Err(e) => {
-                             log::warn!("Failed to deserialize bonding curve {}: {}", curve_pubkey, e);
-                         }
-                     }
-                 }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to deserialize bonding curve {}: {}",
+                                curve_pubkey,
+                                e
+                            );
+                        }
+                    }
+                }
             }
         }
 

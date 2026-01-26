@@ -1883,64 +1883,85 @@ impl PoolStateManager {
 
             // fetch clmm configs
             let clmm_configs_to_fetch: Vec<Pubkey> = {
-                 let cache = raydium_clmm_amm_config_cache.read().await;
-                 raydium_clmm_amm_configs_set.iter().filter(|&k| !cache.contains_key(k)).cloned().collect()
+                let cache = raydium_clmm_amm_config_cache.read().await;
+                raydium_clmm_amm_configs_set
+                    .iter()
+                    .filter(|&k| !cache.contains_key(k))
+                    .cloned()
+                    .collect()
             };
 
             if !clmm_configs_to_fetch.is_empty() {
-                log::info!("Fetching {} Raydium CLMM AMM configs...", clmm_configs_to_fetch.len());
+                log::info!(
+                    "Fetching {} Raydium CLMM AMM configs...",
+                    clmm_configs_to_fetch.len()
+                );
                 match fetch_multiple_accounts(&rpc_client, &clmm_configs_to_fetch).await {
                     Ok(results) => {
-                         let mut cache_write = raydium_clmm_amm_config_cache.write().await;
-                         for (i, opt_data) in results.into_iter().enumerate() {
-                             let amm_config = clmm_configs_to_fetch[i];
-                             if let Some(data) = opt_data {
-                                 if data.len() < 8 {
-                                     continue;
-                                 }
-                                  match RaydiumClmmAmmConfig::try_from_slice(&data[8..]) {
-                                      Ok(config) => {
-                                          cache_write.insert(amm_config, config);
-                                      }
-                                      Err(e) => log::error!("Failed to deserialize RaydiumClmmAmmConfig {}: {}", amm_config, e),
-                                  }
-                             }
-                         }
+                        let mut cache_write = raydium_clmm_amm_config_cache.write().await;
+                        for (i, opt_data) in results.into_iter().enumerate() {
+                            let amm_config = clmm_configs_to_fetch[i];
+                            if let Some(data) = opt_data {
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                match RaydiumClmmAmmConfig::try_from_slice(&data[8..]) {
+                                    Ok(config) => {
+                                        cache_write.insert(amm_config, config);
+                                    }
+                                    Err(e) => log::error!(
+                                        "Failed to deserialize RaydiumClmmAmmConfig {}: {}",
+                                        amm_config,
+                                        e
+                                    ),
+                                }
+                            }
+                        }
                     }
-                     Err(e) => log::error!("Failed to fetch Raydium CLMM AMM configs: {}", e),
+                    Err(e) => log::error!("Failed to fetch Raydium CLMM AMM configs: {}", e),
                 }
             }
 
             // fetch cpmm configs
             let cpmm_configs_to_fetch: Vec<Pubkey> = {
-                 let cache = raydium_cpmm_amm_config_cache.read().await;
-                 raydium_cpmm_amm_configs_set.iter().filter(|&k| !cache.contains_key(k)).cloned().collect()
+                let cache = raydium_cpmm_amm_config_cache.read().await;
+                raydium_cpmm_amm_configs_set
+                    .iter()
+                    .filter(|&k| !cache.contains_key(k))
+                    .cloned()
+                    .collect()
             };
-            
+
             if !cpmm_configs_to_fetch.is_empty() {
-                 log::info!("Fetching {} Raydium CPMM AMM configs...", cpmm_configs_to_fetch.len());
-                 match fetch_multiple_accounts(&rpc_client, &cpmm_configs_to_fetch).await {
+                log::info!(
+                    "Fetching {} Raydium CPMM AMM configs...",
+                    cpmm_configs_to_fetch.len()
+                );
+                match fetch_multiple_accounts(&rpc_client, &cpmm_configs_to_fetch).await {
                     Ok(results) => {
-                         let mut cache_write = raydium_cpmm_amm_config_cache.write().await;
-                         for (i, opt_data) in results.into_iter().enumerate() {
-                             let amm_config = cpmm_configs_to_fetch[i];
-                             if let Some(data) = opt_data {
-                                 if data.len() < 8 {
-                                     continue;
-                                 }
-                                  match RaydiumCpmmAmmConfig::try_from_slice(&data[8..]) {
-                                      Ok(config) => {
-                                          cache_write.insert(amm_config, config);
-                                      }
-                                      Err(e) => log::error!("Failed to deserialize RaydiumCpmmAmmConfig {}: {}", amm_config, e),
-                                  }
-                             }
-                         }
+                        let mut cache_write = raydium_cpmm_amm_config_cache.write().await;
+                        for (i, opt_data) in results.into_iter().enumerate() {
+                            let amm_config = cpmm_configs_to_fetch[i];
+                            if let Some(data) = opt_data {
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                match RaydiumCpmmAmmConfig::try_from_slice(&data[8..]) {
+                                    Ok(config) => {
+                                        cache_write.insert(amm_config, config);
+                                    }
+                                    Err(e) => log::error!(
+                                        "Failed to deserialize RaydiumCpmmAmmConfig {}: {}",
+                                        amm_config,
+                                        e
+                                    ),
+                                }
+                            }
+                        }
                     }
-                     Err(e) => log::error!("Failed to fetch Raydium CPMM AMM configs: {}", e),
+                    Err(e) => log::error!("Failed to fetch Raydium CPMM AMM configs: {}", e),
                 }
             }
-
 
             log::info!(
                 "Loaded {} Raydium CLMM AMM configs from on-chain (background task complete)",

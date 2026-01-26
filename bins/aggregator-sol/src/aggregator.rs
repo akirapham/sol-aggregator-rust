@@ -776,7 +776,12 @@ impl DexAggregator {
         for path in &forward_route.paths {
             for step in &path.steps {
                 let instructions = self
-                    .build_step_instructions(step, forward_route.slippage_bps, ExecutionPriority::Medium, payer)
+                    .build_step_instructions(
+                        step,
+                        forward_route.slippage_bps,
+                        ExecutionPriority::Medium,
+                        payer,
+                    )
                     .await
                     .map_err(|e| {
                         log::error!("build_arbitrage_instructions forward_route error: {}", e);
@@ -790,7 +795,12 @@ impl DexAggregator {
         for path in &reverse_route.paths {
             for step in &path.steps {
                 let instructions = self
-                    .build_step_instructions(step, reverse_route.slippage_bps, ExecutionPriority::Medium, payer)
+                    .build_step_instructions(
+                        step,
+                        reverse_route.slippage_bps,
+                        ExecutionPriority::Medium,
+                        payer,
+                    )
                     .await
                     .map_err(|e| {
                         log::error!("build_arbitrage_instructions reverse_route error: {}", e);
@@ -808,11 +818,13 @@ impl DexAggregator {
         &self,
         forward_route: &SwapRoute,
         reverse_route: &SwapRoute,
-        priority: ExecutionPriority,
+        _priority: ExecutionPriority,
         payer: Pubkey,
         rpc_client: &RpcClient,
     ) -> Result<Transaction, String> {
-        let all_instructions = self.build_arbitrage_instructions(forward_route, reverse_route, payer).await?;
+        let all_instructions = self
+            .build_arbitrage_instructions(forward_route, reverse_route, payer)
+            .await?;
 
         // Build unsigned transaction for client-side signing
         let blockhash = rpc_client

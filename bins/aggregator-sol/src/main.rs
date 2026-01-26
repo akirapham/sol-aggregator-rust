@@ -22,15 +22,14 @@ pub mod utils;
 use crate::pool_manager::ArbitragePoolUpdate;
 use binance_price_stream::{BinanceConfig, BinancePriceStream, StreamType};
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_commitment_config::CommitmentConfig;
 use tokio::sync::broadcast;
 
 use crate::config::ConfigLoader; // Ensure ConfigLoader is imported
 use dotenv::dotenv;
 use env_logger::Env;
-use solana_sdk::pubkey::Pubkey;
 use std::env;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -72,7 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Creating DEX aggregator...");
     let config = ConfigLoader::load().expect("Failed to load config");
 
-    let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
+    let rpc_client = Arc::new(RpcClient::new_with_commitment(
+        config.rpc_url.clone(),
+        CommitmentConfig::processed(),
+    ));
     let (arbitrage_pool_tx, _arbitrage_pool_rx) = broadcast::channel::<ArbitragePoolUpdate>(1000);
 
     let pool_manager = Arc::new(
@@ -126,6 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool_manager: Arc<PoolStateManager>,
         aggregator: Arc<aggregator::DexAggregator>,
         db_pool: sqlx::Pool<sqlx::Postgres>,
+        rpc_client: Arc<RpcClient>,
     ) -> Option<(
         Arc<std::sync::RwLock<ArbitrageConfig>>,
         Arc<ArbitrageMonitor>,
@@ -205,6 +208,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     aggregator_clone,
                     arb_config.clone(),
                     db_pool,
+                    rpc_client,
                 )
                 .expect("Failed to create arbitrage monitor");
 
@@ -267,6 +271,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pool_manager.clone(),
             aggregator.clone(),
             database.get_pool().clone(),
+            rpc_client.clone(),
         )
         .await
         {
@@ -295,6 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         pool_manager.clone(),
                         aggregator.clone(),
                         database.get_pool().clone(),
+                        rpc_client.clone(),
                     )
                     .await
                     {

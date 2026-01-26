@@ -341,10 +341,22 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         // Determine swap direction
         let swap_for_y = input_mint == self.lbpair.token_x_mint;
 
+        // Determine token types for X and Y based on swap direction
+        let (is_x_token_2022, is_y_token_2022) = if swap_for_y {
+            (
+                params.input_token.is_token_2022,
+                params.output_token.is_token_2022,
+            )
+        } else {
+            (
+                params.output_token.is_token_2022,
+                params.input_token.is_token_2022,
+            )
+        };
+
         // Determine token programs
-        let token_x_program = common_functions::get_token_program(params.input_token.is_token_2022);
-        let token_y_program =
-            common_functions::get_token_program(params.output_token.is_token_2022);
+        let token_x_program = common_functions::get_token_program(is_x_token_2022);
+        let token_y_program = common_functions::get_token_program(is_y_token_2022);
 
         // Convert to anchor Pubkey for ATA derivation
         let user_wallet_anchor = common_functions::to_pubkey(&params.user_wallet);
@@ -492,20 +504,10 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         let mut instructions = Vec::new();
 
         // Determine token programs for ATAs
-        let is_x_token_2022 = params.input_token.is_token_2022;
-        let is_y_token_2022 = params.output_token.is_token_2022;
-
-        // Determine the correct token type for each ATA based on swap direction
-        let input_is_token_2022 = if swap_for_y {
-            is_x_token_2022
-        } else {
-            is_y_token_2022
-        };
-        let output_is_token_2022 = if swap_for_y {
-            is_y_token_2022
-        } else {
-            is_x_token_2022
-        };
+        // Determine the correct token type for each ATA
+        // Fix: Use params directly instead of inferring from X/Y which was buggy for !swap_for_y
+        let input_is_token_2022 = params.input_token.is_token_2022;
+        let output_is_token_2022 = params.output_token.is_token_2022;
 
         // Create ATA for input token (ensures account exists for transfer)
         instructions.push(common_functions::create_ata_instruction(

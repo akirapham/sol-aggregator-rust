@@ -45,6 +45,7 @@ pub struct ArbitrageMonitor {
     config: ArbitrageConfig,
     db: Pool<Postgres>,
     helius_sender: Arc<HeliusSender>,
+    rpc_client: Arc<RpcClient>,
 }
 
 impl ArbitrageMonitor {
@@ -53,9 +54,11 @@ impl ArbitrageMonitor {
         aggregator: Arc<DexAggregator>,
         config: ArbitrageConfig,
         db: Pool<Postgres>,
+        rpc_client: Arc<RpcClient>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Initialize Helius sender from environment
-        let helius_sender = HeliusSender::from_env().map_err(|e| format!("Failed to initialize Helius sender: {}", e))?;
+        let helius_sender = HeliusSender::from_env()
+            .map_err(|e| format!("Failed to initialize Helius sender: {}", e))?;
         let helius_sender = Arc::new(helius_sender);
 
         log::info!("🌐 Arbitrage Monitor initialized with Helius Sender");
@@ -66,11 +69,12 @@ impl ArbitrageMonitor {
             config,
             db,
             helius_sender,
+            rpc_client,
         })
     }
 
-    pub fn get_rpc_client(&self) -> &RpcClient {
-        self.helius_sender.rpc_client()
+    pub fn get_rpc_client(&self) -> Arc<RpcClient> {
+        self.rpc_client.clone()
     }
 
     /// Subscribe to pool update events from the pool manager
@@ -488,16 +492,16 @@ impl ArbitrageMonitor {
         // Build arbitrage transaction instructions
         match self
             .aggregator
-            .build_arbitrage_instructions(
-                &forward_route,
-                &reverse_route,
-                payer,
-            )
+            .build_arbitrage_instructions(&forward_route, &reverse_route, payer)
             .await
         {
             Ok(instructions) => {
                 // Send smart transaction via Helius
-                match self.helius_sender.send_smart_transaction(instructions, priority).await {
+                match self
+                    .helius_sender
+                    .send_smart_transaction(instructions, priority)
+                    .await
+                {
                     Ok(result) => {
                         log::info!(
                             "✅ Trade successful - Signature: {} - CU: {:?}",

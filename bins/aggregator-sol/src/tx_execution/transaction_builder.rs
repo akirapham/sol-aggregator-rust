@@ -2,10 +2,7 @@
 // Handles priority fees and compute unit estimation
 
 use solana_sdk::{
-    instruction::Instruction,
-    message::Message,
-    pubkey::Pubkey,
-    transaction::Transaction,
+    instruction::Instruction, message::Message, pubkey::Pubkey, transaction::Transaction,
 };
 use std::str::FromStr;
 
@@ -78,7 +75,8 @@ impl TransactionBuilder {
             priority_fee_microlamports,
         );
 
-        let message = Message::new_with_blockhash(&all_instructions, Some(payer), &recent_blockhash);
+        let message =
+            Message::new_with_blockhash(&all_instructions, Some(payer), &recent_blockhash);
         Transaction::new_unsigned(message)
     }
 
@@ -117,14 +115,29 @@ mod tests {
 
     #[test]
     fn test_compute_units_buffer() {
-        assert_eq!(TransactionBuilder::estimate_compute_units_with_buffer(100_000), 110_000);
-        assert_eq!(TransactionBuilder::estimate_compute_units_with_buffer(2_000_000), 1_400_000); // Capped
+        assert_eq!(
+            TransactionBuilder::estimate_compute_units_with_buffer(100_000),
+            110_000
+        );
+        assert_eq!(
+            TransactionBuilder::estimate_compute_units_with_buffer(2_000_000),
+            1_400_000
+        ); // Capped
     }
 
     #[test]
     fn test_priority_fee_calculation() {
-        assert_eq!(TransactionBuilder::calculate_priority_fee(PriorityLevel::Low), 1_000);
-        assert_eq!(TransactionBuilder::calculate_priority_fee(PriorityLevel::High), 100_000);
-        assert_eq!(TransactionBuilder::calculate_priority_fee(PriorityLevel::Custom(50_000)), 50_000);
+        assert_eq!(
+            TransactionBuilder::calculate_priority_fee(PriorityLevel::Low),
+            1_000
+        );
+        assert_eq!(
+            TransactionBuilder::calculate_priority_fee(PriorityLevel::High),
+            100_000
+        );
+        assert_eq!(
+            TransactionBuilder::calculate_priority_fee(PriorityLevel::Custom(50_000)),
+            50_000
+        );
     }
 }

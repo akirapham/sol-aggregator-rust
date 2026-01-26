@@ -16,8 +16,8 @@ pub struct KeypairManager {
 impl KeypairManager {
     /// Create from file path (JSON array format - 64 byte keypair)
     pub fn from_file(path: &str) -> Result<Self, String> {
-        let data = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read keypair file: {}", e))?;
+        let data =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read keypair file: {}", e))?;
 
         let bytes: Vec<u8> = serde_json::from_str(&data)
             .map_err(|e| format!("Failed to parse keypair JSON: {}", e))?;
@@ -25,9 +25,12 @@ impl KeypairManager {
         // Solana keypair files contain 64 bytes: 32-byte secret + 32-byte public
         // We need only the first 32 bytes (secret key) for new_from_array
         if bytes.len() < 32 {
-            return Err(format!("Invalid keypair length: expected at least 32 bytes, got {}", bytes.len()));
+            return Err(format!(
+                "Invalid keypair length: expected at least 32 bytes, got {}",
+                bytes.len()
+            ));
         }
-        
+
         let mut secret = [0u8; 32];
         secret.copy_from_slice(&bytes[..32]);
 
@@ -59,7 +62,10 @@ impl KeypairManager {
             return Self::from_base58(&key);
         }
 
-        Err("Neither SOLANA_KEYPAIR_PATH nor SOLANA_PRIVATE_KEY environment variable is set".to_string())
+        Err(
+            "Neither SOLANA_KEYPAIR_PATH nor SOLANA_PRIVATE_KEY environment variable is set"
+                .to_string(),
+        )
     }
 
     /// Get the public key

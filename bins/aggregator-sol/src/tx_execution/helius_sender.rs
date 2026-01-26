@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcSimulateTransactionConfig;
 use solana_sdk::{
-    instruction::Instruction,
-    pubkey::Pubkey,
-    signature::Signature,
-    transaction::Transaction,
+    instruction::Instruction, pubkey::Pubkey, signature::Signature, transaction::Transaction,
 };
 use std::sync::Arc;
 
@@ -108,8 +105,7 @@ impl HeliusSender {
             .or_else(|_| std::env::var("SOLANA_RPC_URL"))
             .map_err(|_| "HELIUS_RPC_URL or SOLANA_RPC_URL must be set")?;
 
-        let api_key = std::env::var("HELIUS_API_KEY")
-            .unwrap_or_default(); // API key is optional for some operations
+        let api_key = std::env::var("HELIUS_API_KEY").unwrap_or_default(); // API key is optional for some operations
 
         let keypair_manager = KeypairManager::from_env()?;
 

@@ -1557,8 +1557,8 @@ async fn test_meteora_dlmm_quote_simulation() {
     let (pool_manager, config) = create_test_setup(vec!["meteora_dlmm"]).await;
 
     // Meteora DLMM Pool: SOL-RALPH
-    let pool_address = Pubkey::from_str("6b9ZdnykBXZwRqw1xuS4McYxghAwocwZzrwijzcUVcxP").unwrap();
-    let ralph_mint = Pubkey::from_str("8116V1BW9zaXUM6pVhWVaAduKrLcEBi3RGXedKTrBAGS").unwrap();
+    let pool_address = Pubkey::from_str("2NeCmKGXrcCa4aQhKdjdhY728565YsFcxNbD1JPcGDkh").unwrap();
+    let token_mint = Pubkey::from_str("DLJjXt2BmoeWMBuvuvBnuLZZGPiG5wFt8mVDWXnbVvnH").unwrap();
     let _sol_mint = Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
 
     let rpc_client = pool_manager.get_rpc_client();
@@ -1635,11 +1635,11 @@ async fn test_meteora_dlmm_quote_simulation() {
     pool_manager.inject_token(wsol_token()).await;
     pool_manager
         .inject_token(Token {
-            address: ralph_mint,
+            address: token_mint,
             symbol: Some("RALPH".to_string()),
             name: Some("Ralph Token".to_string()),
             decimals: 9,
-            is_token_2022: false,
+            is_token_2022: true,
             logo_uri: None,
         })
         .await;
@@ -1653,15 +1653,15 @@ async fn test_meteora_dlmm_quote_simulation() {
     let swap_params = crate::types::SwapParams {
         input_token: wsol_token(),
         output_token: Token {
-            address: ralph_mint,
+            address: token_mint,
             symbol: Some("RALPH".to_string()),
             name: Some("Ralph Token".to_string()),
             decimals: 9,
-            is_token_2022: false,
+            is_token_2022: true,
             logo_uri: None,
         },
         input_amount: amount_in,
-        slippage_bps: 100,
+        slippage_bps: 1000,
         user_wallet: payer,
         priority: crate::types::ExecutionPriority::Medium,
     };
@@ -1853,7 +1853,7 @@ async fn test_meteora_dlmm_quote_simulation_reverse() {
         },
         output_token: wsol_token(),
         input_amount: sell_amount_in,
-        slippage_bps: 100,
+        slippage_bps: 1000,
         user_wallet: payer,
         priority: crate::types::ExecutionPriority::Medium,
     };

@@ -542,11 +542,65 @@ impl DexAggregator {
         token_b_address: &Pubkey,
         slippage_bps: u16,
     ) -> Option<(i64, SwapRoute, SwapRoute)> {
-        let exclude_pools: HashSet<Pubkey> = HashSet::new();
+        // Quick price check: Compare prices across pools before expensive routing
+        // This is an OPTIMIZATION, not a hard filter - triangle arb via multi-hop still possible
+        let pools = self
+            .pool_manager
+            .get_pools_for_pair(&token_a.input_token.address, token_b_address)
+            .await;
+
+        // If we have 2+ pools on same pair, check for price spread
+        // If spread is tiny, skip (cross-DEX arb unlikely)
+        // Single pool or no pools: proceed anyway (triangle arb via multi-hop possible)
+        if pools.len() >= 2 {
+            let token_a_decimals = token_a.input_token.decimals;
+            let token_b_decimals = self
+                .pool_manager
+                .get_token(token_b_address)
+                .await
+                .map(|t| t.decimals)
+                .unwrap_or(9);
+
+            let sol_price = 1.0;
+            let prices: Vec<(f64, f64)> = pools
+                .iter()
+                .map(|pool| {
+                    pool.calculate_token_prices(sol_price, token_a_decimals, token_b_decimals)
+                })
+                .collect();
+
+            if !prices.is_empty() {
+                let min_price = prices.iter().map(|(p, _)| *p).fold(f64::MAX, f64::min);
+                let max_price = prices.iter().map(|(p, _)| *p).fold(f64::MIN, f64::max);
+                let price_spread_percent =
+                    ((max_price - min_price) / min_price.max(0.0001)) * 100.0;
+
+                // Only skip if spread is tiny (< 0.1%) - cross-DEX arb unlikely
+                if price_spread_percent < 0.1 {
+                    log::debug!(
+                        "Price spread {:.4}% too small on {} pools, skipping cross-DEX check",
+                        price_spread_percent,
+                        pools.len()
+                    );
+                    return None;
+                }
+
+                log::debug!(
+                    "💰 Price spread {:.4}% across {} pools, proceeding with routing",
+                    price_spread_percent,
+                    pools.len()
+                );
+            }
+        } else {
+            // 0 or 1 pool for this pair - triangle arb still possible via multi-hop reverse
+            log::debug!(
+                "Only {} pool(s) for pair, checking for triangle arb via multi-hop",
+                pools.len()
+            );
+        }
 
         // Step 1: Get best forward route from tokenA -> tokenB
-        // Allow splits to detect when one pool has mispricing vs others
-        // But limit to direct paths only (no multi-hop) to keep it simple
+        let exclude_pools: HashSet<Pubkey> = HashSet::new();
         let forward_route = self
             .get_swap_route_with_exclude(token_a, &exclude_pools, true)
             .await?;
@@ -563,6 +617,18 @@ impl DexAggregator {
             }
         }
 
+        // Collect pools used in forward route to exclude from reverse route
+        let forward_pool_addresses: HashSet<Pubkey> = forward_route
+            .paths
+            .iter()
+            .flat_map(|path| path.steps.iter().map(|step| step.pool_address))
+            .collect();
+
+        log::debug!(
+            "Forward route uses {} pool(s), excluding from reverse search",
+            forward_pool_addresses.len()
+        );
+
         let token_b_amount = forward_route.other_output_amount;
 
         // Step 2: Get the tokenB info from pool manager
@@ -578,9 +644,10 @@ impl DexAggregator {
             priority: token_a.priority,
         };
 
-        // Step 4: Get BEST reverse route (allow multi-hop for best price back)
+        // Step 4: Get BEST reverse route, EXCLUDING forward pools
+        // Use direct_only=true for simpler, more reliable triangle arb
         let reverse_route = self
-            .get_swap_route_with_exclude(&reverse_params, &exclude_pools, false)
+            .get_swap_route_with_exclude(&reverse_params, &forward_pool_addresses, true)
             .await?;
 
         // Step 5: Check transaction size and fallback if needed
@@ -648,6 +715,102 @@ impl DexAggregator {
         // Step 6: Check conditions: Profit > 0 OR Abnormal profit/loss (> 5% or < -5%)
         if profit > 0 || profit_percent.abs() > 5.0 {
             Some((profit, forward_route, final_reverse_route))
+        } else {
+            None
+        }
+    }
+
+    /// Calculate triangle arbitrage profit: SOL → Token1 → Token2 → SOL
+    /// Returns (profit_amount, leg1_route, leg2_route, leg3_route) if profitable
+    pub async fn calculate_triangle_profit(
+        &self,
+        path: &crate::arbitrage_config::TrianglePath,
+        input_amount: u64,
+        slippage_bps: u16,
+    ) -> Option<(i64, SwapRoute, SwapRoute, SwapRoute)> {
+        let exclude_pools: HashSet<Pubkey> = HashSet::new();
+
+        // Get token info for all legs
+        let token_leg1_from = self.pool_manager.get_token(&path.leg1_from).await?;
+        let token_leg1_to = self.pool_manager.get_token(&path.leg1_to).await?;
+        let token_leg2_to = self.pool_manager.get_token(&path.leg2_to).await?;
+        let token_leg3_to = self.pool_manager.get_token(&path.leg3_to).await?;
+
+        // Leg 1: SOL → Token1
+        let leg1_params = SwapParams {
+            input_token: token_leg1_from.clone(),
+            output_token: token_leg1_to.clone(),
+            input_amount,
+            slippage_bps,
+            user_wallet: Pubkey::default(),
+            priority: crate::types::ExecutionPriority::High,
+        };
+        let leg1_route = self
+            .get_swap_route_with_exclude(&leg1_params, &exclude_pools, true)
+            .await?;
+
+        // Collect leg1 pools to exclude
+        let leg1_pools: HashSet<Pubkey> = leg1_route
+            .paths
+            .iter()
+            .flat_map(|p| p.steps.iter().map(|s| s.pool_address))
+            .collect();
+
+        let leg1_output = leg1_route.other_output_amount;
+
+        // Leg 2: Token1 → Token2
+        let leg2_params = SwapParams {
+            input_token: token_leg1_to,
+            output_token: token_leg2_to.clone(),
+            input_amount: leg1_output,
+            slippage_bps,
+            user_wallet: Pubkey::default(),
+            priority: crate::types::ExecutionPriority::High,
+        };
+        let leg2_route = self
+            .get_swap_route_with_exclude(&leg2_params, &leg1_pools, true)
+            .await?;
+
+        // Collect leg2 pools to exclude
+        let mut exclude_leg12: HashSet<Pubkey> = leg1_pools;
+        exclude_leg12.extend(
+            leg2_route
+                .paths
+                .iter()
+                .flat_map(|p| p.steps.iter().map(|s| s.pool_address)),
+        );
+
+        let leg2_output = leg2_route.other_output_amount;
+
+        // Leg 3: Token2 → SOL
+        let leg3_params = SwapParams {
+            input_token: token_leg2_to,
+            output_token: token_leg3_to,
+            input_amount: leg2_output,
+            slippage_bps,
+            user_wallet: Pubkey::default(),
+            priority: crate::types::ExecutionPriority::High,
+        };
+        let leg3_route = self
+            .get_swap_route_with_exclude(&leg3_params, &exclude_leg12, true)
+            .await?;
+
+        let final_output = leg3_route.other_output_amount;
+        let profit = final_output as i64 - input_amount as i64;
+        let profit_percent = (profit as f64 / input_amount as f64) * 100.0;
+
+        log::debug!(
+            "🔺 Triangle {} | In: {} → Out: {} | Profit: {} ({:.2}%)",
+            path.name,
+            input_amount,
+            final_output,
+            profit,
+            profit_percent
+        );
+
+        // Return if profitable or significant loss (for logging)
+        if profit > 0 || profit_percent.abs() > 5.0 {
+            Some((profit, leg1_route, leg2_route, leg3_route))
         } else {
             None
         }

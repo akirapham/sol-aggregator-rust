@@ -64,9 +64,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run migrations (optional, better to use sqlx-cli in prod)
     // database.run_migrations().await.expect("Failed to run migrations"); // Implement if needed
 
+    // Load arbitrage config early to get pool addresses for filtered subscription
+    let arb_config_path =
+        env::var("ARBITRAGE_CONFIG_PATH").unwrap_or_else(|_| "arbitrage_config.toml".to_string());
+    let arb_config_path_buf = PathBuf::from(&arb_config_path);
+
+    let monitored_pool_addresses: Option<Vec<String>> = if arb_config_path_buf.exists() {
+        match ArbitrageConfig::from_file(&arb_config_path) {
+            Ok(config) => {
+                let pools: Vec<String> = config
+                    .get_enabled_pools()
+                    .iter()
+                    .map(|p| p.address.clone())
+                    .collect();
+                if pools.is_empty() {
+                    log::info!("No monitored pools in config, using full subscription");
+                    None
+                } else {
+                    log::info!(
+                        "Loaded {} monitored pools for filtered subscription",
+                        pools.len()
+                    );
+                    Some(pools)
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to load arbitrage config: {}, using full subscription",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        log::info!("No arbitrage config found, using full subscription");
+        None
+    };
+
     // 1. Start the pool manager and gRPC streaming
     log::info!("Starting pool manager and gRPC streaming...");
-    let grpc_service = create_grpc_service(50, 100).await?;
+    // Batch size: 50, Timeout: 5ms (aggressive for arbitrage detection)
+    let grpc_service = create_grpc_service(50, 5, monitored_pool_addresses).await?;
 
     log::info!("Creating DEX aggregator...");
     let config = ConfigLoader::load().expect("Failed to load config");

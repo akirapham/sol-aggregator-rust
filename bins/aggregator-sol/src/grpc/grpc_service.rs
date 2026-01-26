@@ -294,6 +294,7 @@ impl GrpcServiceTrait for GrpcService {
 pub async fn create_grpc_service(
     batch_size: usize,
     batch_timeout_ms: u64,
+    monitored_pool_addresses: Option<Vec<String>>,
 ) -> Result<Arc<GrpcService>, Box<dyn std::error::Error>> {
     let agg_config = AggregatorConfig::from_env().unwrap();
 
@@ -366,22 +367,53 @@ pub async fn create_grpc_service(
     let account_exclude = vec![];
     let account_required = vec![];
 
-    // Listen to transaction data
-    let transaction_filter = TransactionFilter {
-        account_include: account_include.clone(),
-        account_exclude,
-        account_required,
-    };
+    // Determine filter mode based on monitored pools
+    let (transaction_filter, account_filter) =
+        if let Some(ref pool_addresses) = monitored_pool_addresses {
+            // Filtered mode: Subscribe only to transactions/accounts involving specific pools
+            log::info!(
+                "🎯 Filtered subscription mode: Monitoring {} specific pools",
+                pool_addresses.len()
+            );
 
-    // Listen to account data belonging to owner programs -> account event monitoring
-    let account_filter = AccountFilter {
-        account: vec![], // Raydium AMM V4 program's authority account
-        owner: account_include.clone(),
-        filters: vec![],
-    };
+            let tx_filter = TransactionFilter {
+                account_include: pool_addresses.clone(), // Only transactions involving these pools
+                account_exclude: vec![],
+                account_required: vec![],
+            };
+
+            let acc_filter = AccountFilter {
+                account: pool_addresses.clone(), // Only account updates for these pools
+                owner: vec![],
+                filters: vec![],
+            };
+
+            (tx_filter, acc_filter)
+        } else {
+            // Legacy mode: Subscribe to all accounts/transactions from enabled programs
+            log::info!("📡 Full subscription mode: Monitoring all pools from enabled DEXes");
+
+            let tx_filter = TransactionFilter {
+                account_include: account_include.clone(),
+                account_exclude,
+                account_required,
+            };
+
+            let acc_filter = AccountFilter {
+                account: vec![],
+                owner: account_include.clone(),
+                filters: vec![],
+            };
+
+            (tx_filter, acc_filter)
+        };
 
     log::info!("Enabled DEXes: {:?}", protocols);
-    log::info!("Monitoring programs: {:?}", account_include);
+    if monitored_pool_addresses.is_some() {
+        log::info!("Monitoring specific pools (filtered mode - both tx and account)");
+    } else {
+        log::info!("Monitoring programs: {:?}", account_include);
+    }
 
     Ok(Arc::new(GrpcService {
         grpc,

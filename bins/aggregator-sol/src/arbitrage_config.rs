@@ -81,6 +81,130 @@ impl MonitoredPool {
     }
 }
 
+/// Represents a triangle arbitrage path: SOL → Token1 → Token2 → SOL
+#[derive(Debug, Clone)]
+pub struct TrianglePath {
+    pub name: String,
+    /// Leg 1: base_token → intermediate_token_1
+    pub leg1_from: Pubkey,
+    pub leg1_to: Pubkey,
+    /// Leg 2: intermediate_token_1 → intermediate_token_2
+    pub leg2_from: Pubkey,
+    pub leg2_to: Pubkey,
+    /// Leg 3: intermediate_token_2 → base_token
+    pub leg3_from: Pubkey,
+    pub leg3_to: Pubkey,
+}
+
+impl TrianglePath {
+    pub fn new(name: &str, tokens: [&str; 4]) -> Result<Self, String> {
+        // tokens: [base, token1, token2, base] - forms a cycle
+        let base = Pubkey::from_str(tokens[0]).map_err(|e| e.to_string())?;
+        let token1 = Pubkey::from_str(tokens[1]).map_err(|e| e.to_string())?;
+        let token2 = Pubkey::from_str(tokens[2]).map_err(|e| e.to_string())?;
+        let base2 = Pubkey::from_str(tokens[3]).map_err(|e| e.to_string())?;
+
+        if base != base2 {
+            return Err("Triangle must start and end with same token".to_string());
+        }
+
+        Ok(Self {
+            name: name.to_string(),
+            leg1_from: base,
+            leg1_to: token1,
+            leg2_from: token1,
+            leg2_to: token2,
+            leg3_from: token2,
+            leg3_to: base,
+        })
+    }
+
+    /// Check if this triangle involves a specific token
+    pub fn involves_token(&self, token: &Pubkey) -> bool {
+        self.leg1_from == *token || self.leg1_to == *token || self.leg2_to == *token
+    }
+
+    /// Check if this triangle has a leg involving the given token pair
+    /// Returns true if any leg of the triangle swaps between token_a and token_b
+    pub fn involves_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> bool {
+        // Check all 3 legs for the pair (order doesn't matter)
+        let leg1_matches = (self.leg1_from == *token_a && self.leg1_to == *token_b)
+            || (self.leg1_from == *token_b && self.leg1_to == *token_a);
+        let leg2_matches = (self.leg2_from == *token_a && self.leg2_to == *token_b)
+            || (self.leg2_from == *token_b && self.leg2_to == *token_a);
+        let leg3_matches = (self.leg3_from == *token_a && self.leg3_to == *token_b)
+            || (self.leg3_from == *token_b && self.leg3_to == *token_a);
+
+        leg1_matches || leg2_matches || leg3_matches
+    }
+
+    /// Get all token pairs (edges) in this triangle
+    /// Returns normalized pairs (smaller pubkey first) for consistent hashing
+    pub fn get_pairs(&self) -> Vec<(Pubkey, Pubkey)> {
+        vec![
+            Self::normalize_pair(self.leg1_from, self.leg1_to),
+            Self::normalize_pair(self.leg2_from, self.leg2_to),
+            Self::normalize_pair(self.leg3_from, self.leg3_to),
+        ]
+    }
+
+    /// Normalize a pair so smaller pubkey is first (for consistent HashMap keys)
+    fn normalize_pair(a: Pubkey, b: Pubkey) -> (Pubkey, Pubkey) {
+        if a < b {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+}
+
+use std::collections::HashMap;
+
+/// Index for fast O(1) lookup of triangle paths by token pair
+/// Maps (token_a, token_b) -> Vec<path_index> for efficient filtering
+#[derive(Debug, Clone)]
+pub struct TrianglePathIndex {
+    /// All triangle paths
+    pub paths: Vec<TrianglePath>,
+    /// Map from normalized (token_a, token_b) pair to indices of paths involving that pair
+    pair_to_paths: HashMap<(Pubkey, Pubkey), Vec<usize>>,
+}
+
+impl TrianglePathIndex {
+    /// Build index from a list of triangle paths
+    pub fn new(paths: Vec<TrianglePath>) -> Self {
+        let mut pair_to_paths: HashMap<(Pubkey, Pubkey), Vec<usize>> = HashMap::new();
+
+        for (idx, path) in paths.iter().enumerate() {
+            // Index each leg's pair
+            for pair in path.get_pairs() {
+                pair_to_paths.entry(pair).or_default().push(idx);
+            }
+        }
+
+        Self {
+            paths,
+            pair_to_paths,
+        }
+    }
+
+    /// Get all triangle paths that involve the given token pair
+    /// This is O(1) lookup + cloning relevant paths
+    pub fn get_paths_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<&TrianglePath> {
+        let normalized = TrianglePath::normalize_pair(*token_a, *token_b);
+
+        self.pair_to_paths
+            .get(&normalized)
+            .map(|indices| indices.iter().map(|&i| &self.paths[i]).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get stats about the index
+    pub fn stats(&self) -> (usize, usize) {
+        (self.paths.len(), self.pair_to_paths.len())
+    }
+}
+
 impl ArbitrageConfig {
     /// Load configuration from TOML file
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -119,6 +243,88 @@ impl ArbitrageConfig {
             }
         }
         tokens
+    }
+
+    /// Get all hardcoded triangle arbitrage paths
+    /// These are pre-computed valid 3-hop cycles from the configured pools
+    pub fn get_triangle_paths(&self) -> Vec<TrianglePath> {
+        // Token addresses
+        const SOL: &str = "So11111111111111111111111111111111111111112";
+        const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+        const USDT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+        const MSOL: &str = "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So";
+        const JITOSOL: &str = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn";
+        const RAY: &str = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R";
+        const JUP: &str = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
+        const PUMP: &str = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
+        const BONK: &str = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+        const WIF: &str = "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm";
+        const PYTH: &str = "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3";
+        const RENDER: &str = "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof";
+        const PENGU: &str = "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv";
+
+        let paths = vec![
+            // =================================================================
+            // LST Triangles (Highest Opportunity - staking yield arbitrage)
+            // =================================================================
+            TrianglePath::new("SOL→mSOL→USDC→SOL", [SOL, MSOL, USDC, SOL]),
+            TrianglePath::new("SOL→jitoSOL→USDC→SOL", [SOL, JITOSOL, USDC, SOL]),
+            TrianglePath::new("SOL→mSOL→jitoSOL→SOL", [SOL, MSOL, JITOSOL, SOL]),
+            // Reverse LST Triangles
+            TrianglePath::new("SOL→USDC→mSOL→SOL", [SOL, USDC, MSOL, SOL]),
+            TrianglePath::new("SOL→USDC→jitoSOL→SOL", [SOL, USDC, JITOSOL, SOL]),
+            TrianglePath::new("SOL→jitoSOL→mSOL→SOL", [SOL, JITOSOL, MSOL, SOL]),
+            // =================================================================
+            // DeFi Token Triangles (RAY, JUP - high volume DEX tokens)
+            // =================================================================
+            TrianglePath::new("SOL→RAY→USDC→SOL", [SOL, RAY, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→RAY→SOL", [SOL, USDC, RAY, SOL]),
+            TrianglePath::new("SOL→RAY→USDT→SOL", [SOL, RAY, USDT, SOL]),
+            TrianglePath::new("SOL→JUP→USDC→SOL", [SOL, JUP, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→JUP→SOL", [SOL, USDC, JUP, SOL]),
+            TrianglePath::new("SOL→JUP→RAY→SOL", [SOL, JUP, RAY, SOL]),
+            // =================================================================
+            // PUMP Token Triangles ($16M+ liquidity main pool)
+            // =================================================================
+            TrianglePath::new("SOL→PUMP→USDC→SOL", [SOL, PUMP, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→PUMP→SOL", [SOL, USDC, PUMP, SOL]),
+            // =================================================================
+            // Meme Coin Triangles (BONK, WIF - high volatility)
+            // =================================================================
+            TrianglePath::new("SOL→BONK→USDC→SOL", [SOL, BONK, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→BONK→SOL", [SOL, USDC, BONK, SOL]),
+            TrianglePath::new("SOL→WIF→USDC→SOL", [SOL, WIF, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→WIF→SOL", [SOL, USDC, WIF, SOL]),
+            // =================================================================
+            // Oracle/Infrastructure Triangles (PYTH, RENDER)
+            // =================================================================
+            TrianglePath::new("SOL→PYTH→USDC→SOL", [SOL, PYTH, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→PYTH→SOL", [SOL, USDC, PYTH, SOL]),
+            TrianglePath::new("SOL→RENDER→USDC→SOL", [SOL, RENDER, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→RENDER→SOL", [SOL, USDC, RENDER, SOL]),
+            // =================================================================
+            // NFT/Gaming Triangles (PENGU - high volume meme)
+            // =================================================================
+            TrianglePath::new("SOL→PENGU→USDC→SOL", [SOL, PENGU, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→PENGU→SOL", [SOL, USDC, PENGU, SOL]),
+            TrianglePath::new("SOL→PENGU→jitoSOL→SOL", [SOL, PENGU, JITOSOL, SOL]),
+            // =================================================================
+            // Cross-token Triangles (for price discrepancies between related tokens)
+            // =================================================================
+            TrianglePath::new("SOL→BONK→WIF→SOL", [SOL, BONK, WIF, SOL]),
+            TrianglePath::new("SOL→mSOL→USDT→SOL", [SOL, MSOL, USDT, SOL]),
+            TrianglePath::new("SOL→jitoSOL→USDT→SOL", [SOL, JITOSOL, USDT, SOL]),
+        ];
+
+        // Filter to only valid paths (parsing succeeded)
+        paths.into_iter().filter_map(|r| r.ok()).collect()
+    }
+
+    /// Build an indexed lookup table for fast triangle path retrieval by token pair
+    /// This creates a HashMap that maps each token pair to the triangle paths that use it
+    pub fn build_triangle_index(&self) -> TrianglePathIndex {
+        let paths = self.get_triangle_paths();
+        TrianglePathIndex::new(paths)
     }
 
     /// Add a token to the monitored list

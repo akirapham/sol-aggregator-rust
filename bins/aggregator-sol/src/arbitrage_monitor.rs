@@ -46,6 +46,8 @@ pub struct ArbitrageMonitor {
     db: Pool<Postgres>,
     helius_sender: Arc<HeliusSender>,
     rpc_client: Arc<RpcClient>,
+    /// Pre-built index for O(1) triangle path lookup by token pair
+    triangle_index: crate::arbitrage_config::TrianglePathIndex,
 }
 
 impl ArbitrageMonitor {
@@ -61,6 +63,18 @@ impl ArbitrageMonitor {
             .map_err(|e| format!("Failed to initialize Helius sender: {}", e))?;
         let helius_sender = Arc::new(helius_sender);
 
+        // Start connection warmer (pings every 30s as per Helius docs)
+        helius_sender.clone().spawn_connection_warmer();
+
+        // Build triangle path index for fast O(1) lookup
+        let triangle_index = config.build_triangle_index();
+        let (path_count, pair_count) = triangle_index.stats();
+        log::info!(
+            "🔺 Triangle index built: {} paths indexed by {} unique token pairs",
+            path_count,
+            pair_count
+        );
+
         log::info!("🌐 Arbitrage Monitor initialized with Helius Sender");
         log::info!("📍 Signer pubkey: {}", helius_sender.payer_pubkey());
 
@@ -70,6 +84,7 @@ impl ArbitrageMonitor {
             db,
             helius_sender,
             rpc_client,
+            triangle_index,
         })
     }
 
@@ -113,22 +128,7 @@ impl ArbitrageMonitor {
     /// Check arbitrage when a broadcast pool update is received
     /// This is triggered by real-time pool updates from the broadcast channel
     async fn on_broadcast_pool_update(&self, pool_update: &ArbitragePoolUpdate) {
-        // Quick price check first - round trip should yield profit
-        let price_round_trip = pool_update.forward_price * pool_update.reverse_price;
-        let price_diff_percent = ((price_round_trip - 1.0) * 100.0).abs();
-        let threshold_percent = (self.config.settings.min_profit_bps as f64) / 100.0;
-
-        if price_diff_percent < threshold_percent {
-            return; // Not profitable enough
-        }
-
-        log::debug!(
-            "💹 Price opportunity detected: {:.4}% difference in pool {}",
-            price_diff_percent,
-            pool_update.pool_address
-        );
-
-        // Get base token and monitored tokens
+        // Get base token (SOL) and monitored tokens
         let base_token = match self.config.get_base_token() {
             Ok(t) => t,
             Err(_) => return,
@@ -136,21 +136,33 @@ impl ArbitrageMonitor {
 
         let monitored_pubkeys = self.config.get_monitored_token_pubkeys();
 
-        // One token must be base, other must be monitored
-        let other_token = if pool_update.token_a == base_token
-            && monitored_pubkeys.contains(&pool_update.token_b)
-        {
+        // Identify the "other" token - pool must involve base token (SOL)
+        let other_token = if pool_update.token_a == base_token {
             pool_update.token_b
-        } else if pool_update.token_b == base_token
-            && monitored_pubkeys.contains(&pool_update.token_a)
-        {
+        } else if pool_update.token_b == base_token {
             pool_update.token_a
         } else {
-            return; // Not a base-to-monitored pair
+            return; // Pool doesn't involve base token (SOL)
         };
 
-        log::debug!("✅ Arbitrage pair: base <-> {}", other_token);
-        self.check_arbitrage(base_token, other_token).await;
+        // Skip if other token is not in monitored list
+        if !monitored_pubkeys.contains(&other_token) {
+            return;
+        }
+
+        log::debug!(
+            "💹 Pool update for SOL/{} on {:?} - triggering cross-DEX check",
+            other_token,
+            pool_update.dex
+        );
+
+        // Run 2-leg and 3-leg arbitrage checks in parallel
+        tokio::join!(
+            // 2-leg cross-DEX arbitrage check
+            self.check_arbitrage(base_token, other_token),
+            // 3-leg triangle arbitrage check (O(1) path lookup)
+            self.check_triangle_arbitrage(pool_update.token_a, pool_update.token_b)
+        );
     }
 
     /// Check arbitrage opportunity for a specific token pair
@@ -301,6 +313,89 @@ impl ArbitrageMonitor {
             None => {
                 // No profitable arbitrage
                 log::debug!("No profitable arbitrage for {} -> {}", token_a, token_b);
+            }
+        }
+    }
+
+    /// Check triangle arbitrage opportunities when a pool update is received
+    /// Uses pre-built HashMap index for O(1) lookup of relevant paths by token pair
+    async fn check_triangle_arbitrage(&self, token_a: Pubkey, token_b: Pubkey) {
+        let input_amount = self.config.settings.base_amount;
+        let slippage_bps = self.config.settings.slippage_bps;
+        let min_profit_bps = self.config.settings.min_profit_bps;
+
+        // O(1) lookup - only get paths that have a leg involving this exact token pair
+        let relevant_paths = self.triangle_index.get_paths_for_pair(&token_a, &token_b);
+
+        if relevant_paths.is_empty() {
+            return;
+        }
+
+        log::debug!(
+            "🔺 Checking {} triangle paths for pair ({}, {})",
+            relevant_paths.len(),
+            token_a,
+            token_b
+        );
+
+        for path in relevant_paths {
+            match self
+                .aggregator
+                .calculate_triangle_profit(path, input_amount, slippage_bps)
+                .await
+            {
+                Some((profit, leg1_route, leg2_route, leg3_route)) => {
+                    let profit_bps = (profit as f64 / input_amount as f64 * 10000.0) as i64;
+
+                    if profit > 0 && profit_bps as u64 >= min_profit_bps {
+                        log::info!(
+                            "🔺 TRIANGLE OPPORTUNITY: {} | Profit: {} lamports ({} bps)",
+                            path.name,
+                            profit,
+                            profit_bps
+                        );
+
+                        // Log route details
+                        log::info!(
+                            "   Leg1: {:?}",
+                            leg1_route
+                                .paths
+                                .iter()
+                                .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
+                                .collect::<Vec<_>>()
+                        );
+                        log::info!(
+                            "   Leg2: {:?}",
+                            leg2_route
+                                .paths
+                                .iter()
+                                .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
+                                .collect::<Vec<_>>()
+                        );
+                        log::info!(
+                            "   Leg3: {:?}",
+                            leg3_route
+                                .paths
+                                .iter()
+                                .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
+                                .collect::<Vec<_>>()
+                        );
+
+                        // TODO: Execute triangle arbitrage when ready
+                        // For now just log the opportunity
+                    } else if profit_bps.abs() > 500 {
+                        // Log abnormal losses (>5%)
+                        log::warn!(
+                            "⚠️ ABNORMAL TRIANGLE: {} | Loss: {} lamports ({} bps)",
+                            path.name,
+                            profit,
+                            profit_bps
+                        );
+                    }
+                }
+                None => {
+                    // Route not found for this triangle - skip silently
+                }
             }
         }
     }

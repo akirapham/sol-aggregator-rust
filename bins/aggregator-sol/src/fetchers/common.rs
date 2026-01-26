@@ -36,7 +36,7 @@ pub async fn fetch_token(
         });
     }
 
-    const MAX_RETRIES: u32 = 3;
+    const MAX_RETRIES: u32 = 5;
     const INITIAL_BACKOFF: u64 = 200;
 
     for attempt in 0..MAX_RETRIES {

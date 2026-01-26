@@ -762,6 +762,48 @@ impl DexAggregator {
         Ok(transaction)
     }
 
+    /// Build arbitrage instructions (forward + reverse routes)
+    /// Returns vector of instructions without transaction
+    pub async fn build_arbitrage_instructions(
+        &self,
+        forward_route: &SwapRoute,
+        reverse_route: &SwapRoute,
+        payer: Pubkey,
+    ) -> Result<Vec<Instruction>, String> {
+        let mut all_instructions = Vec::new();
+
+        // Forward route instructions
+        for path in &forward_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, forward_route.slippage_bps, ExecutionPriority::Medium, payer)
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_arbitrage_instructions forward_route error: {}", e);
+                        e
+                    })?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        // Reverse route instructions
+        for path in &reverse_route.paths {
+            for step in &path.steps {
+                let instructions = self
+                    .build_step_instructions(step, reverse_route.slippage_bps, ExecutionPriority::Medium, payer)
+                    .await
+                    .map_err(|e| {
+                        log::error!("build_arbitrage_instructions reverse_route error: {}", e);
+                        e
+                    })?;
+                all_instructions.extend(instructions);
+            }
+        }
+
+        // Deduplicate instructions
+        Ok(Self::deduplicate_instructions(all_instructions))
+    }
+
     pub async fn build_arbitrage_transaction(
         &self,
         forward_route: &SwapRoute,
@@ -770,36 +812,7 @@ impl DexAggregator {
         payer: Pubkey,
         rpc_client: &RpcClient,
     ) -> Result<Transaction, String> {
-        let mut all_instructions = Vec::new();
-
-        for path in &forward_route.paths {
-            for step in &path.steps {
-                let instructions = self
-                    .build_step_instructions(step, forward_route.slippage_bps, priority, payer)
-                    .await
-                    .map_err(|e| {
-                        log::error!("build_arbitrage_transaction forward_route error: {}", e);
-                        e
-                    })?;
-                all_instructions.extend(instructions);
-            }
-        }
-
-        for path in &reverse_route.paths {
-            for step in &path.steps {
-                let instructions = self
-                    .build_step_instructions(step, reverse_route.slippage_bps, priority, payer)
-                    .await
-                    .map_err(|e| {
-                        log::error!("build_arbitrage_transaction reverse_route error: {}", e);
-                        e
-                    })?;
-                all_instructions.extend(instructions);
-            }
-        }
-
-        // Deduplicate instructions to prevent duplicate ATA creation across multiple swap steps
-        let all_instructions = Self::deduplicate_instructions(all_instructions);
+        let all_instructions = self.build_arbitrage_instructions(forward_route, reverse_route, payer).await?;
 
         // Build unsigned transaction for client-side signing
         let blockhash = rpc_client
@@ -807,7 +820,6 @@ impl DexAggregator {
             .await
             .map_err(|e| format!("Failed to get blockhash: {}", e))?;
 
-        use solana_sdk::message::Message;
         let message = Message::new_with_blockhash(&all_instructions, Some(&payer), &blockhash);
         let transaction = Transaction::new_unsigned(message);
 

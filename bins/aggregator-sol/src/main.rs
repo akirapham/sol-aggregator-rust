@@ -15,6 +15,7 @@ pub mod pool_discovery;
 pub mod pool_manager;
 #[cfg(test)]
 pub mod tests;
+pub mod tx_execution;
 pub mod types;
 pub mod utils;
 
@@ -197,22 +198,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let aggregator_clone = aggregator.clone();
 
                 // Load mainnet configuration
-                let rpc_url = env::var("SOLANA_RPC_URL").unwrap_or_else(|_| "".to_string());
-                log::info!("Using Solana RPC: {}", rpc_url);
-
-                // Load keypair for transaction signing
-                let payer_pubkey_str = env::var("PAYER_PUBKEY").unwrap();
-                let payer_pubkey =
-                    Pubkey::from_str(&payer_pubkey_str).expect("Invalid PAYER_PUBKEY");
-                log::info!("Loaded keypair: {}", payer_pubkey);
+                // rpc_url and payer_pubkey are now loaded internally by ArbitrageMonitor via HeliusSender
 
                 // Create the monitor
                 let monitor = ArbitrageMonitor::new(
                     aggregator_clone,
                     arb_config.clone(),
                     db_pool,
-                    &rpc_url,
-                    payer_pubkey,
                 )
                 .expect("Failed to create arbitrage monitor");
 

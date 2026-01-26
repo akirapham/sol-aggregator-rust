@@ -1,9 +1,10 @@
 use crate::aggregator::{DexAggregator, SwapRoute};
 use crate::arbitrage_config::ArbitrageConfig;
 use crate::pool_manager::ArbitragePoolUpdate;
+use crate::tx_execution::transaction_builder::PriorityLevel;
+use crate::tx_execution::HeliusSender;
 use crate::types::{ExecutionPriority, SwapParams};
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::RpcSimulateTransactionConfig;
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -43,8 +44,7 @@ pub struct ArbitrageMonitor {
     aggregator: Arc<DexAggregator>,
     config: ArbitrageConfig,
     db: Pool<Postgres>,
-    rpc_client: Arc<RpcClient>,
-    payer_pubkey: Pubkey,
+    helius_sender: Arc<HeliusSender>,
 }
 
 impl ArbitrageMonitor {
@@ -53,26 +53,26 @@ impl ArbitrageMonitor {
         aggregator: Arc<DexAggregator>,
         config: ArbitrageConfig,
         db: Pool<Postgres>,
-        rpc_url: &str,
-        payer_pubkey: Pubkey,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let rpc_client = Arc::new(RpcClient::new(rpc_url.to_string()));
+        // Initialize Helius sender from environment
+        let helius_sender = HeliusSender::from_env().map_err(|e| format!("Failed to initialize Helius sender: {}", e))?;
+        let helius_sender = Arc::new(helius_sender);
 
-        log::info!("🌐 Arbitrage Monitor initialized for mainnet: {}", rpc_url);
-        log::info!("📍 Signer pubkey: {}", payer_pubkey);
+        log::info!("🌐 Arbitrage Monitor initialized with Helius Sender");
+        log::info!("📍 Signer pubkey: {}", helius_sender.payer_pubkey());
 
         Ok(Self {
             aggregator,
             config,
             db,
-            rpc_client,
-            payer_pubkey,
+            helius_sender,
         })
     }
 
-    pub fn get_rpc_client(&self) -> Arc<RpcClient> {
-        self.rpc_client.clone()
+    pub fn get_rpc_client(&self) -> &RpcClient {
+        self.helius_sender.rpc_client()
     }
+
     /// Subscribe to pool update events from the pool manager
     /// This spawns a task that listens for events and triggers arbitrage checks
     pub fn subscribe_to_pool_updates(
@@ -175,7 +175,7 @@ impl ArbitrageMonitor {
             output_token: token_b_info.clone(),
             input_amount: self.config.settings.base_amount,
             slippage_bps: self.config.settings.slippage_bps,
-            user_wallet: Pubkey::default(),
+            user_wallet: self.helius_sender.payer_pubkey(),
             priority: ExecutionPriority::Medium,
         };
 
@@ -221,7 +221,7 @@ impl ArbitrageMonitor {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_secs(),
-                        execution_status: "NotYet".to_string(),
+                        execution_status: "Pending".to_string(),
                         error_message: None,
                         details,
                     };
@@ -244,8 +244,7 @@ impl ArbitrageMonitor {
                         opportunity,
                         forward_route.clone(),
                         reverse_route.clone(),
-                        ExecutionPriority::Medium,
-                        &self.rpc_client,
+                        PriorityLevel::High, // Use High priority for profitable opportunities
                     )
                     .await;
                 }
@@ -470,66 +469,46 @@ impl ArbitrageMonitor {
         Ok(result.rows_affected())
     }
 
-    // Execute an arbitrage opportunity (simulation only)
+    // Execute an arbitrage opportunity using Helius Sender
     async fn execute_arbitrade_opportunity(
         &self,
         mut opportunity: ArbitrageOpportunity,
         forward_route: SwapRoute,
         reverse_route: SwapRoute,
-        priority: ExecutionPriority,
-        rpc_client: &RpcClient,
+        priority: PriorityLevel,
     ) {
-        let payer = self.payer_pubkey;
-
         log::info!(
             "🔄 Executing arbitrage opportunity: {} ({:.4}% profit)",
             opportunity.pair_name,
             opportunity.profit_percent
         );
 
-        // Build arbitrage transaction
+        let payer = self.helius_sender.payer_pubkey();
+
+        // Build arbitrage transaction instructions
         match self
             .aggregator
-            .build_arbitrage_transaction(
+            .build_arbitrage_instructions(
                 &forward_route,
                 &reverse_route,
-                priority,
                 payer,
-                rpc_client,
             )
             .await
         {
-            Ok(transaction) => {
-                // Simulate the transaction with sig_verify=false since we don't have the private key here
-                let sim_config = RpcSimulateTransactionConfig {
-                    sig_verify: false,
-                    replace_recent_blockhash: true,
-                    ..Default::default()
-                };
-
-                match rpc_client
-                    .simulate_transaction_with_config(&transaction, sim_config)
-                    .await
-                {
-                    Ok(simulation) => {
-                        if let Some(err) = simulation.value.err {
-                            // Simulation failed
-                            let error_msg = format!("Simulation failed: {:?}", err);
-                            log::error!("❌ {}", error_msg);
-                            opportunity.execution_status = "Fail".to_string();
-                            opportunity.error_message = Some(error_msg);
-                        } else {
-                            // Simulation succeeded
-                            log::info!(
-                                "✅ Simulation successful - compute units: {:?}",
-                                simulation.value.units_consumed
-                            );
-                            opportunity.execution_status = "Success".to_string();
-                            opportunity.error_message = None;
-                        }
+            Ok(instructions) => {
+                // Send smart transaction via Helius
+                match self.helius_sender.send_smart_transaction(instructions, priority).await {
+                    Ok(result) => {
+                        log::info!(
+                            "✅ Trade successful - Signature: {} - CU: {:?}",
+                            result.signature,
+                            result.compute_units_consumed
+                        );
+                        opportunity.execution_status = "Success".to_string();
+                        opportunity.error_message = None;
                     }
                     Err(e) => {
-                        let error_msg = format!("RPC error during simulation: {}", e);
+                        let error_msg = format!("Transaction failed: {}", e);
                         log::error!("❌ {}", error_msg);
                         opportunity.execution_status = "Fail".to_string();
                         opportunity.error_message = Some(error_msg);
@@ -537,7 +516,7 @@ impl ArbitrageMonitor {
                 }
             }
             Err(e) => {
-                let error_msg = format!("Failed to build transaction: {}", e);
+                let error_msg = format!("Failed to build instructions: {}", e);
                 log::error!("❌ {}", error_msg);
                 opportunity.execution_status = "Fail".to_string();
                 opportunity.error_message = Some(error_msg);

@@ -144,3 +144,102 @@ enabled = true
 address = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"  # PYUSD (PayPal USD)
 symbol = "PYUSD"
 enabled = true
+
+# Pump.fun PUMP Token (High Volume)
+[[monitored_tokens]]
+address = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"  # PUMP (pump.fun token)
+symbol = "PUMP"
+enabled = true
+
+# =============================================================================
+# Monitored Pools (Specific high-liquidity pools for arbitrage)
+# These are priority pools where arbitrage opportunities are most likely
+# =============================================================================
+
+# SOL/USDC Pools (Highest Volume - Cross-DEX Arbitrage)
+[[monitored_pools]]
+address = "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"  # Orca Whirlpool SOL/USDC ($37M)
+dex = "Orca"
+pair = "SOL/USDC"
+enabled = true
+
+[[monitored_pools]]
+address = "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2"  # Raydium V4 SOL/USDC
+dex = "Raydium"
+pair = "SOL/USDC"
+enabled = true
+
+[[monitored_pools]]
+address = "2QdhepnKRTLjjSqPL1PtKNwqrUkoLee5Gqs8bvZhRdMv"  # Raydium CLMM SOL/USDC
+dex = "RaydiumClmm"
+pair = "SOL/USDC"
+enabled = true
+
+# SOL/USDT Pools
+[[monitored_pools]]
+address = "4GkRbcYg1VKsZropgai4dMf2Nj2PkXNLf43knFpavrSi"  # Orca Whirlpool SOL/USDT
+dex = "Orca"
+pair = "SOL/USDT"
+enabled = true
+
+# mSOL/SOL Pools (LST Arbitrage)
+[[monitored_pools]]
+address = "9vqYJjDUFecLL2xPUC4Rc7hyCtZ6iJ4mDiVZX7aFXoAe"  # Orca mSOL/SOL
+dex = "Orca"
+pair = "mSOL/SOL"
+enabled = true
+
+# jitoSOL/SOL Pools (LST Arbitrage)
+[[monitored_pools]]
+address = "DFVTutNYXD8z4T5cRdgpso1G3sZqQvMHWpW2N99E4DvE"  # Orca jitoSOL/SOL
+dex = "Orca"
+pair = "jitoSOL/SOL"
+enabled = true
+
+# BONK Pools (Meme Coin Arbitrage)
+[[monitored_pools]]
+address = "8QaXeHBrShJTdtN1rWCccBxpSVvKksQ2PCu5nufb2zbk"  # Orca BONK/USDC ($278K)
+dex = "Orca"
+pair = "BONK/USDC"
+enabled = true
+
+[[monitored_pools]]
+address = "G7mw1d83ismcQJKkzt62Ug4noXCjVhu3eV7U5EMgge6Z"  # Raydium BONK/USDC
+dex = "Raydium"
+pair = "BONK/USDC"
+enabled = true
+
+# RAY Pools (Cross-DEX Arbitrage)
+[[monitored_pools]]
+address = "6UmmUiYoBjSrhakAobJw8BvkmJtDVxaeBtbt7rxWo1mg"  # Raydium RAY/USDC
+dex = "Raydium"
+pair = "RAY/USDC"
+enabled = true
+
+# JUP Pools
+[[monitored_pools]]
+address = "27G8MtK7VtTcCHkpASjSDdkWWYfoqT6ggEuKidVJidD4"  # Orca JUP/SOL
+dex = "Orca"
+pair = "JUP/SOL"
+enabled = true
+
+# PUMP Pools (Meteora & Raydium)
+[[monitored_pools]]
+address = "BVRbyLjjfSBcoyiYFuxbgKYnWuiFaF9CSXEa5vdSZ9Hh"  # Meteora DLMM PUMP/SOL
+dex = "MeteoraDlmm"
+pair = "PUMP/SOL"
+enabled = true
+
+[[monitored_pools]]
+address = "9d9mb8kooFfaD3SctgZtkxQypkshx6ezhbKio89ixyy2"  # Meteora TRUMP/USDC
+dex = "MeteoraDlmm"
+pair = "TRUMP/USDC"
+enabled = true
+
+
+[[monitored_pools]]
+address = "AHMXDjsTVDStaEcYnmDEiERUYr7e4sCSxtGgAzEC1Lr5"  # Raydium PUMP/SOL
+dex = "Raydium"
+pair = "PUMP/SOL"
+enabled = true
+

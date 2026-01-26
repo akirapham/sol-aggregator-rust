@@ -9,6 +9,8 @@ use std::str::FromStr;
 pub struct ArbitrageConfig {
     pub settings: ArbitrageSettings,
     pub monitored_tokens: Vec<MonitoredToken>,
+    #[serde(default)]
+    pub monitored_pools: Vec<MonitoredPool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,6 +49,22 @@ pub struct MonitoredToken {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub struct MonitoredPool {
+    /// Pool address
+    pub address: String,
+
+    /// DEX type (e.g., "MeteoraDlmm", "Raydium")
+    pub dex: String,
+
+    /// Token pair (e.g., "PUMP/SOL")
+    pub pair: String,
+
+    /// Whether this pool is enabled for monitoring
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -54,6 +72,12 @@ fn default_enabled() -> bool {
 impl MonitoredToken {
     pub fn get_pubkey(&self) -> Result<Pubkey, String> {
         Pubkey::from_str(&self.address).map_err(|e| format!("Invalid token address: {}", e))
+    }
+}
+
+impl MonitoredPool {
+    pub fn get_pubkey(&self) -> Result<Pubkey, String> {
+        Pubkey::from_str(&self.address).map_err(|e| format!("Invalid pool address: {}", e))
     }
 }
 
@@ -74,6 +98,11 @@ impl ArbitrageConfig {
     /// Get all enabled monitored tokens
     pub fn get_enabled_tokens(&self) -> Vec<&MonitoredToken> {
         self.monitored_tokens.iter().filter(|t| t.enabled).collect()
+    }
+
+    /// Get all enabled monitored pools
+    pub fn get_enabled_pools(&self) -> Vec<&MonitoredPool> {
+        self.monitored_pools.iter().filter(|p| p.enabled).collect()
     }
 
     /// Get set of all monitored token pubkeys (excluding base token to avoid self-trading)
@@ -250,11 +279,19 @@ enabled = true
 symbol = "USDT"
 address = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 enabled = true
+
+[[monitored_pools]]
+address = "Hi9jUWFHAYu9zRDem4wDS17s1ckiVSve3wpNRdwSDH7o"
+dex = "MeteoraDlmm"
+pair = "PUMP/SOL"
+enabled = true
 "#;
 
         let config: ArbitrageConfig = toml::from_str(config_str).unwrap();
         assert_eq!(config.settings.min_profit_bps, 50);
         assert_eq!(config.monitored_tokens.len(), 2);
         assert_eq!(config.monitored_tokens[0].symbol, "SOL");
+        assert_eq!(config.monitored_pools.len(), 1);
+        assert_eq!(config.monitored_pools[0].pair, "PUMP/SOL");
     }
 }

@@ -221,7 +221,6 @@ pub async fn get_quote(
                 });
             });
 
-            let time_taken_ms = start_time.elapsed().as_millis() as u64;
             let transaction = state
                 .aggregator
                 .build_route_transaction(
@@ -251,6 +250,7 @@ pub async fn get_quote(
             let message_bytes = transaction.message.serialize();
             tx_bytes.extend_from_slice(&message_bytes);
             let base64_tx = STANDARD.encode(&tx_bytes);
+            let time_taken_ms = start_time.elapsed().as_millis() as u64;
 
             let response = QuoteResponse {
                 routes: swap_routes,

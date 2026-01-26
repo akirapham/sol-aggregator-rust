@@ -4,6 +4,7 @@ use crate::pool_manager::ArbitragePoolUpdate;
 use crate::types::{ExecutionPriority, SwapParams};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_client::rpc_config::RpcSimulateTransactionConfig;
+use solana_commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -56,7 +57,10 @@ impl ArbitrageMonitor {
         rpc_url: &str,
         payer_pubkey: Pubkey,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let rpc_client = Arc::new(RpcClient::new(rpc_url.to_string()));
+        let rpc_client = Arc::new(RpcClient::new_with_commitment(
+            rpc_url.to_string(),
+            CommitmentConfig::processed(),
+        ));
 
         log::info!("🌐 Arbitrage Monitor initialized for mainnet: {}", rpc_url);
         log::info!("📍 Signer pubkey: {}", payer_pubkey);

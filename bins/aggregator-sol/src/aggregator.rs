@@ -541,183 +541,187 @@ impl DexAggregator {
         token_a: &SwapParams,
         token_b_address: &Pubkey,
         slippage_bps: u16,
+        updated_pool: Pubkey,
     ) -> Option<(i64, SwapRoute, SwapRoute)> {
-        // Quick price check: Compare prices across pools before expensive routing
-        // This is an OPTIMIZATION, not a hard filter - triangle arb via multi-hop still possible
-        let pools = self
-            .pool_manager
-            .get_pools_for_pair(&token_a.input_token.address, token_b_address)
-            .await;
+        let amm_config_fetcher = self.pool_manager.as_ref();
 
-        // If we have 2+ pools on same pair, check for price spread
-        // If spread is tiny, skip (cross-DEX arb unlikely)
-        // Single pool or no pools: proceed anyway (triangle arb via multi-hop possible)
-        if pools.len() >= 2 {
-            let token_a_decimals = token_a.input_token.decimals;
-            let token_b_decimals = self
-                .pool_manager
-                .get_token(token_b_address)
-                .await
-                .map(|t| t.decimals)
-                .unwrap_or(9);
+        let token_a_addr = token_a.input_token.address;
+        let token_b_addr = *token_b_address;
 
-            let sol_price = 1.0;
-            let prices: Vec<(f64, f64)> = pools
-                .iter()
-                .map(|pool| {
-                    pool.calculate_token_prices(sol_price, token_a_decimals, token_b_decimals)
-                })
-                .collect();
+        // 1. Validate updated pool matches the pair
+        let pool_state = self.pool_manager.get_pool(&updated_pool).await?;
+        let (pool_token_a, pool_token_b) = pool_state.get_tokens();
 
-            if !prices.is_empty() {
-                let min_price = prices.iter().map(|(p, _)| *p).fold(f64::MAX, f64::min);
-                let max_price = prices.iter().map(|(p, _)| *p).fold(f64::MIN, f64::max);
-                let price_spread_percent =
-                    ((max_price - min_price) / min_price.max(0.0001)) * 100.0;
+        let involves_pair = (pool_token_a == token_a_addr && pool_token_b == token_b_addr)
+            || (pool_token_a == token_b_addr && pool_token_b == token_a_addr);
 
-                // Only skip if spread is tiny (< 0.1%) - cross-DEX arb unlikely
-                if price_spread_percent < 0.1 {
-                    log::debug!(
-                        "Price spread {:.4}% too small on {} pools, skipping cross-DEX check",
-                        price_spread_percent,
-                        pools.len()
-                    );
-                    return None;
-                }
-
-                log::debug!(
-                    "💰 Price spread {:.4}% across {} pools, proceeding with routing",
-                    price_spread_percent,
-                    pools.len()
-                );
-            }
-        } else {
-            // 0 or 1 pool for this pair - triangle arb still possible via multi-hop reverse
-            log::debug!(
-                "Only {} pool(s) for pair, checking for triangle arb via multi-hop",
-                pools.len()
-            );
-        }
-
-        // Step 1: Get best forward route from tokenA -> tokenB
-        let exclude_pools: HashSet<Pubkey> = HashSet::new();
-        let forward_route = self
-            .get_swap_route_with_exclude(token_a, &exclude_pools, true)
-            .await?;
-
-        // Check if we got a valid route (1 or 2 paths max for potential split)
-        if forward_route.paths.is_empty() || forward_route.paths.len() > 2 {
+        if !involves_pair {
             return None;
         }
 
-        // Ensure all paths are direct (single pool each)
-        for path in &forward_route.paths {
-            if path.steps.len() != 1 {
-                return None;
-            }
+        // 2. Fetch other pools to compare against
+        let pools = self
+            .pool_manager
+            .get_pools_for_pair(&token_a_addr, &token_b_addr)
+            .await;
+
+        if pools.len() < 2 {
+            // Need at least 2 pools (updated + 1 other) to arbitrage
+            return None;
         }
 
-        // Collect pools used in forward route to exclude from reverse route
-        let forward_pool_addresses: HashSet<Pubkey> = forward_route
-            .paths
-            .iter()
-            .flat_map(|path| path.steps.iter().map(|step| step.pool_address))
-            .collect();
+        // 3. Calculate A->B output on Updated Pool (Benchmark)
+        let updated_out_b = pool_state
+            .calculate_output_amount(&token_a_addr, token_a.input_amount, amm_config_fetcher)
+            .await;
 
-        log::debug!(
-            "Forward route uses {} pool(s), excluding from reverse search",
-            forward_pool_addresses.len()
-        );
+        if updated_out_b == 0 {
+            return None;
+        }
 
-        let token_b_amount = forward_route.other_output_amount;
+        // 4. Find best quote on "Other" pools (excluding updated)
+        let mut exclude_updated = HashSet::new();
+        exclude_updated.insert(updated_pool);
 
-        // Step 2: Get the tokenB info from pool manager
-        let token_b = self.pool_manager.get_token(token_b_address).await?;
+        let forward_route_others = self
+            .get_swap_route_with_exclude(token_a, &exclude_updated, true)
+            .await?;
+        let other_out_b = forward_route_others.other_output_amount;
 
-        // Step 3: Create reverse swap params (tokenB -> tokenA)
-        let reverse_params = SwapParams {
-            input_token: token_b,
-            output_token: token_a.input_token.clone(),
-            input_amount: token_b_amount,
-            slippage_bps,
-            user_wallet: token_a.user_wallet,
-            priority: token_a.priority,
+        // 5. Smart Direction Check (Strategy 1a vs 1b)
+        // difference = abs(updated - other) / min(updated, other)
+        let (min_out, max_out) = if updated_out_b > other_out_b {
+            (other_out_b, updated_out_b)
+        } else {
+            (updated_out_b, other_out_b)
         };
 
-        // Step 4: Get BEST reverse route, EXCLUDING forward pools
-        // Use direct_only=true for simpler, more reliable triangle arb
-        let reverse_route = self
-            .get_swap_route_with_exclude(&reverse_params, &forward_pool_addresses, true)
-            .await?;
+        let diff = (max_out - min_out) as f64 / min_out as f64;
 
-        // Step 5: Check transaction size and fallback if needed
-        let mut final_reverse_route = reverse_route;
-
-        // Check if the combined transaction is too large
-        let is_too_large = self
-            .estimate_transaction_size(&forward_route, &final_reverse_route, token_a.user_wallet)
-            .await
-            .unwrap_or_else(|e| {
-                log::error!("estimate_transaction_size failed: {}", e);
-                true
-            }); // Treat error as too large to be safe
-
-        if is_too_large {
+        if diff < 0.002 {
             log::debug!(
-                "⚠️ Transaction too large with complex route, falling back to direct route..."
+                "⚠️ Price difference {:.4}% < 0.2% threshold. Skipping smart arb (Fees > Profit).",
+                diff * 100.0
+            );
+            return None;
+        }
+
+        if updated_out_b > other_out_b {
+            // Strategy 1a: Updated Pool pays MORE.
+            // ACTION: Sell A on Updated (Buy B). Sell B on Others (Buy A).
+            // Forward = Updated. Reverse = Others.
+            log::debug!(
+                "🧠 Smart Strategy: Updated pool pays MORE ({} > {} | {:.2}%). Strategy 1a.",
+                updated_out_b,
+                other_out_b,
+                diff * 100.0
             );
 
-            // Try to get a DIRECT reverse route instead
-            let direct_reverse_route = self
-                .get_swap_route_with_exclude(&reverse_params, &exclude_pools, true) // direct_only = true
+            // Build Forward Route (Fixed Step on Updated Pool)
+            let forward_route_1a = SwapRoute {
+                paths: vec![SwapPath {
+                    steps: vec![SwapStepInternal {
+                        dex: pool_state.dex(),
+                        input_token: token_a_addr,
+                        output_token: token_b_addr,
+                        pool_address: updated_pool,
+                        pool_state: pool_state.clone(),
+                        input_amount: token_a.input_amount,
+                        output_amount: updated_out_b,
+                        percent: 100,
+                    }],
+                    input_amount: token_a.input_amount,
+                    output_amount: updated_out_b,
+                }],
+                input_token: token_a_addr,
+                output_token: token_b_addr,
+                input_amount: token_a.input_amount,
+                output_amount: updated_out_b,
+                other_output_amount: calculate_min_output_amount(
+                    updated_out_b,
+                    slippage_bps as u64,
+                ),
+                slippage_bps,
+                context_slot: self.pool_manager.get_chain_state().await.slot,
+            };
+
+            // Calculate Reverse Route (B->A on Others)
+            let token_b_info = self.pool_manager.get_token(&token_b_addr).await?;
+            let reverse_params = SwapParams {
+                input_token: token_b_info,
+                output_token: token_a.input_token.clone(),
+                input_amount: updated_out_b,
+                slippage_bps,
+                user_wallet: token_a.user_wallet,
+                priority: token_a.priority,
+            };
+
+            if let Some(reverse_route_1a) = self
+                .get_swap_route_with_exclude(&reverse_params, &exclude_updated, true)
+                .await
+            {
+                let final_amt = reverse_route_1a.other_output_amount;
+                let profit = final_amt as i64 - token_a.input_amount as i64;
+                if profit > i64::MIN {
+                    return Some((profit, forward_route_1a, reverse_route_1a));
+                }
+            }
+        } else {
+            // Strategy 1b: Updated Pool pays LESS (Undervalues A, Overvalues B?).
+            // ACTION: Buy A on Updated (Sell B). Sell A on Others (Buy B).
+            // Forward = Others (A->B). Reverse = Updated (B->A).
+            log::debug!(
+                "🧠 Smart Strategy: Updated pool pays LESS ({} < {} | {:.2}%). Strategy 1b.",
+                updated_out_b,
+                other_out_b,
+                diff * 100.0
+            );
+
+            // Forward Route = Best Route on Others
+            let forward_route_1b = forward_route_others;
+            let amount_out_b = forward_route_1b.other_output_amount;
+
+            // Calculate Reverse Route on Updated Pool (B->A)
+            let final_amt = pool_state
+                .calculate_output_amount(&token_b_addr, amount_out_b, amm_config_fetcher)
                 .await;
 
-            if let Some(direct_route) = direct_reverse_route {
-                // Verify the direct route is actually smaller/valid
-                let direct_is_too_large = self
-                    .estimate_transaction_size(&forward_route, &direct_route, token_a.user_wallet)
-                    .await
-                    .unwrap_or_else(|e| {
-                        log::error!("estimate_transaction_size failed for direct route: {}", e);
-                        true
-                    });
+            if final_amt > 0 {
+                let reverse_route_1b = SwapRoute {
+                    paths: vec![SwapPath {
+                        steps: vec![SwapStepInternal {
+                            dex: pool_state.dex(),
+                            input_token: token_b_addr,
+                            output_token: token_a_addr,
+                            pool_address: updated_pool,
+                            pool_state: pool_state.clone(),
+                            input_amount: amount_out_b,
+                            output_amount: final_amt,
+                            percent: 100,
+                        }],
+                        input_amount: amount_out_b,
+                        output_amount: final_amt,
+                    }],
+                    input_token: token_b_addr,
+                    output_token: token_a_addr,
+                    input_amount: amount_out_b,
+                    output_amount: final_amt,
+                    other_output_amount: calculate_min_output_amount(
+                        final_amt,
+                        slippage_bps as u64,
+                    ),
+                    slippage_bps,
+                    context_slot: self.pool_manager.get_chain_state().await.slot,
+                };
 
-                if !direct_is_too_large {
-                    log::debug!("✅ Fallback to direct route successful");
-                    final_reverse_route = direct_route;
-                } else {
-                    log::debug!("❌ Direct route also too large or check failed");
-                    return None;
+                let profit = final_amt as i64 - token_a.input_amount as i64;
+                if profit > i64::MIN {
+                    return Some((profit, forward_route_1b, reverse_route_1b));
                 }
-            } else {
-                log::debug!("❌ No direct fallback route available");
-                return None;
             }
         }
 
-        // Recalculate profit with the final route
-        let final_token_a_amount = final_reverse_route.other_output_amount;
-        let profit = final_token_a_amount as i64 - token_a.input_amount as i64;
-        let profit_percent = (profit as f64 / token_a.input_amount as f64) * 100.0;
-
-        log::info!(
-            "final_token_a_amount: {} input_amount: {} forward_route min output amount: {} profit: {} input token: {} output token: {} forward_route paths: {:?} reverse_route paths: {:?}",
-            final_token_a_amount,
-            token_a.input_amount,
-            forward_route.other_output_amount,
-            profit,
-            token_a.input_token.address,
-            token_a.output_token.address,
-            forward_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>(),
-            final_reverse_route.paths.iter().map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>()).collect::<Vec<_>>()
-        );
-
-        // Step 6: Check conditions: Profit > 0 OR Abnormal profit/loss (> 5% or < -5%)
-        if profit > 0 || profit_percent.abs() > 5.0 {
-            Some((profit, forward_route, final_reverse_route))
-        } else {
-            None
-        }
+        None
     }
 
     /// Calculate triangle arbitrage profit: SOL → Token1 → Token2 → SOL
@@ -727,27 +731,136 @@ impl DexAggregator {
         path: &crate::arbitrage_config::TrianglePath,
         input_amount: u64,
         slippage_bps: u16,
+        updated_pool: Pubkey,
     ) -> Option<(i64, SwapRoute, SwapRoute, SwapRoute)> {
         let exclude_pools: HashSet<Pubkey> = HashSet::new();
+        let amm_config_fetcher = self.pool_manager.as_ref();
+
+        // 1. Fetch Updated Pool State (Strict Anchor)
+        let updated_pool_state = self.pool_manager.get_pool(&updated_pool).await?;
+        let (updated_p_a, updated_p_b) = updated_pool_state.get_tokens();
+
+        // 2. Identify which leg the updated pool belongs to
+        let matches_leg1 = (updated_p_a == path.leg1_from && updated_p_b == path.leg1_to)
+            || (updated_p_a == path.leg1_to && updated_p_b == path.leg1_from);
+
+        let matches_leg2 = (updated_p_a == path.leg1_to && updated_p_b == path.leg2_to)
+            || (updated_p_a == path.leg2_to && updated_p_b == path.leg1_to);
+
+        let matches_leg3 = (updated_p_a == path.leg2_to && updated_p_b == path.leg3_to)
+            || (updated_p_a == path.leg3_to && updated_p_b == path.leg2_to);
+
+        if !matches_leg1 && !matches_leg2 && !matches_leg3 {
+            // Anchor pool not involved in this triangle path -> Skip
+            return None;
+        }
 
         // Get token info for all legs
-        let token_leg1_from = self.pool_manager.get_token(&path.leg1_from).await?;
-        let token_leg1_to = self.pool_manager.get_token(&path.leg1_to).await?;
-        let token_leg2_to = self.pool_manager.get_token(&path.leg2_to).await?;
-        let token_leg3_to = self.pool_manager.get_token(&path.leg3_to).await?;
-
-        // Leg 1: SOL → Token1
-        let leg1_params = SwapParams {
-            input_token: token_leg1_from.clone(),
-            output_token: token_leg1_to.clone(),
-            input_amount,
-            slippage_bps,
-            user_wallet: Pubkey::default(),
-            priority: crate::types::ExecutionPriority::High,
+        let token_leg1_from = match self.pool_manager.get_token(&path.leg1_from).await {
+            Some(t) => t,
+            None => {
+                log::debug!(
+                    "🔺 {} - leg1_from token not found: {}",
+                    path.name,
+                    path.leg1_from
+                );
+                return None;
+            }
         };
-        let leg1_route = self
-            .get_swap_route_with_exclude(&leg1_params, &exclude_pools, true)
-            .await?;
+        let token_leg1_to = match self.pool_manager.get_token(&path.leg1_to).await {
+            Some(t) => t,
+            None => {
+                log::debug!(
+                    "🔺 {} - leg1_to token not found: {}",
+                    path.name,
+                    path.leg1_to
+                );
+                return None;
+            }
+        };
+        let token_leg2_to = match self.pool_manager.get_token(&path.leg2_to).await {
+            Some(t) => t,
+            None => {
+                log::debug!(
+                    "🔺 {} - leg2_to token not found: {}",
+                    path.name,
+                    path.leg2_to
+                );
+                return None;
+            }
+        };
+        let token_leg3_to = match self.pool_manager.get_token(&path.leg3_to).await {
+            Some(t) => t,
+            None => {
+                log::debug!(
+                    "🔺 {} - leg3_to token not found: {}",
+                    path.name,
+                    path.leg3_to
+                );
+                return None;
+            }
+        };
+
+        // --- Leg 1 ---
+        let mut leg1_route = None;
+        if matches_leg1 {
+            // Force use this pool
+            let amt = updated_pool_state
+                .calculate_output_amount(&path.leg1_from, input_amount, amm_config_fetcher)
+                .await;
+            if amt > 0 {
+                leg1_route = Some(SwapRoute {
+                    paths: vec![SwapPath {
+                        steps: vec![SwapStepInternal {
+                            dex: updated_pool_state.dex(),
+                            input_token: path.leg1_from,
+                            output_token: path.leg1_to,
+                            pool_address: updated_pool,
+                            pool_state: updated_pool_state.clone(),
+                            input_amount,
+                            output_amount: amt,
+                            percent: 100,
+                        }],
+                        input_amount,
+                        output_amount: amt,
+                    }],
+                    input_token: path.leg1_from,
+                    output_token: path.leg1_to,
+                    input_amount,
+                    output_amount: amt,
+                    other_output_amount: calculate_min_output_amount(amt, slippage_bps as u64),
+                    slippage_bps,
+                    context_slot: self.pool_manager.get_chain_state().await.slot,
+                });
+                // log::debug!("🔺 Using updated pool for Leg 1: {}", updated_pool);
+            }
+        }
+
+        if leg1_route.is_none() {
+            if matches_leg1 {
+                return None;
+            } // Should have worked if it matched
+
+            let leg1_params = SwapParams {
+                input_token: token_leg1_from.clone(),
+                output_token: token_leg1_to.clone(),
+                input_amount,
+                slippage_bps,
+                user_wallet: Pubkey::default(),
+                priority: crate::types::ExecutionPriority::High,
+            };
+            leg1_route = self
+                .get_swap_route_with_exclude(&leg1_params, &exclude_pools, true)
+                .await;
+        }
+
+        let leg1_route = match leg1_route {
+            Some(r) => r,
+            None => {
+                log::debug!("🔺 {} - Leg1 route not found", path.name);
+                return None;
+            }
+        };
 
         // Collect leg1 pools to exclude
         let leg1_pools: HashSet<Pubkey> = leg1_route
@@ -755,23 +868,71 @@ impl DexAggregator {
             .iter()
             .flat_map(|p| p.steps.iter().map(|s| s.pool_address))
             .collect();
-
         let leg1_output = leg1_route.other_output_amount;
 
-        // Leg 2: Token1 → Token2
-        let leg2_params = SwapParams {
-            input_token: token_leg1_to,
-            output_token: token_leg2_to.clone(),
-            input_amount: leg1_output,
-            slippage_bps,
-            user_wallet: Pubkey::default(),
-            priority: crate::types::ExecutionPriority::High,
-        };
-        let leg2_route = self
-            .get_swap_route_with_exclude(&leg2_params, &leg1_pools, true)
-            .await?;
+        // --- Leg 2 ---
+        let mut leg2_route = None;
+        if matches_leg2 {
+            // Force use updated pool (unless used in leg 1 - theoretical loop)
+            if !leg1_pools.contains(&updated_pool) {
+                let amt = updated_pool_state
+                    .calculate_output_amount(&path.leg1_to, leg1_output, amm_config_fetcher)
+                    .await;
+                if amt > 0 {
+                    leg2_route = Some(SwapRoute {
+                        paths: vec![SwapPath {
+                            steps: vec![SwapStepInternal {
+                                dex: updated_pool_state.dex(),
+                                input_token: path.leg1_to,
+                                output_token: path.leg2_to,
+                                pool_address: updated_pool,
+                                pool_state: updated_pool_state.clone(),
+                                input_amount: leg1_output,
+                                output_amount: amt,
+                                percent: 100,
+                            }],
+                            input_amount: leg1_output,
+                            output_amount: amt,
+                        }],
+                        input_token: path.leg1_to,
+                        output_token: path.leg2_to,
+                        input_amount: leg1_output,
+                        output_amount: amt,
+                        other_output_amount: calculate_min_output_amount(amt, slippage_bps as u64),
+                        slippage_bps,
+                        context_slot: self.pool_manager.get_chain_state().await.slot,
+                    });
+                }
+            }
+        }
 
-        // Collect leg2 pools to exclude
+        if leg2_route.is_none() {
+            if matches_leg2 {
+                return None;
+            }
+
+            let leg2_params = SwapParams {
+                input_token: token_leg1_to.clone(),
+                output_token: token_leg2_to.clone(),
+                input_amount: leg1_output,
+                slippage_bps,
+                user_wallet: Pubkey::default(),
+                priority: crate::types::ExecutionPriority::High,
+            };
+            leg2_route = self
+                .get_swap_route_with_exclude(&leg2_params, &leg1_pools, true)
+                .await;
+        }
+
+        let leg2_route = match leg2_route {
+            Some(r) => r,
+            None => {
+                log::debug!("🔺 {} - Leg2 route not found", path.name);
+                return None;
+            }
+        };
+
+        // Collect leg1+2 pools to exclude
         let mut exclude_leg12: HashSet<Pubkey> = leg1_pools;
         exclude_leg12.extend(
             leg2_route
@@ -779,41 +940,74 @@ impl DexAggregator {
                 .iter()
                 .flat_map(|p| p.steps.iter().map(|s| s.pool_address)),
         );
-
         let leg2_output = leg2_route.other_output_amount;
 
-        // Leg 3: Token2 → SOL
-        let leg3_params = SwapParams {
-            input_token: token_leg2_to,
-            output_token: token_leg3_to,
-            input_amount: leg2_output,
-            slippage_bps,
-            user_wallet: Pubkey::default(),
-            priority: crate::types::ExecutionPriority::High,
+        // --- Leg 3 ---
+        let mut leg3_route = None;
+        if matches_leg3 {
+            if !exclude_leg12.contains(&updated_pool) {
+                let amt = updated_pool_state
+                    .calculate_output_amount(&path.leg2_to, leg2_output, amm_config_fetcher)
+                    .await;
+                if amt > 0 {
+                    leg3_route = Some(SwapRoute {
+                        paths: vec![SwapPath {
+                            steps: vec![SwapStepInternal {
+                                dex: updated_pool_state.dex(),
+                                input_token: path.leg2_to,
+                                output_token: path.leg3_to,
+                                pool_address: updated_pool,
+                                pool_state: updated_pool_state.clone(),
+                                input_amount: leg2_output,
+                                output_amount: amt,
+                                percent: 100,
+                            }],
+                            input_amount: leg2_output,
+                            output_amount: amt,
+                        }],
+                        input_token: path.leg2_to,
+                        output_token: path.leg3_to,
+                        input_amount: leg2_output,
+                        output_amount: amt,
+                        other_output_amount: calculate_min_output_amount(amt, slippage_bps as u64),
+                        slippage_bps,
+                        context_slot: self.pool_manager.get_chain_state().await.slot,
+                    });
+                }
+            }
+        }
+
+        if leg3_route.is_none() {
+            if matches_leg3 {
+                return None;
+            }
+
+            let leg3_params = SwapParams {
+                input_token: token_leg2_to.clone(),
+                output_token: token_leg3_to,
+                input_amount: leg2_output,
+                slippage_bps,
+                user_wallet: Pubkey::default(),
+                priority: crate::types::ExecutionPriority::High,
+            };
+            leg3_route = self
+                .get_swap_route_with_exclude(&leg3_params, &exclude_leg12, true)
+                .await;
+        }
+
+        let leg3_route = match leg3_route {
+            Some(r) => r,
+            None => {
+                log::debug!("🔺 {} - Leg3 route not found", path.name);
+                return None;
+            }
         };
-        let leg3_route = self
-            .get_swap_route_with_exclude(&leg3_params, &exclude_leg12, true)
-            .await?;
 
         let final_output = leg3_route.other_output_amount;
         let profit = final_output as i64 - input_amount as i64;
-        let profit_percent = (profit as f64 / input_amount as f64) * 100.0;
 
-        log::debug!(
-            "🔺 Triangle {} | In: {} → Out: {} | Profit: {} ({:.2}%)",
-            path.name,
-            input_amount,
-            final_output,
-            profit,
-            profit_percent
-        );
-
-        // Return if profitable or significant loss (for logging)
-        if profit > 0 || profit_percent.abs() > 5.0 {
-            Some((profit, leg1_route, leg2_route, leg3_route))
-        } else {
-            None
-        }
+        // Return result unconditionally (monitor handles filtering/logging)
+        Some((profit, leg1_route, leg2_route, leg3_route))
     }
 
     /// Estimate if the transaction size is within limits (1232 bytes)

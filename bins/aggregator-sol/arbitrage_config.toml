@@ -5,7 +5,7 @@
 min_profit_bps = 10  # 0.1% minimum profit - kept low for opportunity discovery
 base_token = "So11111111111111111111111111111111111111112"  # SOL - most pools are SOL-paired
 base_amount = 3000000000  # 3 SOL (9 decimals)
-slippage_bps = 20  # 0.2% slippage tolerance
+slippage_bps = 10  # 0.2% slippage tolerance
 max_concurrent_checks = 10  # Maximum concurrent arbitrage checks
 
 # =============================================================================
@@ -16,91 +16,75 @@ max_concurrent_checks = 10  # Maximum concurrent arbitrage checks
 [[monitored_tokens]]
 address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 symbol = "USDC"
-enabled = true
 
 [[monitored_tokens]]
 address = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 symbol = "USDT"
-enabled = true
 
 # USD1 - World Liberty Financial stablecoin ($23M+ liquidity on Raydium)
 [[monitored_tokens]]
 address = "4oRwqhNroh7kgwNXCnu9idZ861zdbWLVfv7aERUcuzU3"
 symbol = "USD1"
-enabled = true
 
 # Liquid Staking Tokens (LST) - Best for triangle arbitrage
 [[monitored_tokens]]
 address = "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So"
 symbol = "mSOL"
-enabled = true
 
 [[monitored_tokens]]
 address = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"
 symbol = "JitoSOL"
-enabled = true
 
 # DeFi Tokens
 [[monitored_tokens]]
 address = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
 symbol = "RAY"
-enabled = true
 
 [[monitored_tokens]]
 address = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"
 symbol = "JUP"
-enabled = true
 
 [[monitored_tokens]]
 address = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
 symbol = "PUMP"
-enabled = true
 
 # Meme Coins
 [[monitored_tokens]]
 address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
 symbol = "BONK"
-enabled = true
 
 [[monitored_tokens]]
 address = "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"
 symbol = "WIF"
-enabled = true
 
 # Oracle/Infrastructure
 [[monitored_tokens]]
 address = "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3"
 symbol = "PYTH"
-enabled = true
 
 [[monitored_tokens]]
 address = "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof"
 symbol = "RENDER"
-enabled = true
 
 # NFT/Gaming
 [[monitored_tokens]]
 address = "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv"
 symbol = "PENGU"
-enabled = true
 
 # Jupiter Liquid Staking SOL - High volume cross-LST arbitrage
 [[monitored_tokens]]
 address = "jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v"
 symbol = "JupSOL"
-enabled = true
 
 # Kamino Finance - DeFi token with LST pairs
 [[monitored_tokens]]
 address = "KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS"
 symbol = "KMNO"
-enabled = true
 
 # Meteora Token - High volume JUP/MET pairs
 [[monitored_tokens]]
 address = "METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m"
 symbol = "MET"
-enabled = true
 
 # =============================================================================
 # MONITORED POOLS - VERIFIED FROM DEXSCREENER (High Liquidity > $500k)
@@ -115,42 +99,36 @@ enabled = true
 address = "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
 dex = "Orca"
 pair = "SOL/USDC"
-enabled = true
 
 # Raydium AMM V4 SOL/USDC - $12.8M liquidity
 [[monitored_pools]]
 address = "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2"
 dex = "Raydium"
 pair = "SOL/USDC"
-enabled = true
 
 # Raydium CLMM SOL/USDC - $9.2M liquidity
 [[monitored_pools]]
 address = "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"
 dex = "RaydiumClmm"
 pair = "SOL/USDC"
-enabled = true
 
 # Meteora DLMM SOL/USDC - $5.6M liquidity
 [[monitored_pools]]
 address = "BGm1tav58oGcsQJehL9WXBFXF7D27vZsKefj4xJKD5Y"
 dex = "MeteoraDlmm"
 pair = "SOL/USDC"
-enabled = true
 
 # Meteora DLMM SOL/USDC - $2M liquidity
 [[monitored_pools]]
 address = "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6"
 dex = "MeteoraDlmm"
 pair = "SOL/USDC"
-enabled = true
 
 # Meteora DLMM SOL/USDC - $992k liquidity
 [[monitored_pools]]
 address = "HTvjzsfX3yU6BUodCjZ5vZkUrAxMDTrBs3CJaq43ashR"
 dex = "MeteoraDlmm"
 pair = "SOL/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # SOL/USDT Pools
@@ -161,21 +139,18 @@ enabled = true
 address = "3nMFwZXwY1s1M5s8vYAHqd4wGs4iSxXE4LRoUMMYqEgF"
 dex = "RaydiumClmm"
 pair = "SOL/USDT"
-enabled = true
 
 # Orca Whirlpool SOL/USDT - $1M liquidity
 [[monitored_pools]]
 address = "FwewVm8u6tFPGewAyHmWAqad9hmF7mvqxK4mJ7iNqqGC"
 dex = "Orca"
 pair = "SOL/USDT"
-enabled = true
 
 # Raydium AMM V4 SOL/USDT - $690k liquidity
 [[monitored_pools]]
 address = "7XawhbbxtsRcQA8KTkHT9f9nc6d69UwqCDh6U5EEbEmX"
 dex = "Raydium"
 pair = "SOL/USDT"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # mSOL/SOL Pools (LST Arbitrage - for triangle)
@@ -186,28 +161,20 @@ enabled = true
 address = "HcjZvfeSNJbNkfLD4eEcRBr96AD3w1GpmMppaeRZf7ur"
 dex = "Meteora"
 pair = "mSOL/SOL"
-enabled = true
 
 # Raydium CLMM mSOL/SOL - $2M liquidity
 [[monitored_pools]]
 address = "8EzbUfvcRT1Q6RL462ekGkgqbxsPmwC5FMLQZhSPMjJ3"
 dex = "RaydiumClmm"
 pair = "mSOL/SOL"
-enabled = true
 
-# Orca v2 mSOL/SOL - $480k liquidity
-[[monitored_pools]]
-address = "9EQMEzJdE2LDAY1hw1RytpufdwAXzatYfQ3M2UuT9b88"
-dex = "Orca"
-pair = "mSOL/SOL"
-enabled = true
+
 
 # Orca Whirlpool mSOL/SOL - $298k liquidity
 [[monitored_pools]]
 address = "HQcY5n2zP6rW74fyFEhWeBd3LnJpBcZechkvJpmdb8cx"
 dex = "Orca"
 pair = "mSOL/SOL"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # mSOL/USDC Pools (for triangle leg2)
@@ -218,21 +185,18 @@ enabled = true
 address = "GNfeVT5vSWgLYtzveexZJ2Ki9NBtTTzoHAd9oGvoJKW8"
 dex = "RaydiumClmm"
 pair = "mSOL/USDC"
-enabled = true
 
 # Raydium AMM mSOL/USDC - $308k liquidity
 [[monitored_pools]]
 address = "ZfvDXXUhZDzDVsapffUyXHj9ByCoPjP4thL6YXcZ9ix"
 dex = "Raydium"
 pair = "mSOL/USDC"
-enabled = true
 
 # Orca Whirlpool mSOL/USDC - $257k liquidity
 [[monitored_pools]]
 address = "AqJ5JYNb7ApkJwvbuXxPnTtKeuizjvC1s2fkp382y9LC"
 dex = "Orca"
 pair = "mSOL/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # JitoSOL/SOL Pools (LST Arbitrage - for triangle)
@@ -243,28 +207,24 @@ enabled = true
 address = "Hp53XEtt4S8SvPCXarsLSdGfZBuUr5mMmZmX2DRNXQKp"
 dex = "Orca"
 pair = "JitoSOL/SOL"
-enabled = true
 
 # Meteora DLMM JitoSOL/SOL - $4.9M liquidity
 [[monitored_pools]]
 address = "BoeMUkCLHchTD31HdXsbDExuZZfcUppSLpYtV3LZTH6U"
 dex = "MeteoraDlmm"
 pair = "JitoSOL/SOL"
-enabled = true
 
 # Raydium CLMM JitoSOL/SOL - $3.3M liquidity
 [[monitored_pools]]
 address = "2uoKbPEidR7KAMYtY4x7xdkHXWqYib5k4CutJauSL3Mc"
 dex = "RaydiumClmm"
 pair = "JitoSOL/SOL"
-enabled = true
 
 # Meteora DYN JitoSOL/SOL - $3.2M liquidity
 [[monitored_pools]]
 address = "ERgpKaq59Nnfm9YRVAAhnq16cZhHxGcDoDWCzXbhiaNw"
 dex = "Meteora"
 pair = "JitoSOL/SOL"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # JitoSOL/USDC Pools (for triangle leg2)
@@ -275,14 +235,12 @@ enabled = true
 address = "5hWJUNTtEtKmKgDXpthJXXRRmJrz5vJ7uJzrUNVdrwLg"
 dex = "Orca"
 pair = "JitoSOL/USDC"
-enabled = true
 
 # Orca Whirlpool JitoSOL/USDC - $86k liquidity
 [[monitored_pools]]
 address = "CxvWVYvvSymLWQNLqo61zjr1L86B4HpxoELbAAjxyb8H"
 dex = "Orca"
 pair = "JitoSOL/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # mSOL/JitoSOL Pools (LST cross-pair)
@@ -293,14 +251,12 @@ enabled = true
 address = "8dxebMPEZjYJvE5JfC9iicZt9pkATBLW1PFgRHi5wGGv"
 dex = "Orca"
 pair = "mSOL/JitoSOL"
-enabled = true
 
 # Orca Whirlpool mSOL/JitoSOL - $85k liquidity
 [[monitored_pools]]
 address = "HZsTF6VHdQy2W6cfEEqqpoTFKocx7Ch5c4TnWucXkAYv"
 dex = "Orca"
 pair = "mSOL/JitoSOL"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # BONK Pools (for SOL→BONK→USDC→SOL triangle)
@@ -311,42 +267,36 @@ enabled = true
 address = "3ne4mWqdYuNiYrYZC9TrA3FcfuFdErghH97vNPbjicr1"
 dex = "Orca"
 pair = "BONK/SOL"
-enabled = true
 
 # Orca Whirlpool BONK/SOL - $246k liquidity
 [[monitored_pools]]
 address = "5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9"
 dex = "Orca"
 pair = "BONK/SOL"
-enabled = true
 
 # Meteora DLMM BONK/SOL - $121k liquidity
 [[monitored_pools]]
 address = "6oFWm7KPLfxnwMb3z5xwBoXNSPP3JJyirAPqPSiVcnsp"
 dex = "MeteoraDlmm"
 pair = "BONK/SOL"
-enabled = true
 
 # Orca Whirlpool BONK/USDC - $213k liquidity
 [[monitored_pools]]
 address = "8QaXeHBrShJTdtN1rWCccBxpSVvKksQ2PCu5nufb2zbk"
 dex = "Orca"
 pair = "BONK/USDC"
-enabled = true
 
 # Meteora DLMM BONK/USDC - $128k liquidity
 [[monitored_pools]]
 address = "31p1hptjhFo6ZD8oBqkfutNXQKGGPyi7YcEAfsyKW777"
 dex = "MeteoraDlmm"
 pair = "BONK/USDC"
-enabled = true
 
 # Raydium AMM BONK/USDC - $37k liquidity
 [[monitored_pools]]
 address = "G7mw1d83ismcQJKkzt62Ug4noXCjVhu3eV7U5EMgge6Z"
 dex = "Raydium"
 pair = "BONK/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # WIF Pools (for SOL→WIF→USDC→SOL triangle)
@@ -357,21 +307,18 @@ enabled = true
 address = "EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx"
 dex = "Raydium"
 pair = "WIF/SOL"
-enabled = true
 
 # Orca Whirlpool WIF/SOL - $238k liquidity
 [[monitored_pools]]
 address = "D6NdKrKNQPmRZCCnG1GqXtF7MMoHB7qR6GU5TkG59Qz1"
 dex = "Orca"
 pair = "WIF/SOL"
-enabled = true
 
 # Orca Whirlpool WIF/USDC - $15k liquidity
 [[monitored_pools]]
 address = "CN8M75cH57DuZNzW5wSUpTXtMrSfXBFScJoQxVCgAXes"
 dex = "Orca"
 pair = "WIF/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # PUMP Pools (for SOL→PUMP→USDC→SOL triangle) - $16M+ main pool
@@ -382,35 +329,30 @@ enabled = true
 address = "2uF4Xh61rDwxnG9woyxsVQP7zuA6kLFpb3NvnRQeoiSd"
 dex = "Pumpswap"
 pair = "PUMP/USDC"
-enabled = true
 
 # Orca Whirlpool PUMP/SOL - $1.5M liquidity
 [[monitored_pools]]
 address = "BofA2ViUSudPBTUms2KRuG6AHNeMawjNfwqTJDgx5BKW"
 dex = "Orca"
 pair = "PUMP/SOL"
-enabled = true
 
 # Raydium CLMM PUMP/SOL - $1.1M liquidity
 [[monitored_pools]]
 address = "45ssPkUQs1ssbeDqxD2mZrMdJYAXF7GyQyhS5xDXuWC5"
 dex = "RaydiumClmm"
 pair = "PUMP/SOL"
-enabled = true
 
 # Raydium CLMM PUMP/USDC - $484k liquidity
 [[monitored_pools]]
 address = "Dwgaka8QiSkFQ3bGXhZpmncM63DwhjK5zzQRiqt9WA8K"
 dex = "RaydiumClmm"
 pair = "PUMP/USDC"
-enabled = true
 
 # Orca Whirlpool PUMP/USDC - $194k liquidity
 [[monitored_pools]]
 address = "4AFAkCSkSNmra64irggEFd8ZtF4WCtFe51qVaFFNBL2D"
 dex = "Orca"
 pair = "PUMP/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # RAY Pools (DeFi native token)
@@ -421,28 +363,24 @@ enabled = true
 address = "2AXXcN6oN9bBT5owwmTH53C7QHUXvhLeu718Kqt8rvY2"
 dex = "RaydiumClmm"
 pair = "RAY/SOL"
-enabled = true
 
 # Raydium AMM RAY/USDC - $4.5M liquidity
 [[monitored_pools]]
 address = "6UmmUiYoBjSrhakAobJw8BvkmJtDVxaeBtbt7rxWo1mg"
 dex = "Raydium"
 pair = "RAY/USDC"
-enabled = true
 
 # Raydium AMM RAY/SOL - $3.9M liquidity
 [[monitored_pools]]
 address = "AVs9TA4nWDzfPJE9gGVNJMVhcQy3V9PGazuz33BfG2RA"
 dex = "Raydium"
 pair = "RAY/SOL"
-enabled = true
 
 # Raydium AMM RAY/USDT - $1.1M liquidity
 [[monitored_pools]]
 address = "DVa7Qmb5ct9RCpaU7UTpSaf3GVMYz17vNVU67XpdCRut"
 dex = "Raydium"
 pair = "RAY/USDT"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # JUP Pools (Jupiter DEX token)
@@ -453,28 +391,24 @@ enabled = true
 address = "C1MgLojNLWBKADvu9BHdtgzz1oZX4dZ5zGdGcgvvW8Wz"
 dex = "Orca"
 pair = "JUP/SOL"
-enabled = true
 
 # Meteora DLMM JUP/SOL - $162k liquidity
 [[monitored_pools]]
 address = "HdsFGjjY46twFKjqHqUyT2bnRS4XCo1HaExts5CSNprU"
 dex = "MeteoraDlmm"
 pair = "JUP/SOL"
-enabled = true
 
 # Raydium CLMM JUP/SOL - $52k liquidity
 [[monitored_pools]]
 address = "EZVkeboWeXygtq8LMyENHyXdF5wpYrtExRNH9UwB1qYw"
 dex = "RaydiumClmm"
 pair = "JUP/SOL"
-enabled = true
 
 # Orca Whirlpool JUP/USDC - $38k liquidity
 [[monitored_pools]]
 address = "4Ui9QdDNuUaAGqCPcDSp191QrixLzQiLxJ1Gnqvz3szP"
 dex = "Orca"
 pair = "JUP/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # PYTH Pools (Pyth Network Oracle - $580M market cap)
@@ -485,21 +419,18 @@ enabled = true
 address = "9n3dSLrERZQp95dHXywft7xV8D8xnGFLaUHtEhQVaXaC"
 dex = "RaydiumClmm"
 pair = "PYTH/SOL"
-enabled = true
 
 # Orca Whirlpool PYTH/SOL - $29k liquidity
 [[monitored_pools]]
 address = "8erNF5u3CHrqZJXtkfY8CjSxFYF1yqHmN8uDbAhk6tWM"
 dex = "Orca"
 pair = "PYTH/SOL"
-enabled = true
 
 # Meteora DLMM PYTH/USDC - $6k liquidity
 [[monitored_pools]]
 address = "6UJJapjaWALGfDckjxPk6SgMtv4fuvPsmx3WPxc9VTEx"
 dex = "MeteoraDlmm"
 pair = "PYTH/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # RENDER Pools (GPU Rendering - $990M market cap)
@@ -510,28 +441,24 @@ enabled = true
 address = "FZ8MJvdTPbp8juhtFCCzb7LsKunhexgzShGQ59SUJkNL"
 dex = "RaydiumClmm"
 pair = "RENDER/SOL"
-enabled = true
 
 # Orca Whirlpool RENDER/SOL - $414k liquidity
 [[monitored_pools]]
 address = "AmXR6YeshKfnx23gQpJkktUXoGb7cAXi5hWk3w2pw1a3"
 dex = "Orca"
 pair = "RENDER/SOL"
-enabled = true
 
 # Raydium CLMM RENDER/USDC - $41k liquidity
 [[monitored_pools]]
 address = "85t45uvRgmQthW4rFEgArDdJYWaPv12J7gSKgf3Nx43"
 dex = "RaydiumClmm"
 pair = "RENDER/USDC"
-enabled = true
 
 # Orca Whirlpool RENDER/USDC - $34k liquidity
 [[monitored_pools]]
 address = "HAWNPF6UZ8YgWisd2gsECNSchdn3hQTEujsZtGxKM1MW"
 dex = "Orca"
 pair = "RENDER/USDC"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # PENGU Pools (Pudgy Penguins NFT - $600M market cap)
@@ -542,35 +469,30 @@ enabled = true
 address = "DdMA1cHcHEqYfttc1z1sJEY978CcU1pyjNuTWTNmdvzU"
 dex = "MeteoraDlmm"
 pair = "PENGU/USDC"
-enabled = true
 
 # Orca Whirlpool PENGU/SOL - $3.5M liquidity
 [[monitored_pools]]
 address = "FAqh648xeeaTqL7du49sztp9nfj5PjRQrfvaMccyd9cz"
 dex = "Orca"
 pair = "PENGU/SOL"
-enabled = true
 
 # PumpSwap PENGU/SOL - $1.7M liquidity
 [[monitored_pools]]
 address = "9qKxzRejsV6Bp2zkefXWCbGvg61c3hHei7ShXJ4FythA"
 dex = "Pumpswap"
 pair = "PENGU/SOL"
-enabled = true
 
 # Meteora DLMM PENGU/USDC - $142k liquidity
 [[monitored_pools]]
 address = "9uX6G8ZaRVxGSVybyYwqjHdgA1hgQqsospqD4m1sG3u2"
 dex = "MeteoraDlmm"
 pair = "PENGU/USDC"
-enabled = true
 
 # Orca Whirlpool PENGU/jitoSOL - $84k liquidity
 [[monitored_pools]]
 address = "Bpo9m9PVHdCuBLaKP7rKVujnm996yPz6H6s7h7BTwuca"
 dex = "Orca"
 pair = "PENGU/jitoSOL"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # JupSOL Pools (Jupiter Liquid Staking SOL - Cross-LST Arbitrage)
@@ -581,14 +503,12 @@ enabled = true
 address = "5cvcHrD2uh2CXhmZnMHsTVWJW1qtyikVaN3MCJNaB5D4"
 dex = "MeteoraDlmm"
 pair = "JupSOL/JitoSOL"
-enabled = true
 
 # Orca Whirlpool JupSOL/JitoSOL - $86k liquidity
 [[monitored_pools]]
 address = "D2G7dVp1tSsxKx9hs4PLvG5nECszWLg5A1YzahmFpvGN"
 dex = "Orca"
 pair = "JupSOL/JitoSOL"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # KMNO Pools (Kamino Finance - DeFi token with LST pairs)
@@ -599,14 +519,12 @@ enabled = true
 address = "2nJjE2ba3iGtefN4UNM1KN5FdYCwssU4Bzhc8URcFUg3"
 dex = "Orca"
 pair = "KMNO/JitoSOL"
-enabled = true
 
 # Raydium CLMM mSOL/KMNO - $18k liquidity
 [[monitored_pools]]
 address = "ELzuRVw3eKw3jCe3p6Qd3BWM2P9qrQUkyJbgTLSCMWh8"
 dex = "RaydiumClmm"
 pair = "mSOL/KMNO"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # MET Pools (Meteora Token - JUP/MET high volume pairs)
@@ -617,21 +535,18 @@ enabled = true
 address = "EoFtFBgdBXzKeqZc5dtYGvnKicWEvfEZGTZQM9eFFp1Z"
 dex = "MeteoraDlmm"
 pair = "JUP/MET"
-enabled = true
 
 # Meteora DLMM JUP/MET - Secondary pool
 [[monitored_pools]]
 address = "22nssrrJJBRDBsvnVjZfQEidAFmxpY2YNtJACU5g9GNL"
 dex = "MeteoraDlmm"
 pair = "JUP/MET"
-enabled = true
 
 # Meteora DLMM JUP/MET - Tertiary pool
 [[monitored_pools]]
 address = "Hk25q7zys179Awoyaa15DVT8DmLECwyha1F8Drp3rvgD"
 dex = "MeteoraDlmm"
 pair = "JUP/MET"
-enabled = true
 
 # -----------------------------------------------------------------------------
 # USD1 Pools (World Liberty Financial Stablecoin - $23M+ total liquidity)
@@ -642,25 +557,21 @@ enabled = true
 address = "AQAGYQsdU853WAKhXM79CgNdoyhrRwXvYHX6qrDyBv7t"
 dex = "RaydiumClmm"
 pair = "SOL/USD1"
-enabled = true
 
 # Raydium CLMM SOL/USD1 - $5M liquidity
 [[monitored_pools]]
 address = "FaDoeere161VKUFqcrQEM8it6kSCHKrLyq7wWyPv4uXS"
 dex = "RaydiumClmm"
 pair = "SOL/USD1"
-enabled = true
 
 # Orca Whirlpool SOL/USD1 - $244k liquidity
 [[monitored_pools]]
 address = "J4jbvp8UAfAePYuQqFgzRJb64kTKpzNhvJtGFq5TxCmZ"
 dex = "Orca"
 pair = "SOL/USD1"
-enabled = true
 
 # Orca Whirlpool USD1/USDT - $174k liquidity
 [[monitored_pools]]
 address = "4qpDaAUb5oUrFH7EomqoEvvTjQeh9D4svZ48sUk7kBdY"
 dex = "Orca"
 pair = "USD1/USDT"
-enabled = true

@@ -58,27 +58,81 @@ struct ArbitrageTokens {
 }
 
 const TOKENS: &[ArbitrageTokens] = &[
-    ArbitrageTokens { symbol: "SOL", address: "So11111111111111111111111111111111111111112" },
-    ArbitrageTokens { symbol: "USDC", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
-    ArbitrageTokens { symbol: "USDT", address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" },
-    ArbitrageTokens { symbol: "mSOL", address: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So" },
-    ArbitrageTokens { symbol: "jitoSOL", address: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn" },
-    ArbitrageTokens { symbol: "JupSOL", address: "jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v" }, // New LST
-    ArbitrageTokens { symbol: "RAY", address: "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R" },
-    ArbitrageTokens { symbol: "JUP", address: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN" },
-    ArbitrageTokens { symbol: "PUMP", address: "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn" },
-    ArbitrageTokens { symbol: "BONK", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" },
-    ArbitrageTokens { symbol: "WIF", address: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm" },
-    ArbitrageTokens { symbol: "PYTH", address: "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3" },
-    ArbitrageTokens { symbol: "RENDER", address: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" },
-    ArbitrageTokens { symbol: "PENGU", address: "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv" },
-    ArbitrageTokens { symbol: "KMNO", address: "KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS" }, // Kamino
-    ArbitrageTokens { symbol: "MET", address: "METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m" }, // Meteora
-    ArbitrageTokens { symbol: "USD1", address: "4oRwqhNroh7kgwNXCnu9idZ861zdbWLVfv7aERUcuzU3" }, // USD1 stablecoin
+    ArbitrageTokens {
+        symbol: "SOL",
+        address: "So11111111111111111111111111111111111111112",
+    },
+    ArbitrageTokens {
+        symbol: "USDC",
+        address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    },
+    ArbitrageTokens {
+        symbol: "USDT",
+        address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    },
+    ArbitrageTokens {
+        symbol: "mSOL",
+        address: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
+    },
+    ArbitrageTokens {
+        symbol: "jitoSOL",
+        address: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+    },
+    ArbitrageTokens {
+        symbol: "JupSOL",
+        address: "jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v",
+    }, // New LST
+    ArbitrageTokens {
+        symbol: "RAY",
+        address: "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    },
+    ArbitrageTokens {
+        symbol: "JUP",
+        address: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    },
+    ArbitrageTokens {
+        symbol: "PUMP",
+        address: "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+    },
+    ArbitrageTokens {
+        symbol: "BONK",
+        address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    },
+    ArbitrageTokens {
+        symbol: "WIF",
+        address: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+    },
+    ArbitrageTokens {
+        symbol: "PYTH",
+        address: "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+    },
+    ArbitrageTokens {
+        symbol: "RENDER",
+        address: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",
+    },
+    ArbitrageTokens {
+        symbol: "PENGU",
+        address: "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv",
+    },
+    ArbitrageTokens {
+        symbol: "KMNO",
+        address: "KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS",
+    }, // Kamino
+    ArbitrageTokens {
+        symbol: "MET",
+        address: "METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m",
+    }, // Meteora
+    ArbitrageTokens {
+        symbol: "USD1",
+        address: "4oRwqhNroh7kgwNXCnu9idZ861zdbWLVfv7aERUcuzU3",
+    }, // USD1 stablecoin
 ];
 
 /// Fetch token data from DexScreener API
-async fn fetch_token_pairs(client: &Client, token_address: &str) -> Result<Vec<DexScreenerPair>, String> {
+async fn fetch_token_pairs(
+    client: &Client,
+    token_address: &str,
+) -> Result<Vec<DexScreenerPair>, String> {
     let url = format!(
         "https://api.dexscreener.com/latest/dex/tokens/{}",
         token_address
@@ -104,17 +158,14 @@ async fn fetch_token_pairs(client: &Client, token_address: &str) -> Result<Vec<D
 }
 
 /// Filter pairs to only Solana pairs with significant liquidity
-fn filter_solana_pairs(pairs: Vec<DexScreenerPair>, min_liquidity_usd: f64) -> Vec<DexScreenerPair> {
+fn filter_solana_pairs(
+    pairs: Vec<DexScreenerPair>,
+    min_liquidity_usd: f64,
+) -> Vec<DexScreenerPair> {
     pairs
         .into_iter()
         .filter(|p| p.chain_id == "solana")
-        .filter(|p| {
-            p.liquidity
-                .as_ref()
-                .and_then(|l| l.usd)
-                .unwrap_or(0.0)
-                >= min_liquidity_usd
-        })
+        .filter(|p| p.liquidity.as_ref().and_then(|l| l.usd).unwrap_or(0.0) >= min_liquidity_usd)
         .collect()
 }
 
@@ -141,37 +192,33 @@ async fn test_dexscreener_liquidity() {
     println!("{}", "-".repeat(100));
 
     for token in TOKENS {
-        println!("\n🔍 Fetching pairs for {} ({})...", token.symbol, &token.address[..8]);
+        println!(
+            "\n🔍 Fetching pairs for {} ({})...",
+            token.symbol,
+            &token.address[..8]
+        );
 
         match fetch_token_pairs(&client, token.address).await {
             Ok(pairs) => {
                 let filtered = filter_solana_pairs(pairs, min_liquidity);
-                
+
                 if filtered.is_empty() {
-                    println!("   ⚠️  No pairs with >${:.0}k liquidity", min_liquidity / 1000.0);
+                    println!(
+                        "   ⚠️  No pairs with >${:.0}k liquidity",
+                        min_liquidity / 1000.0
+                    );
                     continue;
                 }
 
                 for pair in &filtered {
-                    let liquidity = pair
-                        .liquidity
-                        .as_ref()
-                        .and_then(|l| l.usd)
-                        .unwrap_or(0.0);
-                    let volume_24h = pair
-                        .volume
-                        .as_ref()
-                        .and_then(|v| v.h24)
-                        .unwrap_or(0.0);
+                    let liquidity = pair.liquidity.as_ref().and_then(|l| l.usd).unwrap_or(0.0);
+                    let volume_24h = pair.volume.as_ref().and_then(|v| v.h24).unwrap_or(0.0);
 
                     total_pairs += 1;
                     total_liquidity += liquidity;
 
-                    let pair_name = format!(
-                        "{}/{}",
-                        pair.base_token.symbol,
-                        pair.quote_token.symbol
-                    );
+                    let pair_name =
+                        format!("{}/{}", pair.base_token.symbol, pair.quote_token.symbol);
 
                     println!(
                         "{:<10} {:<45} {:<15} ${:<11.0} ${:<14.0}",
@@ -196,8 +243,15 @@ async fn test_dexscreener_liquidity() {
     println!("\n{}", "=".repeat(100));
     println!("📊 SUMMARY");
     println!("{}", "=".repeat(100));
-    println!("Total pairs with >${:.0}k liquidity: {}", min_liquidity / 1000.0, total_pairs);
-    println!("Total liquidity tracked: ${:.2}M", total_liquidity / 1_000_000.0);
+    println!(
+        "Total pairs with >${:.0}k liquidity: {}",
+        min_liquidity / 1000.0,
+        total_pairs
+    );
+    println!(
+        "Total liquidity tracked: ${:.2}M",
+        total_liquidity / 1_000_000.0
+    );
     println!();
 }
 

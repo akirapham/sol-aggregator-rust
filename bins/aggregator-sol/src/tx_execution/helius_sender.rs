@@ -163,8 +163,7 @@ impl HeliusSender {
     /// Requires: HELIUS_RPC_URL or SOLANA_RPC_URL
     /// Optional: HELIUS_API_KEY, HELIUS_TIP_LAMPORTS
     pub fn from_env() -> Result<Self, String> {
-        let rpc_url = std::env::var("RPC_URL")
-            .map_err(|_| "RPC_URL must be set")?;
+        let rpc_url = std::env::var("RPC_URL").map_err(|_| "RPC_URL must be set")?;
 
         let api_key = std::env::var("HELIUS_API_KEY").unwrap_or_default();
 

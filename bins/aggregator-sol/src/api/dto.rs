@@ -197,7 +197,6 @@ pub struct RemoveTokenRequest {
 pub struct ArbitrageTokenResponse {
     pub address: String,
     pub symbol: String,
-    pub enabled: bool,
 }
 
 #[derive(Serialize)]

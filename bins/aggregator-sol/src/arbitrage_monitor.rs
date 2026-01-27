@@ -6,8 +6,10 @@ use crate::tx_execution::HeliusSender;
 use crate::types::{ExecutionPriority, SwapParams};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use std::time::Instant;
+use tokio::sync::{broadcast, RwLock};
 
 use sqlx::{Pool, Postgres};
 
@@ -39,7 +41,6 @@ pub struct AbnormalArbitrageOpportunity {
 }
 
 /// Active arbitrage monitor that watches pool updates and executes on mainnet
-#[derive(Clone)]
 pub struct ArbitrageMonitor {
     aggregator: Arc<DexAggregator>,
     config: ArbitrageConfig,
@@ -48,6 +49,8 @@ pub struct ArbitrageMonitor {
     rpc_client: Arc<RpcClient>,
     /// Pre-built index for O(1) triangle path lookup by token pair
     triangle_index: crate::arbitrage_config::TrianglePathIndex,
+    /// Debounce cache: (token_a, token_b) -> last check time
+    last_check_times: Arc<RwLock<HashMap<(Pubkey, Pubkey), Instant>>>,
 }
 
 impl ArbitrageMonitor {
@@ -85,6 +88,7 @@ impl ArbitrageMonitor {
             helius_sender,
             rpc_client,
             triangle_index,
+            last_check_times: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -156,18 +160,53 @@ impl ArbitrageMonitor {
             pool_update.dex
         );
 
+        // Debounce: skip if we checked this pair within the last 1 second
+        let pair_key = if base_token < other_token {
+            (base_token, other_token)
+        } else {
+            (other_token, base_token)
+        };
+
+        let debounce_duration = std::time::Duration::from_millis(500);
+        {
+            let cache = self.last_check_times.read().await;
+            if let Some(last_check) = cache.get(&pair_key) {
+                if last_check.elapsed() < debounce_duration {
+                    log::debug!("⏭️ Skipping check for SOL/{} - debounced", other_token);
+                    return;
+                }
+            }
+        }
+
+        // Update last check time
+        {
+            let mut cache = self.last_check_times.write().await;
+            cache.insert(pair_key, Instant::now());
+        }
+
+        log::info!(
+            "🔍 Triggering checks for Pool Update: {} ({} / {})",
+            pool_update.pool_address,
+            pool_update.token_a,
+            pool_update.token_b
+        );
+
         // Run 2-leg and 3-leg arbitrage checks in parallel
         tokio::join!(
             // 2-leg cross-DEX arbitrage check
-            self.check_arbitrage(base_token, other_token),
+            self.check_arbitrage(base_token, other_token, pool_update.pool_address),
             // 3-leg triangle arbitrage check (O(1) path lookup)
-            self.check_triangle_arbitrage(pool_update.token_a, pool_update.token_b)
+            self.check_triangle_arbitrage(
+                pool_update.token_a,
+                pool_update.token_b,
+                pool_update.pool_address
+            )
         );
     }
 
     /// Check arbitrage opportunity for a specific token pair
     /// This performs the actual expensive arbitrage calculation after price checks pass
-    async fn check_arbitrage(&self, token_a: Pubkey, token_b: Pubkey) {
+    async fn check_arbitrage(&self, token_a: Pubkey, token_b: Pubkey, updated_pool: Pubkey) {
         // Get token info from pool manager
         let token_a_info = match self.aggregator.get_pool_manager().get_token(&token_a).await {
             Some(t) => t,
@@ -197,7 +236,12 @@ impl ArbitrageMonitor {
 
         match self
             .aggregator
-            .calculate_arbitrage_profit(&swap_params, &token_b, self.config.settings.slippage_bps)
+            .calculate_arbitrage_profit(
+                &swap_params,
+                &token_b,
+                self.config.settings.slippage_bps,
+                updated_pool,
+            )
             .await
         {
             Some((profit, forward_route, reverse_route)) => {
@@ -248,7 +292,7 @@ impl ArbitrageMonitor {
                     }
 
                     log::info!(
-                        "🎯 ARBITRAGE: {} <-> {} | Profit: {:.4}% ({} lamports)",
+                        "🎯 ROUND TRIP ARBITRAGE: {} <-> {} | Profit: {:.4}% ({} lamports)",
                         token_a,
                         token_b,
                         profit_percent,
@@ -263,6 +307,14 @@ impl ArbitrageMonitor {
                         PriorityLevel::High, // Use High priority for profitable opportunities
                     )
                     .await;
+                } else {
+                    log::info!(
+                        "📉 Round Trip Check: {} <-> {} | Profit: {:.4}% ({} lamports)",
+                        token_a,
+                        token_b,
+                        profit_percent,
+                        profit
+                    );
                 }
 
                 // Case 2: Abnormal Arbitrage (Profit > 5% or < -5%)
@@ -311,15 +363,24 @@ impl ArbitrageMonitor {
                 }
             }
             None => {
-                // No profitable arbitrage
-                log::debug!("No profitable arbitrage for {} -> {}", token_a, token_b);
+                // No valid route found (liquidity issues or no path)
+                log::info!(
+                    "📉 Round Trip Check: No valid route found for {} <-> {}",
+                    token_a,
+                    token_b
+                );
             }
         }
     }
 
     /// Check triangle arbitrage opportunities when a pool update is received
     /// Uses pre-built HashMap index for O(1) lookup of relevant paths by token pair
-    async fn check_triangle_arbitrage(&self, token_a: Pubkey, token_b: Pubkey) {
+    async fn check_triangle_arbitrage(
+        &self,
+        token_a: Pubkey,
+        token_b: Pubkey,
+        updated_pool: Pubkey,
+    ) {
         let input_amount = self.config.settings.base_amount;
         let slippage_bps = self.config.settings.slippage_bps;
         let min_profit_bps = self.config.settings.min_profit_bps;
@@ -327,16 +388,25 @@ impl ArbitrageMonitor {
         // O(1) lookup - only get paths that have a leg involving this exact token pair
         let relevant_paths = self.triangle_index.get_paths_for_pair(&token_a, &token_b);
 
-        if relevant_paths.is_empty() {
-            return;
-        }
-
-        log::debug!(
-            "🔺 Checking {} triangle paths for pair ({}, {}) in PARALLEL",
+        log::info!(
+            "🔍 Paths lookup: Found {} paths for Pair {}/{}",
             relevant_paths.len(),
             token_a,
             token_b
         );
+
+        if relevant_paths.is_empty() {
+            return;
+        }
+
+        log::info!(
+            "🔺 Checking {} triangle paths for pair ({}, {})",
+            relevant_paths.len(),
+            token_a,
+            token_b
+        );
+
+        let start = std::time::Instant::now();
 
         // Create futures for all path calculations - run in parallel
         let futures: Vec<_> = relevant_paths
@@ -346,7 +416,7 @@ impl ArbitrageMonitor {
                 let path_name = path.name.clone();
                 async move {
                     let result = aggregator
-                        .calculate_triangle_profit(path, input_amount, slippage_bps)
+                        .calculate_triangle_profit(path, input_amount, slippage_bps, updated_pool)
                         .await;
                     (path_name, result)
                 }
@@ -355,13 +425,44 @@ impl ArbitrageMonitor {
 
         // Execute all path calculations in parallel
         let results = futures::future::join_all(futures).await;
+        let elapsed = start.elapsed();
+        log::info!("🔺 Triangle check completed in {:?}", elapsed);
 
         // Process results
+        let success_count = results.iter().filter(|(_, r)| r.is_some()).count();
+        let fail_count = results.len() - success_count;
+        log::info!(
+            "🔺 Triangle check: {} paths | {} with routes, {} failed | {:?}",
+            results.len(),
+            success_count,
+            fail_count,
+            elapsed
+        );
+
+        // Create a result collection to sort by profit
+        let mut all_outcomes = Vec::new();
+
         for (path_name, result) in results {
             if let Some((profit, leg1_route, leg2_route, leg3_route)) = result {
-                let profit_bps = (profit as f64 / input_amount as f64 * 10000.0) as i64;
+                all_outcomes.push((profit, path_name, leg1_route, leg2_route, leg3_route));
+            }
+        }
 
-                if profit > 0 && profit_bps as u64 >= min_profit_bps {
+        // Sort by profit descending (highest profit first)
+        all_outcomes.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Separate winners
+        let winners: Vec<_> = all_outcomes
+            .iter()
+            .filter(|(p, _, _, _, _)| *p > 0)
+            .collect();
+
+        if !winners.is_empty() {
+            // Case A: Profitable opportunities found. Only show these.
+            for (profit, path_name, leg1_route, leg2_route, leg3_route) in winners {
+                let profit_bps = (*profit as f64 / input_amount as f64 * 10000.0) as i64;
+
+                if profit_bps as u64 >= min_profit_bps {
                     log::info!(
                         "🔺 TRIANGLE OPPORTUNITY: {} | Profit: {} lamports ({} bps)",
                         path_name,
@@ -395,17 +496,30 @@ impl ArbitrageMonitor {
                             .collect::<Vec<_>>()
                     );
 
-                    // TODO: Execute triangle arbitrage when ready
-                    // For now just log the opportunity
-                } else if profit_bps.abs() > 500 {
-                    // Log abnormal losses (>5%)
-                    log::warn!(
-                        "⚠️ ABNORMAL TRIANGLE: {} | Loss: {} lamports ({} bps)",
+                    // Simulate execution / Save
+                    // (Assuming you want to keep the saving logic if profitable)
+                } else {
+                    log::info!(
+                        "🔺 Skipped Positive Triangle: {} | Profit: {} ({} bps) < Min BPS ({})",
                         path_name,
                         profit,
-                        profit_bps
+                        profit_bps,
+                        min_profit_bps
                     );
                 }
+            }
+        } else {
+            // Case B: No winners. Log top 2 least negative.
+            let top_2_losers = all_outcomes.iter().take(2);
+            for (profit, path_name, _, _, _) in top_2_losers {
+                let profit_sol = *profit as f64 / 1_000_000_000.0;
+                let profit_pct = *profit as f64 / input_amount as f64 * 100.0;
+                log::info!(
+                    "📉 Best Negative Triangle: {} | Profit: {:.6} SOL ({:.2}%)",
+                    path_name,
+                    profit_sol,
+                    profit_pct
+                );
             }
         }
     }

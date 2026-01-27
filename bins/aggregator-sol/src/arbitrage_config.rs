@@ -43,10 +43,6 @@ pub struct MonitoredToken {
 
     /// Token address
     pub address: String,
-
-    /// Whether this token is enabled for monitoring
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -59,14 +55,6 @@ pub struct MonitoredPool {
 
     /// Token pair (e.g., "PUMP/SOL")
     pub pair: String,
-
-    /// Whether this pool is enabled for monitoring
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-}
-
-fn default_enabled() -> bool {
-    true
 }
 
 impl MonitoredToken {
@@ -219,14 +207,14 @@ impl ArbitrageConfig {
             .map_err(|e| format!("Invalid base_token: {}", e))
     }
 
-    /// Get all enabled monitored tokens
-    pub fn get_enabled_tokens(&self) -> Vec<&MonitoredToken> {
-        self.monitored_tokens.iter().filter(|t| t.enabled).collect()
+    /// Get all monitored tokens
+    pub fn get_tokens(&self) -> Vec<&MonitoredToken> {
+        self.monitored_tokens.iter().collect()
     }
 
-    /// Get all enabled monitored pools
-    pub fn get_enabled_pools(&self) -> Vec<&MonitoredPool> {
-        self.monitored_pools.iter().filter(|p| p.enabled).collect()
+    /// Get all monitored pools
+    pub fn get_pools(&self) -> Vec<&MonitoredPool> {
+        self.monitored_pools.iter().collect()
     }
 
     /// Get set of all monitored token pubkeys (excluding base token to avoid self-trading)
@@ -234,7 +222,7 @@ impl ArbitrageConfig {
         let base_token = self.get_base_token().ok();
         let mut tokens = HashSet::new();
 
-        for token in self.get_enabled_tokens() {
+        for token in self.get_tokens() {
             if let Ok(pubkey) = token.get_pubkey() {
                 // Don't include base token in monitored list (we always trade FROM base token)
                 if Some(pubkey) != base_token {
@@ -372,11 +360,8 @@ impl ArbitrageConfig {
             return Err("Token already exists in monitored list".to_string());
         }
 
-        self.monitored_tokens.push(MonitoredToken {
-            symbol,
-            address,
-            enabled: true,
-        });
+        self.monitored_tokens
+            .push(MonitoredToken { symbol, address });
 
         Ok(())
     }
@@ -390,19 +375,6 @@ impl ArbitrageConfig {
             .ok_or_else(|| "Token not found in monitored list".to_string())?;
 
         Ok(self.monitored_tokens.remove(pos))
-    }
-
-    #[allow(unused)]
-    /// Enable or disable a token
-    pub fn set_token_enabled(&mut self, address: &str, enabled: bool) -> Result<(), String> {
-        let token = self
-            .monitored_tokens
-            .iter_mut()
-            .find(|t| t.address == address)
-            .ok_or_else(|| "Token not found in monitored list".to_string())?;
-
-        token.enabled = enabled;
-        Ok(())
     }
 
     /// Save monitored tokens to Postgres

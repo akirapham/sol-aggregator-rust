@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// Maximum number of pubkeys allowed per gRPC filter (Yellowstone limit)
+const MAX_PUBKEYS_PER_FILTER: usize = 10;
+
 use crate::dex::handle_dex_event;
 use crate::types::AggregatorConfig;
 use crate::types::ChainStateUpdate;
@@ -191,11 +194,17 @@ impl BatchProcessor {
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub struct GrpcService {
+/// Holds a gRPC client with its specific filters for a chunk of pools
+struct SubscriptionInfo {
     grpc: YellowstoneGrpc,
-    batch_processor: Arc<BatchProcessor>,
     transaction_filter: TransactionFilter,
     account_filter: AccountFilter,
+}
+
+pub struct GrpcService {
+    /// Multiple gRPC clients for multi-subscription (one per pool chunk)
+    subscriptions: Vec<SubscriptionInfo>,
+    batch_processor: Arc<BatchProcessor>,
     protocols: Vec<Protocol>,
     batch_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<Vec<EventBatch>>>>>,
 }
@@ -204,46 +213,65 @@ use crate::grpc::traits::GrpcServiceTrait;
 use async_trait::async_trait;
 
 impl GrpcService {
-    /// Start the gRPC service with batch processing
+    /// Start all gRPC subscriptions with batch processing
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Clone Arc for the callback
-        let batch_processor = Arc::clone(&self.batch_processor);
-
-        // Create callback that sends events to batch processor
-        let callback = move |events: Vec<Box<dyn UnifiedEvent>>,
-                             accounts,
-                             post_balances,
-                             post_token_balances| {
-            batch_processor.send_event(events, accounts, post_balances, post_token_balances);
-        };
-
-        log::info!("Starting gRPC subscription with batch processing...");
+        log::info!(
+            "Starting {} gRPC subscription(s) with batch processing...",
+            self.subscriptions.len()
+        );
         log::info!(
             "Batch size: {}, Timeout: {}ms",
             self.batch_processor.batch_size,
             self.batch_processor.timeout_duration.as_millis()
         );
-        log::info!("Monitoring programs: {:?}", self.account_filter.owner);
-        self.grpc
-            .subscribe_events_immediate(
-                self.protocols.clone(),
-                None,
-                vec![self.transaction_filter.clone()],
-                vec![self.account_filter.clone()],
-                None,
-                Some(CommitmentLevel::Processed),
-                callback,
-            )
-            .await?;
 
-        log::info!("gRPC subscription started. Event handling loop should be run separately.");
+        // Start each subscription in parallel
+        for (idx, sub) in self.subscriptions.iter().enumerate() {
+            let batch_processor = Arc::clone(&self.batch_processor);
+            let protocols = self.protocols.clone();
+            let tx_filter = sub.transaction_filter.clone();
+            let acc_filter = sub.account_filter.clone();
+
+            log::info!(
+                "📡 Subscription {}: Monitoring {} pools",
+                idx + 1,
+                acc_filter.account.len()
+            );
+
+            // Create callback that sends events to shared batch processor
+            let callback = move |events: Vec<Box<dyn UnifiedEvent>>,
+                                 accounts,
+                                 post_balances,
+                                 post_token_balances| {
+                batch_processor.send_event(events, accounts, post_balances, post_token_balances);
+            };
+
+            sub.grpc
+                .subscribe_events_immediate(
+                    protocols,
+                    None,
+                    vec![tx_filter],
+                    vec![acc_filter],
+                    None,
+                    Some(CommitmentLevel::Processed),
+                    callback,
+                )
+                .await?;
+        }
+
+        log::info!(
+            "✅ All {} gRPC subscriptions started.",
+            self.subscriptions.len()
+        );
 
         Ok(())
     }
 
     pub async fn stop(&self) {
-        self.grpc.stop().await;
-        log::info!("gRPC subscription stopped.");
+        for sub in &self.subscriptions {
+            sub.grpc.stop().await;
+        }
+        log::info!("All gRPC subscriptions stopped.");
     }
 }
 
@@ -298,22 +326,9 @@ pub async fn create_grpc_service(
 ) -> Result<Arc<GrpcService>, Box<dyn std::error::Error>> {
     let agg_config = AggregatorConfig::from_env().unwrap();
 
-    // Create low-latency configuration
-    let mut config: ClientConfig = ClientConfig::high_throughput();
-    // Enable performance monitoring, has performance overhead, disabled by default
-    config.enable_metrics = true;
-    let grpc = YellowstoneGrpc::new_with_config(
-        agg_config.yellowstone_grpc_url,
-        None,
-        agg_config.backup_grpc_url,
-        config,
-    )?;
-    log::info!("GRPC client created successfully");
-
-    // Create batch processor
+    // Create batch processor (shared across all subscriptions)
     let (batch_processor, batch_rx) =
         BatchProcessor::new(batch_size, Duration::from_millis(batch_timeout_ms));
-
     let batch_processor = Arc::new(batch_processor);
 
     // Dynamically build account_include and protocols based on .env flags
@@ -344,7 +359,6 @@ pub async fn create_grpc_service(
         account_include.push(RAYDIUM_AMM_V4_PROGRAM_ID.to_string());
         protocols.push(Protocol::RaydiumAmmV4);
     }
-
     if agg_config.enable_meteora_dbc {
         account_include.push(DBC_PROGRAM_ID.to_string());
         protocols.push(Protocol::MeteoraDbc);
@@ -353,50 +367,87 @@ pub async fn create_grpc_service(
         account_include.push(METEORA_DAMM_V2_PROGRAM_ID.to_string());
         protocols.push(Protocol::MeteoraDammV2);
     }
-
     if agg_config.enable_orca_whirlpools {
         account_include.push(ORCA_WHIRLPOOL_PROGRAM_ID.to_string());
         protocols.push(Protocol::OrcaWhirlpools);
     }
-
     if agg_config.enable_meteora_dlmm {
         account_include.push(METEORA_DLMM_PROGRAM_ID.to_string());
         protocols.push(Protocol::MeteoraDlmm);
     }
 
-    let account_exclude = vec![];
-    let account_required = vec![];
+    log::info!("Enabled DEXes: {:?}", protocols);
 
-    // Determine filter mode based on monitored pools
-    let (transaction_filter, account_filter) =
+    // Build subscriptions based on mode
+    let subscriptions: Vec<SubscriptionInfo> =
         if let Some(ref pool_addresses) = monitored_pool_addresses {
-            // Filtered mode: Subscribe only to transactions/accounts involving specific pools
+            // Filtered mode: Chunk pools into groups of MAX_PUBKEYS_PER_FILTER
+            let pool_chunks: Vec<Vec<String>> = pool_addresses
+                .chunks(MAX_PUBKEYS_PER_FILTER)
+                .map(|c| c.to_vec())
+                .collect();
+
             log::info!(
-                "🎯 Filtered subscription mode: Monitoring {} specific pools",
-                pool_addresses.len()
+                "🎯 Filtered subscription mode: {} pools → {} subscription(s) (max {} per filter)",
+                pool_addresses.len(),
+                pool_chunks.len(),
+                MAX_PUBKEYS_PER_FILTER
             );
 
-            let tx_filter = TransactionFilter {
-                account_include: pool_addresses.clone(), // Only transactions involving these pools
-                account_exclude: vec![],
-                account_required: vec![],
-            };
+            let mut subs = Vec::with_capacity(pool_chunks.len());
+            for (idx, chunk) in pool_chunks.into_iter().enumerate() {
+                // Create a new gRPC client for each chunk
+                let mut config: ClientConfig = ClientConfig::high_throughput();
+                config.enable_metrics = true;
+                let grpc = YellowstoneGrpc::new_with_config(
+                    agg_config.yellowstone_grpc_url.clone(),
+                    None,
+                    agg_config.backup_grpc_url.clone(),
+                    config,
+                )?;
 
-            let acc_filter = AccountFilter {
-                account: pool_addresses.clone(), // Only account updates for these pools
-                owner: vec![],
-                filters: vec![],
-            };
+                log::info!(
+                    "📡 Created gRPC client {} for {} pools",
+                    idx + 1,
+                    chunk.len()
+                );
 
-            (tx_filter, acc_filter)
+                let tx_filter = TransactionFilter {
+                    account_include: chunk.clone(),
+                    account_exclude: vec![],
+                    account_required: vec![],
+                };
+
+                let acc_filter = AccountFilter {
+                    account: chunk,
+                    owner: vec![],
+                    filters: vec![],
+                };
+
+                subs.push(SubscriptionInfo {
+                    grpc,
+                    transaction_filter: tx_filter,
+                    account_filter: acc_filter,
+                });
+            }
+            subs
         } else {
-            // Legacy mode: Subscribe to all accounts/transactions from enabled programs
+            // Legacy mode: Single subscription monitoring all DEX programs
             log::info!("📡 Full subscription mode: Monitoring all pools from enabled DEXes");
+
+            let mut config: ClientConfig = ClientConfig::high_throughput();
+            config.enable_metrics = true;
+            let grpc = YellowstoneGrpc::new_with_config(
+                agg_config.yellowstone_grpc_url.clone(),
+                None,
+                agg_config.backup_grpc_url.clone(),
+                config,
+            )?;
 
             let tx_filter = TransactionFilter {
                 account_include: account_include.clone(),
-                account_exclude,
-                account_required,
+                account_exclude: vec![],
+                account_required: vec![],
             };
 
             let acc_filter = AccountFilter {
@@ -405,21 +456,20 @@ pub async fn create_grpc_service(
                 filters: vec![],
             };
 
-            (tx_filter, acc_filter)
+            log::info!("Monitoring programs: {:?}", account_include);
+
+            vec![SubscriptionInfo {
+                grpc,
+                transaction_filter: tx_filter,
+                account_filter: acc_filter,
+            }]
         };
 
-    log::info!("Enabled DEXes: {:?}", protocols);
-    if monitored_pool_addresses.is_some() {
-        log::info!("Monitoring specific pools (filtered mode - both tx and account)");
-    } else {
-        log::info!("Monitoring programs: {:?}", account_include);
-    }
+    log::info!("Created {} gRPC subscription(s)", subscriptions.len());
 
     Ok(Arc::new(GrpcService {
-        grpc,
+        subscriptions,
         batch_processor,
-        transaction_filter,
-        account_filter,
         protocols,
         batch_rx: Arc::new(Mutex::new(Some(batch_rx))),
     }))

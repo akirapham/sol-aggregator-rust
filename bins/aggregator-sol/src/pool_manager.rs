@@ -105,6 +105,7 @@ pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
     async fn remove_arbitrage_token(&self, token: &Pubkey) -> Result<(), String>;
     async fn get_chain_state(&self) -> ChainStateUpdate;
     fn get_rpc_client(&self) -> Option<&Arc<RpcClient>>;
+    async fn get_pool(&self, pool_address: &Pubkey) -> Option<Arc<PoolState>>;
 }
 
 /// In-memory pool state manager with real-time updates
@@ -148,6 +149,8 @@ pub struct PoolStateManager {
     dbc_configs: Arc<RwLock<HashMap<Pubkey, dbc::PoolConfig>>>,
     /// PumpFun discovery service
     pumpfun_discovery: Arc<crate::pool_discovery::pumpfun::PumpFunDiscovery>,
+    /// Configured pools for arbitrage filtering (empty = no filtering)
+    configured_pools: Arc<HashSet<Pubkey>>,
 }
 
 #[allow(dead_code)]
@@ -175,6 +178,39 @@ impl PoolStateManager {
             rpc_client.clone(),
         ));
 
+        // Load configured pools for arbitrage filtering
+        let configured_pools: Arc<HashSet<Pubkey>> = {
+            let arbitrage_enabled = std::env::var("ENABLE_ARBITRAGE_DETECTION")
+                .unwrap_or_else(|_| "false".to_string())
+                .to_lowercase()
+                == "true";
+
+            if arbitrage_enabled {
+                let arb_config_path = std::env::var("ARBITRAGE_CONFIG_PATH")
+                    .unwrap_or_else(|_| "arbitrage_config.toml".to_string());
+                match crate::arbitrage_config::ArbitrageConfig::from_file(&arb_config_path) {
+                    Ok(arb_config) => {
+                        let pools: HashSet<Pubkey> = arb_config
+                            .get_pools()
+                            .iter()
+                            .filter_map(|p| p.address.parse().ok())
+                            .collect();
+                        log::info!(
+                            "🎯 Loaded {} configured pools for arbitrage filtering",
+                            pools.len()
+                        );
+                        Arc::new(pools)
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load arbitrage config: {}", e);
+                        Arc::new(HashSet::new())
+                    }
+                }
+            } else {
+                Arc::new(HashSet::new()) // Empty = no filtering
+            }
+        };
+
         let mut manager = Self {
             grpc_service,
             pools: Arc::new(RwLock::new(HashMap::new())),
@@ -199,6 +235,7 @@ impl PoolStateManager {
             config,
             dbc_configs: Arc::new(RwLock::new(HashMap::new())),
             pumpfun_discovery,
+            configured_pools,
         };
 
         // Load data from DB on startup
@@ -342,6 +379,7 @@ impl PoolStateManager {
             config,
             dbc_configs: Arc::new(RwLock::new(HashMap::new())),
             pumpfun_discovery,
+            configured_pools: Arc::new(HashSet::new()), // No filtering in tests
         }
     }
 
@@ -442,8 +480,18 @@ impl PoolStateManager {
         log::info!("🏁 PoolStateManager::start() called!");
         println!("PoolStateManager::start() called via stdout");
 
-        log::info!("🔹 Starting pool discovery task...");
-        self.start_pool_discovery_task();
+        // Only run Pumpfun discovery if arbitrage detection is OFF
+        let arbitrage_enabled = std::env::var("ENABLE_ARBITRAGE_DETECTION")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_lowercase()
+            == "true";
+
+        if !arbitrage_enabled {
+            log::info!("🔹 Starting pool discovery task (arbitrage off)...");
+            self.start_pool_discovery_task();
+        } else {
+            log::info!("⏭️ Skipping pool discovery (arbitrage mode enabled)");
+        }
 
         log::info!("🔹 Starting tick array fetcher/flusher...");
         self.start_tick_array_fetcher_flusher();
@@ -835,9 +883,10 @@ impl PoolStateManager {
         let arbitrage_pool_tx = self.arbitrage_pool_tx.clone();
         let arbitrage_monitored_tokens = Arc::clone(&self.arbitrage_monitored_tokens);
         let dbc_configs = Arc::clone(&self.dbc_configs);
+        let configured_pools = Arc::clone(&self.configured_pools);
 
         tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_millis(100));
+            let mut ticker = interval(Duration::from_millis(50));
 
             // Windowed aggregation for flusher metrics (10s window)
             let mut window_start = std::time::Instant::now();
@@ -917,6 +966,7 @@ impl PoolStateManager {
                             let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
                             let monitored_tokens_c = monitored_tokens_snapshot.clone();
                             let dbc_configs_c = Arc::clone(&dbc_configs);
+                            let configured_pools_c = Arc::clone(&configured_pools);
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -931,6 +981,7 @@ impl PoolStateManager {
                                     &arbitrage_pool_tx_c,
                                     &monitored_tokens_c,
                                     dbc_configs_c,
+                                    &configured_pools_c,
                                 )
                                 .await;
                             }
@@ -955,6 +1006,7 @@ impl PoolStateManager {
                             let arbitrage_pool_tx_c = arbitrage_pool_tx.clone();
                             let monitored_tokens_c = monitored_tokens_snapshot.clone();
                             let dbc_configs_c = Arc::clone(&dbc_configs);
+                            let configured_pools_c = Arc::clone(&configured_pools);
                             async move {
                                 Self::apply_pool_update(
                                     &update,
@@ -969,6 +1021,7 @@ impl PoolStateManager {
                                     &arbitrage_pool_tx_c,
                                     &monitored_tokens_c,
                                     dbc_configs_c,
+                                    &configured_pools_c,
                                 )
                                 .await;
                             }
@@ -1148,7 +1201,17 @@ impl PoolStateManager {
         arbitrage_pool_tx: &broadcast::Sender<ArbitragePoolUpdate>,
         arbitrage_monitored_tokens: &HashSet<Pubkey>,
         dbc_configs: Arc<RwLock<HashMap<Pubkey, crate::pool_data_types::dbc::PoolConfig>>>,
+        configured_pools: &HashSet<Pubkey>,
     ) {
+        // In arbitrage mode, skip events for pools not in the configured set
+        if !configured_pools.is_empty() {
+            let pool_address = update.address();
+            if !configured_pools.contains(&pool_address) {
+                log::debug!("Skipping update for non-configured pool: {}", pool_address);
+                return;
+            }
+        }
+
         // Cache DBC config if this is a config update
         if let PoolUpdateEvent::MeteoraDbc(dbc_update) = update {
             if dbc_update.is_config_update {
@@ -1449,14 +1512,24 @@ impl PoolStateManager {
                 .collect::<Vec<_>>()
         };
 
-        // Step 3: Read pools concurrently and filter out stale ones
+        // Step 3: Read pools CONCURRENTLY and filter out stale ones
+        let tasks: Vec<_> = pool_mutexes
+            .into_iter()
+            .map(|mutex| {
+                tokio::spawn(async move {
+                    let pool_guard = mutex.lock().await;
+                    (*pool_guard).clone()
+                })
+            })
+            .collect();
+
         let mut results = Vec::new();
-        for mutex in pool_mutexes {
-            let pool_guard = mutex.lock().await; // Only locks this specific pool
-            let pool_state = (*pool_guard).clone();
-            // Exclude stale pools
-            if !self.is_pool_stale(&pool_state) {
-                results.push(pool_state);
+        for task in tasks {
+            if let Ok(pool) = task.await {
+                // Exclude stale pools
+                if !self.is_pool_stale(&pool) {
+                    results.push(pool);
+                }
             }
         }
         results
@@ -1474,13 +1547,24 @@ impl PoolStateManager {
                 .collect::<Vec<_>>()
         };
 
+        // Read pools CONCURRENTLY
+        let tasks: Vec<_> = pool_mutexes
+            .into_iter()
+            .map(|mutex| {
+                tokio::spawn(async move {
+                    let pool_guard = mutex.lock().await;
+                    (*pool_guard).clone()
+                })
+            })
+            .collect();
+
         let mut results = HashMap::new();
-        for mutex in pool_mutexes {
-            let pool_guard = mutex.lock().await; // Only locks this specific pool
-            let pool_cloned = (*pool_guard).clone();
-            // Exclude stale pools
-            if !self.is_pool_stale(&pool_cloned) {
-                results.insert(pool_cloned.address(), pool_cloned);
+        for task in tasks {
+            if let Ok(pool) = task.await {
+                // Exclude stale pools
+                if !self.is_pool_stale(&pool) {
+                    results.insert(pool.address(), pool);
+                }
             }
         }
         results
@@ -1643,23 +1727,59 @@ impl PoolStateManager {
 
     /// Load data from Postgres into in-memory structures
     async fn load_from_db(&mut self) {
-        log::info!("Loading pool state from Postgres...");
+        let arbitrage_enabled = std::env::var("ENABLE_ARBITRAGE_DETECTION")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_lowercase()
+            == "true";
 
-        // 1. Load Pools
-        match self.db.load_pools().await {
-            Ok(pools) => {
-                let mut pools_write = self.pools.write().await;
-                for pool_state in pools {
-                    pools_write.insert(pool_state.address(), Arc::new(Mutex::new(pool_state)));
+        // 1. Load Pools (skip postgres in arbitrage mode - fetch fresh from RPC)
+        if arbitrage_enabled {
+            log::info!("⚡ Arbitrage mode: fetching configured pools from RPC...");
+
+            // Load arbitrage config to get pool list
+            let config_path = std::env::var("ARBITRAGE_CONFIG_PATH")
+                .unwrap_or_else(|_| "arbitrage_config.toml".to_string());
+
+            match crate::arbitrage_config::ArbitrageConfig::from_file(&config_path) {
+                Ok(arb_config) => {
+                    let enabled_pools = arb_config.get_pools();
+                    log::info!("  Found {} enabled pools in config", enabled_pools.len());
+
+                    // Fetch all pools from RPC
+                    let fetched_pools = crate::fetchers::pool_fetcher::fetch_configured_pools(
+                        &self.rpc_client,
+                        &enabled_pools,
+                    )
+                    .await;
+
+                    // Inject into pool manager
+                    let mut pools_write = self.pools.write().await;
+                    for pool_state in fetched_pools {
+                        pools_write.insert(pool_state.address(), Arc::new(Mutex::new(pool_state)));
+                    }
+                    log::info!("✅ Loaded {} pools from RPC", pools_write.len());
                 }
-                log::info!("Loaded {} pools from Postgres", pools_write.len());
+                Err(e) => {
+                    log::error!("Failed to load arbitrage config: {}", e);
+                }
             }
-            Err(e) => {
-                log::error!("Failed to load pools from Postgres: {}", e);
+        } else {
+            log::info!("Loading pool state from Postgres...");
+            match self.db.load_pools().await {
+                Ok(pools) => {
+                    let mut pools_write = self.pools.write().await;
+                    for pool_state in pools {
+                        pools_write.insert(pool_state.address(), Arc::new(Mutex::new(pool_state)));
+                    }
+                    log::info!("Loaded {} pools from Postgres", pools_write.len());
+                }
+                Err(e) => {
+                    log::error!("Failed to load pools from Postgres: {}", e);
+                }
             }
         }
 
-        // 2. Load Tokens
+        // 2. Load Tokens (always needed for symbol/decimals)
         match self.db.load_tokens().await {
             Ok(tokens) => {
                 let mut token_write = self.token_cache.write().await;
@@ -1698,6 +1818,38 @@ impl PoolStateManager {
         let mut dex_pools_map: HashMap<DexType, HashSet<Pubkey>> = HashMap::new();
         let mut raydium_clmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
         let mut raydium_cpmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
+
+        // Check if arbitrage mode is enabled - if so, only fetch ticks for configured pools
+        let arbitrage_enabled = std::env::var("ENABLE_ARBITRAGE_DETECTION")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_lowercase()
+            == "true";
+
+        // Load configured pool addresses if arbitrage is enabled
+        let configured_pools: HashSet<Pubkey> = if arbitrage_enabled {
+            let arb_config_path = std::env::var("ARBITRAGE_CONFIG_PATH")
+                .unwrap_or_else(|_| "arbitrage_config.toml".to_string());
+            match crate::arbitrage_config::ArbitrageConfig::from_file(&arb_config_path) {
+                Ok(config) => {
+                    let pools: HashSet<Pubkey> = config
+                        .get_pools()
+                        .iter()
+                        .filter_map(|p| p.address.parse().ok())
+                        .collect();
+                    log::info!(
+                        "⚡ Arbitrage mode: Only fetching ticks for {} configured pools",
+                        pools.len()
+                    );
+                    pools
+                }
+                Err(e) => {
+                    log::warn!("Failed to load arbitrage config for tick filtering: {}", e);
+                    HashSet::new()
+                }
+            }
+        } else {
+            HashSet::new() // Empty = fetch all
+        };
 
         log::info!("Rebuilding mappings from {} pools...", pools_read.len());
         let _tick_fetcher = TickArrayFetcher::new(
@@ -1766,13 +1918,15 @@ impl PoolStateManager {
                         continue;
                     }
 
-                    // add pool to pending pools to fetch tick arrays
-                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
-                    pending.insert(PoolForTickFetching {
-                        address: *pool_address,
-                        dex_type: DexType::RaydiumClmm,
-                    });
-                    drop(pending); // release lock early
+                    // add pool to pending pools to fetch tick arrays (skip if arbitrage mode and not configured)
+                    if configured_pools.is_empty() || configured_pools.contains(pool_address) {
+                        let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
+                        pending.insert(PoolForTickFetching {
+                            address: *pool_address,
+                            dex_type: DexType::RaydiumClmm,
+                        });
+                        drop(pending);
+                    }
 
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);
                 }
@@ -1803,13 +1957,15 @@ impl PoolStateManager {
                         continue;
                     }
 
-                    // add pool to pending pools to fetch bin arrays
-                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
-                    pending.insert(PoolForTickFetching {
-                        address: *pool_address,
-                        dex_type: DexType::MeteoraDlmm,
-                    });
-                    drop(pending); // release lock early
+                    // add pool to pending pools to fetch bin arrays (skip if arbitrage mode and not configured)
+                    if configured_pools.is_empty() || configured_pools.contains(pool_address) {
+                        let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
+                        pending.insert(PoolForTickFetching {
+                            address: *pool_address,
+                            dex_type: DexType::MeteoraDlmm,
+                        });
+                        drop(pending);
+                    }
                 }
                 PoolState::OrcaWhirlpool(_) => {
                     if !self.config.enable_orca_whirlpools {
@@ -1820,13 +1976,15 @@ impl PoolStateManager {
                         continue;
                     }
 
-                    // add pool to pending pools to fetch tick arrays
-                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
-                    pending.insert(PoolForTickFetching {
-                        address: *pool_address,
-                        dex_type: DexType::Orca,
-                    });
-                    drop(pending); // release lock early
+                    // add pool to pending pools to fetch tick arrays (skip if arbitrage mode and not configured)
+                    if configured_pools.is_empty() || configured_pools.contains(pool_address) {
+                        let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
+                        pending.insert(PoolForTickFetching {
+                            address: *pool_address,
+                            dex_type: DexType::Orca,
+                        });
+                        drop(pending);
+                    }
                 }
             }
 
@@ -2252,5 +2410,14 @@ impl PoolDataProvider for PoolStateManager {
 
     fn get_rpc_client(&self) -> Option<&Arc<RpcClient>> {
         Some(&self.rpc_client)
+    }
+
+    async fn get_pool(&self, pool_address: &Pubkey) -> Option<Arc<PoolState>> {
+        if let Some(pool_mutex) = self.pools.read().await.get(pool_address) {
+            let pool_state = pool_mutex.lock().await.clone();
+            Some(Arc::new(pool_state))
+        } else {
+            None
+        }
     }
 }

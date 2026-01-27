@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match ArbitrageConfig::from_file(&arb_config_path) {
             Ok(config) => {
                 let pools: Vec<String> = config
-                    .get_enabled_pools()
+                    .get_pools()
                     .iter()
                     .map(|p| p.address.clone())
                     .collect();
@@ -193,7 +193,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .map(|pk| MonitoredToken {
                                 symbol: "UNKNOWN".to_string(),
                                 address: pk.to_string(),
-                                enabled: true,
                             })
                             .collect();
                         arb_config = arb_config.merge_with_db_tokens(db_tokens);
@@ -202,7 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 log::info!(
                     "Monitoring arbitrage {} tokens",
-                    arb_config.get_enabled_tokens().len()
+                    arb_config.get_tokens().len()
                 );
 
                 // Collect monitored token pubkeys for the pool manager to filter broadcasts

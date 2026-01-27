@@ -389,12 +389,36 @@ pub async fn check_arbitrage(
         priority: ExecutionPriority::Medium,
     };
 
-    // Calculate arbitrage profit
-    match state
+    // Get pools for the pair to check as anchor pools
+    let pools = state
         .aggregator
-        .calculate_arbitrage_profit(&swap_params, &token_b_key, request.slippage_bps)
-        .await
-    {
+        .get_pool_manager()
+        .get_pools_for_pair(&token_a_key, &token_b_key)
+        .await;
+
+    let mut best_opportunity = None;
+    let mut max_profit = i64::MIN;
+
+    for pool in pools {
+        if let Some((profit, forward, reverse)) = state
+            .aggregator
+            .calculate_arbitrage_profit(
+                &swap_params,
+                &token_b_key,
+                request.slippage_bps,
+                pool.address(),
+            )
+            .await
+        {
+            if profit > max_profit {
+                max_profit = profit;
+                best_opportunity = Some((profit, forward, reverse));
+            }
+        }
+    }
+
+    // Calculate arbitrage profit
+    match best_opportunity {
         Some((profit, forward_route, reverse_route)) => {
             // Only consider it a strict "success" for the API if profit is positive
             // The aggregator might return negative profit if it matched an "Abnormal" case (loss)
@@ -548,7 +572,6 @@ pub async fn get_arbitrage_tokens(
         .map(|t| ArbitrageTokenResponse {
             address: t.address.clone(),
             symbol: t.symbol.clone(),
-            enabled: t.enabled,
         })
         .collect();
 
@@ -671,7 +694,6 @@ pub async fn add_arbitrage_token(
         token: Some(ArbitrageTokenResponse {
             address: request.address,
             symbol: request.symbol,
-            enabled: true,
         }),
     })
     .into_response()
@@ -761,7 +783,6 @@ pub async fn remove_arbitrage_token(
         token: removed_token.map(|t| ArbitrageTokenResponse {
             address: t.address,
             symbol: t.symbol,
-            enabled: t.enabled,
         }),
     })
     .into_response()

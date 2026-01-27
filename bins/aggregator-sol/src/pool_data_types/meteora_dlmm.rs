@@ -76,17 +76,11 @@ impl MeteoraDlmmPoolState {
         let mut total_amount_out: u64 = 0;
         let mut total_fee: u64 = 0;
 
-        println!(
-            "DEBUG: calculate_output_amount START. Input: {}, SwapForY: {}",
-            input_amount, swap_for_y
-        );
-
         // Create Clock using anchor types
         let current_timestamp = self.last_updated;
 
         // Update references
         if let Err(e) = lb_pair.update_references(current_timestamp as i64) {
-            println!("DEBUG: Error updating references: {:?}", e);
             log::debug!("Error updating references: {:?}", e);
             return 0;
         }
@@ -97,15 +91,6 @@ impl MeteoraDlmmPoolState {
             .as_ref()
             .map(|ext| functions::to_commons_bitmap_extension(self, ext));
 
-        println!(
-            "DEBUG: Total bin arrays in cache: {}",
-            self.bin_arrays.len()
-        );
-        println!(
-            "DEBUG: Bin array indices: {:?}",
-            self.bin_arrays.keys().collect::<Vec<_>>()
-        );
-
         while amount_left > 0 {
             // Calculate which bin array contains the current active bin
             let current_bin_array_index =
@@ -114,26 +99,15 @@ impl MeteoraDlmmPoolState {
                 ) {
                     Ok(idx) => idx as i32,
                     Err(e) => {
-                        println!("DEBUG: Error calculating bin array index: {:?}", e);
                         log::debug!("Error calculating bin array index: {:?}", e);
                         break;
                     }
                 };
 
-            println!(
-                "DEBUG: Active bin ID: {}, Bin array index: {}",
-                lb_pair.active_id, current_bin_array_index
-            );
-
             // Look up the bin array directly in our HashMap by index
             let active_bin_array_raw = match self.bin_arrays.get(&current_bin_array_index) {
                 Some(arr) => arr.clone(),
                 None => {
-                    println!(
-                        "DEBUG: Bin array {} not in cache (partial quote). Cached indices: {:?}",
-                        current_bin_array_index,
-                        self.bin_arrays.keys().collect::<Vec<_>>()
-                    );
                     log::debug!("Bin array {} not in cache", current_bin_array_index);
                     break; // Partial quote - bin array not in cache
                 }
@@ -142,11 +116,6 @@ impl MeteoraDlmmPoolState {
             let mut active_bin_array =
                 functions::get_commons_bin_array_from_raw(&active_bin_array_raw);
 
-            println!(
-                "DEBUG: Active Bin Array Found. Index: {}",
-                active_bin_array.index
-            );
-
             // Shift active bin if there's an empty gap
             let lb_pair_bin_array_index =
                 match meteora_dlmm_sdk::dlmm::accounts::BinArray::bin_id_to_bin_array_index(
@@ -154,17 +123,12 @@ impl MeteoraDlmmPoolState {
                 ) {
                     Ok(idx) => idx,
                     Err(e) => {
-                        println!("DEBUG: Error getting bin array index: {:?}", e);
                         log::debug!("Error getting bin array index: {:?}", e);
                         return 0;
                     }
                 };
 
             if i64::from(lb_pair_bin_array_index) != active_bin_array.index {
-                println!(
-                    "DEBUG: BinIndex mismatch: LbPair implies {}, Found {}",
-                    lb_pair_bin_array_index, active_bin_array.index
-                );
                 if swap_for_y {
                     if let Ok((_, upper_bin_id)) =
                         meteora_dlmm_sdk::dlmm::accounts::BinArray::get_bin_array_lower_upper_bin_id(
@@ -188,8 +152,7 @@ impl MeteoraDlmmPoolState {
                 let is_within_range =
                     match active_bin_array.is_bin_id_within_range(lb_pair.active_id) {
                         Ok(within) => within,
-                        Err(e) => {
-                            println!("DEBUG: Error checking range: {:?}", e);
+                        Err(_e) => {
                             return 0;
                         }
                     };
@@ -262,19 +225,12 @@ impl MeteoraDlmmPoolState {
                 }
 
                 if amount_left > 0 {
-                    println!(
-                        "DEBUG: Advancing. Amount left: {}, Current active_id: {}",
-                        amount_left, lb_pair.active_id
-                    );
                     if let Err(e) = lb_pair.advance_active_bin(swap_for_y) {
-                        println!("DEBUG: Error advancing active bin: {:?}", e);
                         log::debug!("Error advancing active bin: {:?}", e);
                         return 0;
                     }
-                    println!("DEBUG: After advance, new active_id: {}", lb_pair.active_id);
                 }
             }
-            println!("DEBUG: Inner loop ended. Amount left: {}", amount_left);
         }
 
         total_amount_out

@@ -51,7 +51,7 @@ services:
       # Path inside the container where arbitrage_config.toml will be mounted
       - ARBITRAGE_CONFIG_PATH=/app/arbitrage_config.toml
       - DATABASE_URL=postgresql://${POSTGRES_USER:-aggregator}:${POSTGRES_PASSWORD:-aggregator_password}@postgres:5432/${POSTGRES_DB:-aggregator_db}
-      - ENABLE_ARBITRAGE_DETECTION=false
+      - ENABLE_ARBITRAGE_DETECTION=${ENABLE_ARBITRAGE_DETECTION:-false}
     env_file:
       - .env
     volumes:

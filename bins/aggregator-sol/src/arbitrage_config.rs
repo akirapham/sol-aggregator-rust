@@ -254,6 +254,7 @@ impl ArbitrageConfig {
         const USDT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
         const MSOL: &str = "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So";
         const JITOSOL: &str = "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn";
+        const JUPSOL: &str = "jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v"; // Jupiter Liquid Staking SOL
         const RAY: &str = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R";
         const JUP: &str = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
         const PUMP: &str = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
@@ -262,6 +263,9 @@ impl ArbitrageConfig {
         const PYTH: &str = "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3";
         const RENDER: &str = "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof";
         const PENGU: &str = "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv";
+        const KMNO: &str = "KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS"; // Kamino Finance
+        const MET: &str = "METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m"; // Meteora Token
+        const USD1: &str = "4oRwqhNroh7kgwNXCnu9idZ861zdbWLVfv7aERUcuzU3"; // USD1 stablecoin
 
         let paths = vec![
             // =================================================================
@@ -275,6 +279,22 @@ impl ArbitrageConfig {
             TrianglePath::new("SOL→USDC→jitoSOL→SOL", [SOL, USDC, JITOSOL, SOL]),
             TrianglePath::new("SOL→jitoSOL→mSOL→SOL", [SOL, JITOSOL, MSOL, SOL]),
             // =================================================================
+            // JupSOL Triangles (High volume cross-LST arbitrage)
+            // =================================================================
+            TrianglePath::new("SOL→JupSOL→jitoSOL→SOL", [SOL, JUPSOL, JITOSOL, SOL]),
+            TrianglePath::new("SOL→jitoSOL→JupSOL→SOL", [SOL, JITOSOL, JUPSOL, SOL]),
+            TrianglePath::new("SOL→JupSOL→mSOL→SOL", [SOL, JUPSOL, MSOL, SOL]),
+            TrianglePath::new("SOL→mSOL→JupSOL→SOL", [SOL, MSOL, JUPSOL, SOL]),
+            TrianglePath::new("SOL→JupSOL→USDC→SOL", [SOL, JUPSOL, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→JupSOL→SOL", [SOL, USDC, JUPSOL, SOL]),
+            // =================================================================
+            // KMNO (Kamino) Triangles - DeFi token with LST pairs
+            // =================================================================
+            TrianglePath::new("SOL→KMNO→jitoSOL→SOL", [SOL, KMNO, JITOSOL, SOL]),
+            TrianglePath::new("SOL→jitoSOL→KMNO→SOL", [SOL, JITOSOL, KMNO, SOL]),
+            TrianglePath::new("SOL→KMNO→mSOL→SOL", [SOL, KMNO, MSOL, SOL]),
+            TrianglePath::new("SOL→mSOL→KMNO→SOL", [SOL, MSOL, KMNO, SOL]),
+            // =================================================================
             // DeFi Token Triangles (RAY, JUP - high volume DEX tokens)
             // =================================================================
             TrianglePath::new("SOL→RAY→USDC→SOL", [SOL, RAY, USDC, SOL]),
@@ -283,6 +303,11 @@ impl ArbitrageConfig {
             TrianglePath::new("SOL→JUP→USDC→SOL", [SOL, JUP, USDC, SOL]),
             TrianglePath::new("SOL→USDC→JUP→SOL", [SOL, USDC, JUP, SOL]),
             TrianglePath::new("SOL→JUP→RAY→SOL", [SOL, JUP, RAY, SOL]),
+            // =================================================================
+            // JUP→MET Triangles (Meteora token high volume on JUP/MET pairs)
+            // =================================================================
+            TrianglePath::new("SOL→JUP→MET→SOL", [SOL, JUP, MET, SOL]),
+            TrianglePath::new("SOL→MET→JUP→SOL", [SOL, MET, JUP, SOL]),
             // =================================================================
             // PUMP Token Triangles ($16M+ liquidity main pool)
             // =================================================================
@@ -309,11 +334,21 @@ impl ArbitrageConfig {
             TrianglePath::new("SOL→USDC→PENGU→SOL", [SOL, USDC, PENGU, SOL]),
             TrianglePath::new("SOL→PENGU→jitoSOL→SOL", [SOL, PENGU, JITOSOL, SOL]),
             // =================================================================
-            // Cross-token Triangles (for price discrepancies between related tokens)
+            // Cross-token Triangles (price discrepancies between related tokens)
             // =================================================================
             TrianglePath::new("SOL→BONK→WIF→SOL", [SOL, BONK, WIF, SOL]),
             TrianglePath::new("SOL→mSOL→USDT→SOL", [SOL, MSOL, USDT, SOL]),
             TrianglePath::new("SOL→jitoSOL→USDT→SOL", [SOL, JITOSOL, USDT, SOL]),
+            // Cross-LST with KMNO
+            TrianglePath::new("SOL→JupSOL→KMNO→SOL", [SOL, JUPSOL, KMNO, SOL]),
+            // =================================================================
+            // USD1 Stablecoin Round-trip Triangles ($23M+ liquidity)
+            // =================================================================
+            TrianglePath::new("SOL→USD1→USDC→SOL", [SOL, USD1, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→USD1→SOL", [SOL, USDC, USD1, SOL]),
+            TrianglePath::new("SOL→USD1→USDT→SOL", [SOL, USD1, USDT, SOL]),
+            TrianglePath::new("SOL→mSOL→USD1→SOL", [SOL, MSOL, USD1, SOL]),
+            TrianglePath::new("SOL→jitoSOL→USD1→SOL", [SOL, JITOSOL, USD1, SOL]),
         ];
 
         // Filter to only valid paths (parsing succeeded)

@@ -332,69 +332,79 @@ impl ArbitrageMonitor {
         }
 
         log::debug!(
-            "🔺 Checking {} triangle paths for pair ({}, {})",
+            "🔺 Checking {} triangle paths for pair ({}, {}) in PARALLEL",
             relevant_paths.len(),
             token_a,
             token_b
         );
 
-        for path in relevant_paths {
-            match self
-                .aggregator
-                .calculate_triangle_profit(path, input_amount, slippage_bps)
-                .await
-            {
-                Some((profit, leg1_route, leg2_route, leg3_route)) => {
-                    let profit_bps = (profit as f64 / input_amount as f64 * 10000.0) as i64;
-
-                    if profit > 0 && profit_bps as u64 >= min_profit_bps {
-                        log::info!(
-                            "🔺 TRIANGLE OPPORTUNITY: {} | Profit: {} lamports ({} bps)",
-                            path.name,
-                            profit,
-                            profit_bps
-                        );
-
-                        // Log route details
-                        log::info!(
-                            "   Leg1: {:?}",
-                            leg1_route
-                                .paths
-                                .iter()
-                                .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
-                                .collect::<Vec<_>>()
-                        );
-                        log::info!(
-                            "   Leg2: {:?}",
-                            leg2_route
-                                .paths
-                                .iter()
-                                .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
-                                .collect::<Vec<_>>()
-                        );
-                        log::info!(
-                            "   Leg3: {:?}",
-                            leg3_route
-                                .paths
-                                .iter()
-                                .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
-                                .collect::<Vec<_>>()
-                        );
-
-                        // TODO: Execute triangle arbitrage when ready
-                        // For now just log the opportunity
-                    } else if profit_bps.abs() > 500 {
-                        // Log abnormal losses (>5%)
-                        log::warn!(
-                            "⚠️ ABNORMAL TRIANGLE: {} | Loss: {} lamports ({} bps)",
-                            path.name,
-                            profit,
-                            profit_bps
-                        );
-                    }
+        // Create futures for all path calculations - run in parallel
+        let futures: Vec<_> = relevant_paths
+            .into_iter()
+            .map(|path| {
+                let aggregator = self.aggregator.clone();
+                let path_name = path.name.clone();
+                async move {
+                    let result = aggregator
+                        .calculate_triangle_profit(path, input_amount, slippage_bps)
+                        .await;
+                    (path_name, result)
                 }
-                None => {
-                    // Route not found for this triangle - skip silently
+            })
+            .collect();
+
+        // Execute all path calculations in parallel
+        let results = futures::future::join_all(futures).await;
+
+        // Process results
+        for (path_name, result) in results {
+            if let Some((profit, leg1_route, leg2_route, leg3_route)) = result {
+                let profit_bps = (profit as f64 / input_amount as f64 * 10000.0) as i64;
+
+                if profit > 0 && profit_bps as u64 >= min_profit_bps {
+                    log::info!(
+                        "🔺 TRIANGLE OPPORTUNITY: {} | Profit: {} lamports ({} bps)",
+                        path_name,
+                        profit,
+                        profit_bps
+                    );
+
+                    // Log route details
+                    log::info!(
+                        "   Leg1: {:?}",
+                        leg1_route
+                            .paths
+                            .iter()
+                            .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
+                            .collect::<Vec<_>>()
+                    );
+                    log::info!(
+                        "   Leg2: {:?}",
+                        leg2_route
+                            .paths
+                            .iter()
+                            .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
+                            .collect::<Vec<_>>()
+                    );
+                    log::info!(
+                        "   Leg3: {:?}",
+                        leg3_route
+                            .paths
+                            .iter()
+                            .map(|p| p.steps.iter().map(|s| s.dex).collect::<Vec<_>>())
+                            .collect::<Vec<_>>()
+                    );
+
+                    // TODO: Execute triangle arbitrage when ready
+                    // For now just log the opportunity
+                } else if profit_bps.abs() > 500 {
+                    // Log abnormal losses (>5%)
+                    log::warn!(
+                        "⚠️ ABNORMAL TRIANGLE: {} | Loss: {} lamports ({} bps)",
+                        path_name,
+                        profit,
+                        profit_bps
+                    );
                 }
             }
         }

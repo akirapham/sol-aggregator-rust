@@ -59,11 +59,11 @@ services:
       - ./.env:/app/.env:ro
       # Optional: Mount logs directory
       - ./logs:/app/logs
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
       - ./rocksdb_data:/app/rocksdb_data
       # Mount the arbitrage config so the service can find it at runtime
       - ./bins/aggregator-sol/arbitrage_config.toml:/app/arbitrage_config.toml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - aggregator-network
     depends_on:

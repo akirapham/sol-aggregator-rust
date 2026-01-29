@@ -646,84 +646,22 @@ pair = "PENGU/jitoSOL"
 # JupSOL Pools (Jupiter Liquid Staking SOL - Cross-LST Arbitrage)
 # -----------------------------------------------------------------------------
 
-# Meteora DLMM JupSOL/JitoSOL - $467k liquidity (MAIN cross-LST pool)
-[[monitored_pools]]
-address = "5cvcHrD2uh2CXhmZnMHsTVWJW1qtyikVaN3MCJNaB5D4"
-dex = "MeteoraDlmm"
-pair = "JupSOL/JitoSOL"
 
-# Orca Whirlpool JupSOL/JitoSOL - $86k liquidity
-[[monitored_pools]]
-address = "D2G7dVp1tSsxKx9hs4PLvG5nECszWLg5A1YzahmFpvGN"
-dex = "Orca"
-pair = "JupSOL/JitoSOL"
 
 # -----------------------------------------------------------------------------
 # KMNO Pools (Kamino Finance - DeFi token with LST pairs)
 # -----------------------------------------------------------------------------
 
-# Orca Whirlpool KMNO/JitoSOL - $310k liquidity
-[[monitored_pools]]
-address = "2nJjE2ba3iGtefN4UNM1KN5FdYCwssU4Bzhc8URcFUg3"
-dex = "Orca"
-pair = "KMNO/JitoSOL"
 
-# Raydium CLMM mSOL/KMNO - $18k liquidity
-[[monitored_pools]]
-address = "ELzuRVw3eKw3jCe3p6Qd3BWM2P9qrQUkyJbgTLSCMWh8"
-dex = "RaydiumClmm"
-pair = "mSOL/KMNO"
 
 # -----------------------------------------------------------------------------
 # MET Pools (Meteora Token - JUP/MET high volume pairs)
 # -----------------------------------------------------------------------------
 
-# Meteora DLMM JUP/MET - $30k+ liquidity, $91k volume
-[[monitored_pools]]
-address = "EoFtFBgdBXzKeqZc5dtYGvnKicWEvfEZGTZQM9eFFp1Z"
-dex = "MeteoraDlmm"
-pair = "JUP/MET"
 
-# Meteora DLMM JUP/MET - Secondary pool
-[[monitored_pools]]
-address = "22nssrrJJBRDBsvnVjZfQEidAFmxpY2YNtJACU5g9GNL"
-dex = "MeteoraDlmm"
-pair = "JUP/MET"
-
-# Meteora DLMM JUP/MET - Tertiary pool
-[[monitored_pools]]
-address = "Hk25q7zys179Awoyaa15DVT8DmLECwyha1F8Drp3rvgD"
-dex = "MeteoraDlmm"
-pair = "JUP/MET"
 
 # -----------------------------------------------------------------------------
-# USD1 Pools (World Liberty Financial Stablecoin - $23M+ total liquidity)
-# -----------------------------------------------------------------------------
 
-# Raydium CLMM SOL/USD1 - $18.5M liquidity (MAIN pool)
-[[monitored_pools]]
-address = "AQAGYQsdU853WAKhXM79CgNdoyhrRwXvYHX6qrDyBv7t"
-dex = "RaydiumClmm"
-pair = "SOL/USD1"
-
-# Raydium CLMM SOL/USD1 - $5M liquidity
-[[monitored_pools]]
-address = "FaDoeere161VKUFqcrQEM8it6kSCHKrLyq7wWyPv4uXS"
-dex = "RaydiumClmm"
-pair = "SOL/USD1"
-
-# Orca Whirlpool SOL/USD1 - $244k liquidity
-[[monitored_pools]]
-address = "J4jbvp8UAfAePYuQqFgzRJb64kTKpzNhvJtGFq5TxCmZ"
-dex = "Orca"
-pair = "SOL/USD1"
-
-# Orca Whirlpool USD1/USDT - $174k liquidity
-[[monitored_pools]]
-address = "4qpDaAUb5oUrFH7EomqoEvvTjQeh9D4svZ48sUk7kBdY"
-dex = "Orca"
-pair = "USD1/USDT"
-# -----------------------------------------------------------------------------
 # NEW METEORA POOLS FROM API
 # -----------------------------------------------------------------------------
 

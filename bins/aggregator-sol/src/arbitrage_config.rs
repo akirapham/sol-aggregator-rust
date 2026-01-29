@@ -254,6 +254,15 @@ impl ArbitrageConfig {
         const KMNO: &str = "KMNo3nJsBXfcpJTVhZcXLW7RmTwTt4GVFE7suUBo9sS"; // Kamino Finance
         const MET: &str = "METAewgxyPbgwsseH8T16a39CQ5VyVxZi9zXiDPY18m"; // Meteora Token
         const USD1: &str = "4oRwqhNroh7kgwNXCnu9idZ861zdbWLVfv7aERUcuzU3"; // USD1 stablecoin
+        const USDS: &str = "USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA";
+        const PRIME: &str = "3b8X44fLF9ooXaUm3hhSgjpmVs6rZZ3pPoGnGahc3Uu7";
+        const PIPPIN: &str = "Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump";
+        const FARTCOIN: &str = "9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump";
+        const BOME: &str = "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82";
+        const TRX: &str = "GbbesPbaYh5uiAZSYNXTc7w9jty1rpg3P9L4JeN4LkKc";
+        const LTC: &str = "LTCnvsYhKY9g9YxeQbaM9WK71hMBP9m7cYm7p1kncvo";
+        const ADA: &str = "ADAyGX7uFPmdJLoMA1CVZRK32AYX95Cndj9h1hNq3vre";
+        const MEW: &str = "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5";
 
         let paths = vec![
             // =================================================================
@@ -337,6 +346,36 @@ impl ArbitrageConfig {
             TrianglePath::new("SOL→USD1→USDT→SOL", [SOL, USD1, USDT, SOL]),
             TrianglePath::new("SOL→mSOL→USD1→SOL", [SOL, MSOL, USD1, SOL]),
             TrianglePath::new("SOL→jitoSOL→USD1→SOL", [SOL, JITOSOL, USD1, SOL]),
+            // =================================================================
+            // NEW RAYDIUM TRIANGLES (USDS, PRIME, BOME, ETC)
+            // =================================================================
+            // USDS (Stablecoin-like)
+            TrianglePath::new("SOL→USDS→USDC→SOL", [SOL, USDS, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→USDS→SOL", [SOL, USDC, USDS, SOL]),
+            // PRIME
+            TrianglePath::new("SOL→PRIME→USDC→SOL", [SOL, PRIME, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→PRIME→SOL", [SOL, USDC, PRIME, SOL]),
+            // PIPPIN
+            TrianglePath::new("SOL→PIPPIN→USDC→SOL", [SOL, PIPPIN, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→PIPPIN→SOL", [SOL, USDC, PIPPIN, SOL]),
+            // FARTCOIN
+            TrianglePath::new("SOL→FARTCOIN→USDC→SOL", [SOL, FARTCOIN, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→FARTCOIN→SOL", [SOL, USDC, FARTCOIN, SOL]),
+            // BOME
+            TrianglePath::new("SOL→BOME→USDC→SOL", [SOL, BOME, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→BOME→SOL", [SOL, USDC, BOME, SOL]),
+            // TRX
+            TrianglePath::new("SOL→TRX→USDC→SOL", [SOL, TRX, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→TRX→SOL", [SOL, USDC, TRX, SOL]),
+            // LTC
+            TrianglePath::new("SOL→LTC→USDC→SOL", [SOL, LTC, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→LTC→SOL", [SOL, USDC, LTC, SOL]),
+            // ADA
+            TrianglePath::new("SOL→ADA→USDC→SOL", [SOL, ADA, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→ADA→SOL", [SOL, USDC, ADA, SOL]),
+            // MEW
+            TrianglePath::new("SOL→MEW→USDC→SOL", [SOL, MEW, USDC, SOL]),
+            TrianglePath::new("SOL→USDC→MEW→SOL", [SOL, USDC, MEW, SOL]),
         ];
 
         // Filter to only valid paths (parsing succeeded)

@@ -1753,12 +1753,42 @@ impl PoolStateManager {
                     )
                     .await;
 
+                    // Collect unique tokens from fetched pools for caching
+                    let mut unique_tokens: HashSet<Pubkey> = HashSet::new();
+                    for pool_state in &fetched_pools {
+                        let (token_a, token_b) = pool_state.get_tokens();
+                        if token_a != Pubkey::default() {
+                            unique_tokens.insert(token_a);
+                        }
+                        if token_b != Pubkey::default() {
+                            unique_tokens.insert(token_b);
+                        }
+                    }
+
                     // Inject into pool manager
                     let mut pools_write = self.pools.write().await;
                     for pool_state in fetched_pools {
                         pools_write.insert(pool_state.address(), Arc::new(Mutex::new(pool_state)));
                     }
-                    log::info!("✅ Loaded {} pools from RPC", pools_write.len());
+                    drop(pools_write);
+                    log::info!("✅ Loaded {} pools from RPC", self.pools.read().await.len());
+
+                    // Fetch token metadata from RPC (critical for arbitrage routing)
+                    log::info!("⚡ Fetching {} unique token metadata from RPC...", unique_tokens.len());
+                    let mut token_cache_write = self.token_cache.write().await;
+                    for token_addr in unique_tokens {
+                        if !token_cache_write.contains_key(&token_addr) {
+                            match fetch_token(&token_addr, &self.rpc_client).await {
+                                Ok(token_info) => {
+                                    token_cache_write.insert(token_addr, token_info);
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to fetch token {}: {:?}", token_addr, e);
+                                }
+                            }
+                        }
+                    }
+                    log::info!("✅ Cached {} tokens from RPC", token_cache_write.len());
                 }
                 Err(e) => {
                     log::error!("Failed to load arbitrage config: {}", e);

@@ -247,7 +247,7 @@ impl ArbitrageMonitor {
             (other_token, base_token)
         };
 
-        let debounce_duration = std::time::Duration::from_millis(500);
+        let debounce_duration = std::time::Duration::from_millis(50);
         {
             let cache = self.last_check_times.read().await;
             if let Some(last_check) = cache.get(&pair_key) {

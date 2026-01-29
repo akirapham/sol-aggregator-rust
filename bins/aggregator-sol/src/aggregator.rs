@@ -586,7 +586,7 @@ impl DexAggregator {
         let forward_route_others = self
             .get_swap_route_with_exclude(token_a, &exclude_updated, true)
             .await?;
-        let other_out_b = forward_route_others.other_output_amount;
+        let other_out_b = forward_route_others.output_amount;
 
         // 5. Smart Direction Check (Strategy 1a vs 1b)
         // difference = abs(updated - other) / min(updated, other)
@@ -660,7 +660,7 @@ impl DexAggregator {
                 .get_swap_route_with_exclude(&reverse_params, &exclude_updated, true)
                 .await
             {
-                let final_amt = reverse_route_1a.other_output_amount;
+                let final_amt = reverse_route_1a.output_amount;
                 let profit = final_amt as i64 - token_a.input_amount as i64;
                 if profit > i64::MIN {
                     return Some((profit, forward_route_1a, reverse_route_1a));
@@ -679,7 +679,7 @@ impl DexAggregator {
 
             // Forward Route = Best Route on Others
             let forward_route_1b = forward_route_others;
-            let amount_out_b = forward_route_1b.other_output_amount;
+            let amount_out_b = forward_route_1b.output_amount;
 
             // Calculate Reverse Route on Updated Pool (B->A)
             let final_amt = pool_state
@@ -868,7 +868,7 @@ impl DexAggregator {
             .iter()
             .flat_map(|p| p.steps.iter().map(|s| s.pool_address))
             .collect();
-        let leg1_output = leg1_route.other_output_amount;
+        let leg1_output = leg1_route.output_amount;
 
         // --- Leg 2 ---
         let mut leg2_route = None;
@@ -940,7 +940,7 @@ impl DexAggregator {
                 .iter()
                 .flat_map(|p| p.steps.iter().map(|s| s.pool_address)),
         );
-        let leg2_output = leg2_route.other_output_amount;
+        let leg2_output = leg2_route.output_amount;
 
         // --- Leg 3 ---
         let mut leg3_route = None;
@@ -1003,7 +1003,7 @@ impl DexAggregator {
             }
         };
 
-        let final_output = leg3_route.other_output_amount;
+        let final_output = leg3_route.output_amount;
         let profit = final_output as i64 - input_amount as i64;
 
         // Return result unconditionally (monitor handles filtering/logging)

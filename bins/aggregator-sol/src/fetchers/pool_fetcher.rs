@@ -9,6 +9,7 @@ use crate::fetchers::orca_tick_array_fetcher::OrcaTickArrayFetcher;
 use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
 use crate::pool_data_types::*;
 use borsh::BorshDeserialize;
+use futures::stream::{self, StreamExt};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::{
@@ -138,48 +139,57 @@ pub async fn fetch_configured_pools(
     pools: &[&MonitoredPool],
 ) -> Vec<PoolState> {
     let start = std::time::Instant::now();
-    log::info!("⚡ Fetching {} configured pools from RPC...", pools.len());
+    log::info!(
+        "⚡ Fetching {} configured pools from RPC (parallel=5)...",
+        pools.len()
+    );
 
-    let mut all_pools = Vec::new();
+    let fetch_futures = pools.iter().map(|pool| {
+        let rpc_client = rpc_client.clone();
+        async move {
+            let pubkey = match Pubkey::from_str(&pool.address) {
+                Ok(p) => p,
+                Err(_) => {
+                    log::warn!("Invalid pool address: {}", pool.address);
+                    return None;
+                }
+            };
 
-    for pool in pools {
-        let pubkey = match Pubkey::from_str(&pool.address) {
-            Ok(p) => p,
-            Err(_) => {
-                log::warn!("Invalid pool address: {}", pool.address);
-                continue;
-            }
-        };
+            log::info!("  📦 Fetching {} pool: {}", pool.dex, pool.pair);
 
-        log::info!("  📦 Fetching {} pool: {}", pool.dex, pool.pair);
+            let result = match pool.dex.as_str() {
+                "MeteoraDlmm" => fetch_meteora_dlmm(&rpc_client, pubkey).await,
+                "RaydiumClmm" => fetch_raydium_clmm(&rpc_client, pubkey).await,
+                "Raydium" | "RaydiumCpmm" => fetch_raydium_cpmm(&rpc_client, pubkey).await,
+                "Orca" | "OrcaWhirlpool" => fetch_orca_whirlpool(&rpc_client, pubkey).await,
+                "Meteora" | "MeteoraDamm" | "MeteoraDammV2" => {
+                    log::debug!("Meteora DAMM not yet supported, skip: {}", pool.pair);
+                    return None;
+                }
+                "Pumpswap" | "PumpSwap" => fetch_pumpswap(&rpc_client, pubkey)
+                    .await
+                    .map_err(|e| e.to_string()),
+                _ => {
+                    log::warn!("Unsupported DEX type: {}", pool.dex);
+                    return None; // Ensure logic consistency
+                }
+            };
 
-        let result = match pool.dex.as_str() {
-            "MeteoraDlmm" => fetch_meteora_dlmm(rpc_client, pubkey).await,
-            "RaydiumClmm" => fetch_raydium_clmm(rpc_client, pubkey).await,
-            "Raydium" | "RaydiumCpmm" => fetch_raydium_cpmm(rpc_client, pubkey).await,
-            "Orca" | "OrcaWhirlpool" => fetch_orca_whirlpool(rpc_client, pubkey).await,
-            "Meteora" | "MeteoraDamm" | "MeteoraDammV2" => {
-                log::debug!("Meteora DAMM not yet supported, skip: {}", pool.pair);
-                continue;
-            }
-            "Pumpswap" | "PumpSwap" => fetch_pumpswap(rpc_client, pubkey)
-                .await
-                .map_err(|e| e.to_string()),
-            _ => {
-                log::warn!("Unsupported DEX type: {}", pool.dex);
-                continue;
-            }
-        };
-
-        match result {
-            Ok(pool_state) => {
-                all_pools.push(pool_state);
-            }
-            Err(e) => {
-                log::warn!("Failed to fetch {} pool {}: {}", pool.dex, pool.pair, e);
+            match result {
+                Ok(pool_state) => Some(pool_state),
+                Err(e) => {
+                    log::warn!("Failed to fetch {} pool {}: {}", pool.dex, pool.pair, e);
+                    None
+                }
             }
         }
-    }
+    });
+
+    let all_pools: Vec<PoolState> = stream::iter(fetch_futures)
+        .buffer_unordered(5)
+        .filter_map(|res| async { res })
+        .collect()
+        .await;
 
     log::info!(
         "✅ Fetched {}/{} pools from RPC in {:?}",

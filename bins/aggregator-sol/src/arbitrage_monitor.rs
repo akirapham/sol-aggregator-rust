@@ -155,8 +155,9 @@ impl ArbitrageMonitor {
         }
 
         log::debug!(
-            "💹 Pool update for SOL/{} on {:?} - triggering cross-DEX check",
-            other_token,
+            "💹 Pool update for {}/{} on {:?} - triggering cross-DEX check",
+            self.config.get_token_symbol(&base_token.to_string()),
+            self.config.get_token_symbol(&other_token.to_string()),
             pool_update.dex
         );
 
@@ -172,7 +173,11 @@ impl ArbitrageMonitor {
             let cache = self.last_check_times.read().await;
             if let Some(last_check) = cache.get(&pair_key) {
                 if last_check.elapsed() < debounce_duration {
-                    log::debug!("⏭️ Skipping check for SOL/{} - debounced", other_token);
+                    log::debug!(
+                        "⏭️ Skipping check for {}/{} - debounced",
+                        self.config.get_token_symbol(&base_token.to_string()),
+                        self.config.get_token_symbol(&other_token.to_string())
+                    );
                     return;
                 }
             }
@@ -187,8 +192,10 @@ impl ArbitrageMonitor {
         log::info!(
             "🔍 Triggering checks for Pool Update: {} ({} / {})",
             pool_update.pool_address,
-            pool_update.token_a,
-            pool_update.token_b
+            self.config
+                .get_token_symbol(&pool_update.token_a.to_string()),
+            self.config
+                .get_token_symbol(&pool_update.token_b.to_string())
         );
 
         // Run 2-leg and 3-leg arbitrage checks in parallel
@@ -293,8 +300,8 @@ impl ArbitrageMonitor {
 
                     log::info!(
                         "🎯 ROUND TRIP ARBITRAGE: {} <-> {} | Profit: {:.4}% ({} lamports)",
-                        token_a,
-                        token_b,
+                        self.config.get_token_symbol(&token_a.to_string()),
+                        self.config.get_token_symbol(&token_b.to_string()),
                         profit_percent,
                         profit
                     );
@@ -310,8 +317,8 @@ impl ArbitrageMonitor {
                 } else {
                     log::info!(
                         "📉 Round Trip Check: {} <-> {} | Profit: {:.4}% ({} lamports)",
-                        token_a,
-                        token_b,
+                        self.config.get_token_symbol(&token_a.to_string()),
+                        self.config.get_token_symbol(&token_b.to_string()),
                         profit_percent,
                         profit
                     );
@@ -354,8 +361,8 @@ impl ArbitrageMonitor {
 
                     log::warn!(
                         "⚠️ ABNORMAL ARBITRAGE: {} <-> {} | Profit: {:.4}% | Fwd: {:?} | Rev: {:?}",
-                        token_a,
-                        token_b,
+                        self.config.get_token_symbol(&token_a.to_string()),
+                        self.config.get_token_symbol(&token_b.to_string()),
                         profit_percent,
                         forward_dexes,
                         reverse_dexes
@@ -366,8 +373,8 @@ impl ArbitrageMonitor {
                 // No valid route found (liquidity issues or no path)
                 log::info!(
                     "📉 Round Trip Check: No valid route found for {} <-> {}",
-                    token_a,
-                    token_b
+                    self.config.get_token_symbol(&token_a.to_string()),
+                    self.config.get_token_symbol(&token_b.to_string())
                 );
             }
         }
@@ -391,8 +398,8 @@ impl ArbitrageMonitor {
         log::info!(
             "🔍 Paths lookup: Found {} paths for Pair {}/{}",
             relevant_paths.len(),
-            token_a,
-            token_b
+            self.config.get_token_symbol(&token_a.to_string()),
+            self.config.get_token_symbol(&token_b.to_string())
         );
 
         if relevant_paths.is_empty() {
@@ -402,8 +409,8 @@ impl ArbitrageMonitor {
         log::info!(
             "🔺 Checking {} triangle paths for pair ({}, {})",
             relevant_paths.len(),
-            token_a,
-            token_b
+            self.config.get_token_symbol(&token_a.to_string()),
+            self.config.get_token_symbol(&token_b.to_string())
         );
 
         let start = std::time::Instant::now();

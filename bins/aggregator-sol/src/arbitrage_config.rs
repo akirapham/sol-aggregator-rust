@@ -11,6 +11,10 @@ pub struct ArbitrageConfig {
     pub monitored_tokens: Vec<MonitoredToken>,
     #[serde(default)]
     pub monitored_pools: Vec<MonitoredPool>,
+
+    /// O(1) lookup cache for symbols: address -> symbol
+    #[serde(skip)]
+    pub symbol_map: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -197,7 +201,8 @@ impl ArbitrageConfig {
     /// Load configuration from TOML file
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = fs::read_to_string(path)?;
-        let config: ArbitrageConfig = toml::from_str(&contents)?;
+        let mut config: ArbitrageConfig = toml::from_str(&contents)?;
+        config.rebuild_symbol_map();
         Ok(config)
     }
 
@@ -399,8 +404,13 @@ impl ArbitrageConfig {
             return Err("Token already exists in monitored list".to_string());
         }
 
-        self.monitored_tokens
-            .push(MonitoredToken { symbol, address });
+        self.monitored_tokens.push(MonitoredToken {
+            symbol: symbol.clone(),
+            address: address.clone(),
+        });
+
+        // Update map
+        self.symbol_map.insert(address, symbol);
 
         Ok(())
     }
@@ -414,6 +424,32 @@ impl ArbitrageConfig {
             .ok_or_else(|| "Token not found in monitored list".to_string())?;
 
         Ok(self.monitored_tokens.remove(pos))
+    }
+
+    /// Rebuild the usage map from the monitored_tokens list
+    pub fn rebuild_symbol_map(&mut self) {
+        self.symbol_map.clear();
+        for token in &self.monitored_tokens {
+            self.symbol_map
+                .insert(token.address.clone(), token.symbol.clone());
+        }
+
+        // Explicitly map SOL (WSOL) if not already present
+        self.symbol_map
+            .entry("So11111111111111111111111111111111111111112".to_string())
+            .or_insert("SOL".to_string());
+    }
+
+    /// Get symbol for a given address (O(1) lookup)
+    pub fn get_token_symbol(&self, address: &str) -> String {
+        self.symbol_map.get(address).cloned().unwrap_or_else(|| {
+            // Return shortened address if not found
+            if address.len() > 8 {
+                format!("{}...", &address[..8])
+            } else {
+                address.to_string()
+            }
+        })
     }
 
     /// Save monitored tokens to Postgres
@@ -505,6 +541,7 @@ impl ArbitrageConfig {
             }
         }
 
+        self.rebuild_symbol_map();
         self
     }
 }

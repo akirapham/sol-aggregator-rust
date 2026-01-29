@@ -106,6 +106,7 @@ pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
     async fn get_chain_state(&self) -> ChainStateUpdate;
     fn get_rpc_client(&self) -> Option<&Arc<RpcClient>>;
     async fn get_pool(&self, pool_address: &Pubkey) -> Option<Arc<PoolState>>;
+    async fn is_fully_synced(&self) -> bool;
 }
 
 /// In-memory pool state manager with real-time updates
@@ -2419,5 +2420,43 @@ impl PoolDataProvider for PoolStateManager {
         } else {
             None
         }
+    }
+
+    async fn is_fully_synced(&self) -> bool {
+        // Check if we have loaded pools
+        let pool_count = self.pools.read().await.len();
+        if pool_count == 0 {
+            return false;
+        }
+
+        // Check pending tick fetches - must be zero
+        let pending_count = self.pending_pools_to_fetch_tick_arrays.lock().await.len();
+        if pending_count > 0 {
+            return false;
+        }
+
+        // Strict verification: Ensure ALL pools requiring ticks (CLMM/Whirlpool/DLMM) are marked as synced.
+        // We use dex_pools map to avoid locking individual pool mutexes.
+        let dex_pools = self.dex_pools.read().await;
+        let synced = self.tick_synced_pools.lock().await;
+
+        let tick_dependent_dexes = [
+            DexType::Orca,
+            DexType::RaydiumClmm,
+            DexType::MeteoraDlmm,
+        ];
+
+        for dex_type in tick_dependent_dexes {
+            if let Some(pools_of_type) = dex_pools.get(&dex_type) {
+                for pool_address in pools_of_type {
+                    if !synced.contains(pool_address) {
+                        // Found a pool that requires ticks but is not yet synced
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
     }
 }

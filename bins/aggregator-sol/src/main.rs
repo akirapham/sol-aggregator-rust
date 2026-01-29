@@ -257,6 +257,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let monitor_for_events = monitor.clone();
                 monitor_for_events.subscribe_to_pool_updates(pool_update_rx);
 
+                // Start startup validation task
+                monitor.clone().start_startup_validation();
+
                 // Spawn a cleanup task to remove old opportunities periodically
                 let monitor_for_cleanup = monitor.clone();
                 tokio::spawn(async move {

@@ -368,11 +368,6 @@ address = "2uoKbPEidR7KAMYtY4x7xdkHXWqYib5k4CutJauSL3Mc"
 dex = "RaydiumClmm"
 pair = "JitoSOL/SOL"
 
-# Meteora DYN JitoSOL/SOL - $3.2M liquidity
-[[monitored_pools]]
-address = "ERgpKaq59Nnfm9YRVAAhnq16cZhHxGcDoDWCzXbhiaNw"
-dex = "Meteora"
-pair = "JitoSOL/SOL"
 
 # -----------------------------------------------------------------------------
 # JitoSOL/USDC Pools (for triangle leg2)

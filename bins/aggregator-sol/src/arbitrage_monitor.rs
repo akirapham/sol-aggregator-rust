@@ -129,6 +129,85 @@ impl ArbitrageMonitor {
         });
     }
 
+    /// Run startup validation of all configured paths
+    /// Checks if paths are tradeable given current pool state
+    pub fn start_startup_validation(self: Arc<Self>) {
+        tokio::spawn(async move {
+            // Delay to allow population of pending_pools_to_fetch_tick_arrays
+            // This prevents race condition where pools are loaded but ticks not yet queued
+            log::info!("⏳ Delaying startup validation by 20s to ensure pending ticks queue population...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
+
+            log::info!("⏳ Waiting for pool manager synchronization...");
+            let pool_manager = self.aggregator.get_pool_manager();
+            
+            // Wait up to 60s for sync
+            let start = Instant::now();
+            loop {
+                if pool_manager.is_fully_synced().await {
+                    log::info!("✅ Pool manager fully synced! Starting validation...");
+                    break;
+                }
+                
+                if start.elapsed().as_secs() > 60 {
+                    log::warn!("⚠️ Pool manager sync timed out (60s). Proceeding with validation anyway...");
+                    break;
+                }
+                
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            
+            self.validate_all_paths().await;
+        });
+    }
+
+    async fn validate_all_paths(&self) {
+        log::info!("🧪 STARTING FULL PATH VALIDATION 🧪");
+        let paths = self.config.get_triangle_paths();
+        let mut valid_count = 0;
+        let mut fail_count = 0;
+
+        for path in paths {
+            // Find a trigger pool for Leg 1 (from -> to)
+            let leg1_pair = (path.leg1_from, path.leg1_to);
+            let pools = self.aggregator.get_pool_manager().get_pools_for_pair(&leg1_pair.0, &leg1_pair.1).await;
+            
+            if pools.is_empty() {
+                log::info!("❌ Path {} INVALID: No pools found for Leg 1 ({}/{})", 
+                    path.name,
+                    self.config.get_token_symbol(&path.leg1_from.to_string()),
+                    self.config.get_token_symbol(&path.leg1_to.to_string())
+                );
+                fail_count += 1;
+                continue;
+            }
+            
+            let trigger_pool = pools[0].address();
+            
+            // Force check
+            let result = self.aggregator.calculate_triangle_profit(
+                &path, 
+                self.config.settings.base_amount, 
+                self.config.settings.slippage_bps, 
+                trigger_pool
+            ).await;
+            
+            match result {
+                Some((profit, _, _, _)) => {
+                    let profit_sol = profit as f64 / 1_000_000_000.0;
+                    log::info!("✅ Path {} VALID (Route found, Profit: {:.6} SOL)", path.name, profit_sol);
+                    valid_count += 1;
+                },
+                None => {
+                    log::info!("❌ Path {} FAILED (No route found)", path.name);
+                    fail_count += 1;
+                }
+            }
+        }
+        
+        log::info!("🧪 VALIDATION COMPLETE: {} VALID, {} FAILED 🧪", valid_count, fail_count);
+    }
+
     /// Check arbitrage when a broadcast pool update is received
     /// This is triggered by real-time pool updates from the broadcast channel
     async fn on_broadcast_pool_update(&self, pool_update: &ArbitragePoolUpdate) {
@@ -197,6 +276,22 @@ impl ArbitrageMonitor {
             self.config
                 .get_token_symbol(&pool_update.token_b.to_string())
         );
+
+        // Check if pool requires ticks and if they are synced
+        let needs_ticks = matches!(
+            pool_update.dex,
+            crate::pool_data_types::DexType::Orca | crate::pool_data_types::DexType::RaydiumClmm | crate::pool_data_types::DexType::MeteoraDlmm
+        );
+        
+        if needs_ticks {
+            if !self.aggregator.get_pool_manager().is_pool_tick_synced(&pool_update.pool_address).await {
+                log::debug!(
+                    "⏳ Skipping arbitrage check for pool {} (Ticks not synced)",
+                    pool_update.pool_address
+                );
+                return;
+            }
+        }
 
         // Run 2-leg and 3-leg arbitrage checks in parallel
         tokio::join!(
@@ -516,17 +611,25 @@ impl ArbitrageMonitor {
                 }
             }
         } else {
-            // Case B: No winners. Log top 2 least negative.
-            let top_2_losers = all_outcomes.iter().take(2);
-            for (profit, path_name, _, _, _) in top_2_losers {
-                let profit_sol = *profit as f64 / 1_000_000_000.0;
-                let profit_pct = *profit as f64 / input_amount as f64 * 100.0;
-                log::info!(
-                    "📉 Best Negative Triangle: {} | Profit: {:.6} SOL ({:.2}%)",
-                    path_name,
-                    profit_sol,
-                    profit_pct
+            if all_outcomes.is_empty() {
+                 log::info!(
+                    "📉 No valid triangle routes found for pair ({}, {}) - all paths failed route checks",
+                    self.config.get_token_symbol(&token_a.to_string()),
+                    self.config.get_token_symbol(&token_b.to_string())
                 );
+            } else {
+                // Case B: No winners. Log top 2 least negative.
+                let top_2_losers = all_outcomes.iter().take(2);
+                for (profit, path_name, _, _, _) in top_2_losers {
+                    let profit_sol = *profit as f64 / 1_000_000_000.0;
+                    let profit_pct = *profit as f64 / input_amount as f64 * 100.0;
+                    log::info!(
+                        "📉 Best Negative Triangle: {} | Profit: {:.6} SOL ({:.2}%)",
+                        path_name,
+                        profit_sol,
+                        profit_pct
+                    );
+                }
             }
         }
     }

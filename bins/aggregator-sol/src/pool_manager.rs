@@ -454,11 +454,26 @@ impl PoolStateManager {
 
         log::info!("🔹 Spawning gRPC subscription task...");
         tokio::spawn(async move {
-            log::info!("📡 gRPC subscription task executing...");
-            if let Err(e) = grpc_service.subscribe_pool_updates(pool_tx, chain_tx).await {
-                log::error!("❌ gRPC subscription failed: {}", e);
-            } else {
-                log::info!("✅ gRPC subscription active");
+            loop {
+                log::info!("📡 gRPC subscription task executing...");
+
+                // Clone senders for this attempt (since subscribe takes ownership)
+                let pool_tx_clone = pool_tx.clone();
+                let chain_tx_clone = chain_tx.clone();
+
+                match grpc_service
+                    .subscribe_pool_updates(pool_tx_clone, chain_tx_clone)
+                    .await
+                {
+                    Ok(_) => {
+                        log::warn!("⚠️ gRPC subscription ended unexpectedly (connection closed?). Restarting in 5s...");
+                    }
+                    Err(e) => {
+                        log::error!("❌ gRPC subscription failed: {}. Restarting in 5s...", e);
+                    }
+                }
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
     }

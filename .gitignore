@@ -33,3 +33,5 @@ debug_dlmm
 .agent
 .env.local
 .gitignore
+aws/
+k8s-manifests/

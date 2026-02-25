@@ -30,3 +30,6 @@ logs
 *.log
 debug_dlmm
 *.txt
+.agent
+.env.local
+.gitignore

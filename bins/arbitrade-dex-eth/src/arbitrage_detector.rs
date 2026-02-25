@@ -188,6 +188,9 @@ mod tests {
             fee_tier: None,
             tick_spacing: None,
             eth_price_usd: 2000.0,
+            hooks: None,
+            reserve0: None,
+            reserve1: None,
         };
 
         let sell_pool = TokenPriceUpdate {

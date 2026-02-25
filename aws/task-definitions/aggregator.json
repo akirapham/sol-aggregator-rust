@@ -1,0 +1,104 @@
+{
+    "family": "sol-agg-task",
+    "networkMode": "awsvpc",
+    "executionRoleArn": "arn:aws:iam::037931721239:role/ecsTaskExecutionRole",
+    "containerDefinitions": [
+        {
+            "name": "aggregator",
+            "image": "037931721239.dkr.ecr.eu-central-1.amazonaws.com/solana-aggregator:latest",
+            "essential": true,
+            "portMappings": [
+                {
+                    "containerPort": 3000,
+                    "hostPort": 3000,
+                    "protocol": "tcp"
+                }
+            ],
+            "environment": [
+                { "name": "API_PORT", "value": "3000" },
+                { "name": "RUST_LOG", "value": "info" },
+                
+                { "name": "RPC_URL", "value": "https://solana-rpc.publicnode.com" },
+                { "name": "YELLOWSTONE_GRPC_URL", "value": "http://37.27.231.22:10000" },
+                { "name": "BACKUP_GRPC_URL", "value": "https://solana-yellowstone-grpc.publicnode.com:443" },
+                { "name": "COMMITMENT_LEVEL", "value": "processed" },
+                
+                { "name": "MAX_SLIPPAGE", "value": "0.05" },
+                { "name": "MAX_ROUTES", "value": "1" },
+                { "name": "ENABLE_MULTI_HOP", "value": "true" },
+                { "name": "ENABLE_SPLIT_TRADING", "value": "true" },
+                { "name": "ENABLE_ARBITRAGE_DETECTION", "value": "false" },
+                { "name": "MAX_HOPS", "value": "3" },
+                { "name": "MIN_LIQUIDITY_THRESHOLD", "value": "1000000" },
+                { "name": "PRICE_IMPACT_THRESHOLD", "value": "0.05" },
+                { "name": "ENABLE_ROUTE_SIMULATION", "value": "true" },
+                { "name": "ENABLE_DYNAMIC_SLIPPAGE", "value": "true" },
+                
+                { "name": "MAX_GAS_PRICE", "value": "5000" },
+                { "name": "PRIORITY_FEE", "value": "1000" },
+                { "name": "GAS_LIMIT", "value": "200000" },
+                { "name": "OPTIMIZE_FOR_SPEED", "value": "false" },
+                
+                { "name": "USE_PRIVATE_MEMPOOL", "value": "false" },
+                { "name": "MAX_SLIPPAGE_TOLERANCE", "value": "0.01" },
+                { "name": "MIN_LIQUIDITY_THRESHOLD_MEV", "value": "10000000" },
+                { "name": "MAX_MEV_RISK_TOLERANCE", "value": "medium" },
+                { "name": "USE_FLASHLOAN_PROTECTION", "value": "false" },
+                
+                { "name": "MAX_SPLITS", "value": "3" },
+                { "name": "MIN_SPLIT_AMOUNT", "value": "1000000" },
+                { "name": "MAX_PRICE_IMPACT_PER_SPLIT", "value": "0.02" },
+                { "name": "PREFER_LOW_MEV", "value": "true" },
+                
+                { "name": "DISABLE_PUMPFUN", "value": "false" },
+                { "name": "DISABLE_PUMPFUN_SWAP", "value": "false" },
+                { "name": "DISABLE_BONK", "value": "false" },
+                { "name": "DISABLE_RAYDIUM_CPMM", "value": "false" },
+                { "name": "DISABLE_RAYDIUM_CLMM", "value": "false" },
+                { "name": "DISABLE_RAYDIUM_AMM_V4", "value": "false" },
+                
+                { "name": "DATABASE_URL", "value": "postgresql://aggregator:SafePassword123%21@sol-agg-db.cvaog6o4gldl.eu-central-1.rds.amazonaws.com:5432/postgres" }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/sol-aggregator",
+                    "awslogs-region": "eu-central-1",
+                    "awslogs-stream-prefix": "aggregator"
+                }
+            }
+        },
+        {
+            "name": "hasura",
+            "image": "hasura/graphql-engine:v2.36.0",
+            "essential": false,
+            "portMappings": [
+                {
+                    "containerPort": 8080,
+                    "hostPort": 8080,
+                    "protocol": "tcp"
+                }
+            ],
+            "environment": [
+                { "name": "HASURA_GRAPHQL_DATABASE_URL", "value": "postgresql://aggregator:SafePassword123%21@sol-agg-db.cvaog6o4gldl.eu-central-1.rds.amazonaws.com:5432/postgres" },
+                { "name": "HASURA_GRAPHQL_ENABLE_CONSOLE", "value": "true" },
+                { "name": "HASURA_GRAPHQL_ADMIN_SECRET", "value": "SafePassword123!" },
+                { "name": "HASURA_GRAPHQL_UNAUTHORIZED_ROLE", "value": "anonymous" },
+                { "name": "HASURA_GRAPHQL_ENABLE_TELEMETRY", "value": "false" }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/sol-aggregator",
+                    "awslogs-region": "eu-central-1",
+                    "awslogs-stream-prefix": "hasura"
+                }
+            }
+        }
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "1024",
+    "memory": "2048"
+}

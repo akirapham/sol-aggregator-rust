@@ -59,6 +59,10 @@ pub struct TokenPrice {
     pub tick_spacing: Option<i32>,
     pub eth_price_usd: f64,
     pub hooks: Option<Address>,
+    /// V2 reserve0 (serialized U256) - only populated for V2 pools
+    pub reserve0: Option<String>,
+    /// V2 reserve1 (serialized U256) - only populated for V2 pools
+    pub reserve1: Option<String>,
 }
 
 /// DEX type identifier
@@ -71,6 +75,7 @@ pub enum DexVersion {
     SushiswapV3,
     PancakeswapV2,
     PancakeswapV3,
+    CamelotAlgebra,
 }
 
 impl DexVersion {
@@ -83,6 +88,7 @@ impl DexVersion {
             DexVersion::SushiswapV3 => "sushiswap_v3",
             DexVersion::PancakeswapV2 => "pancakeswap_v2",
             DexVersion::PancakeswapV3 => "pancakeswap_v3",
+            DexVersion::CamelotAlgebra => "camelot_algebra",
         }
     }
 }
@@ -99,6 +105,7 @@ impl FromStr for DexVersion {
             "sushiswap_v3" => Ok(DexVersion::SushiswapV3),
             "pancakeswap_v2" => Ok(DexVersion::PancakeswapV2),
             "pancakeswap_v3" => Ok(DexVersion::PancakeswapV3),
+            "camelot_algebra" => Ok(DexVersion::CamelotAlgebra),
             _ => Err(QuoteError::ContractError(format!(
                 "Unknown DexVersion: {}",
                 s
@@ -142,6 +149,12 @@ pub struct TokenPriceUpdate {
     pub tick_spacing: Option<i32>,
     pub eth_price_usd: f64,
     pub hooks: Option<Address>,
+    /// V2 reserve0 (serialized U256) - only populated for V2 pools
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve0: Option<String>,
+    /// V2 reserve1 (serialized U256) - only populated for V2 pools
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve1: Option<String>,
 }
 
 impl From<TokenPrice> for TokenPriceUpdate {
@@ -161,6 +174,8 @@ impl From<TokenPrice> for TokenPriceUpdate {
             tick_spacing: price.tick_spacing,
             eth_price_usd: price.eth_price_usd,
             hooks: price.hooks,
+            reserve0: price.reserve0,
+            reserve1: price.reserve1,
         }
     }
 }

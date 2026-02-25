@@ -1,97 +1,126 @@
 use crate::types::{DexArbitrageOpportunity, ExecutionResult, ExecutionStatus};
 use crate::utils;
 use anyhow::{anyhow, Result};
-use ethers::providers::Provider;
-use ethers::signers::LocalWallet;
-use ethers::signers::Signer;
+use ethers::middleware::SignerMiddleware;
+use ethers::providers::Middleware;
+use ethers::signers::{LocalWallet, Signer};
+use ethers::types::{Address, U256};
 use log::{info, warn};
 use std::str::FromStr;
 use std::sync::Arc;
 
 /// Executes arbitrage trades on-chain
-pub struct ArbitrageExecutor {
-    #[allow(dead_code)]
-    provider: Provider<ethers::providers::Ws>,
-    wallet: LocalWallet,
+pub struct ArbitrageExecutor<M: Middleware> {
+    client: Arc<SignerMiddleware<M, LocalWallet>>,
+    router_address: Address,
     /// Slippage tolerance in basis points (100 = 1%)
     slippage_tolerance: u16,
     /// Whether to actually execute trades or just simulate
     dry_run: bool,
 }
 
-impl ArbitrageExecutor {
+impl<M: Middleware + 'static> ArbitrageExecutor<M> {
     pub fn new(
-        provider: Provider<ethers::providers::Ws>,
+        provider: M,
         private_key: String,
+        router_address: Address,
         slippage_tolerance: u16,
         dry_run: bool,
+        chain_id: u64,
     ) -> Result<Self> {
         let wallet = LocalWallet::from_str(&private_key)
-            .map_err(|e| anyhow!("Invalid private key: {}", e))?;
+            .map_err(|e| anyhow!("Invalid private key: {}", e))?
+            .with_chain_id(chain_id);
+
+        let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
         Ok(ArbitrageExecutor {
-            provider,
-            wallet,
+            client,
+            router_address,
             slippage_tolerance,
             dry_run,
         })
     }
 
-    /// Execute an arbitrage opportunity
-    pub async fn execute(&self, opportunity: &DexArbitrageOpportunity) -> Result<ExecutionResult> {
-        if self.dry_run {
-            return self.simulate_execution(opportunity).await;
-        }
-
-        info!(
-            "Executing arbitrage trade: Buy @ {} ({:.6} ETH) → Sell @ {} ({:.6} ETH)",
-            opportunity.buy_pool.pool_address,
-            opportunity.buy_pool.price_in_eth,
-            opportunity.sell_pool.pool_address,
-            opportunity.sell_pool.price_in_eth
-        );
-
-        // In real implementation, this would:
-        // 1. Call amm-eth's smart contract to get token amount for 1 ETH
-        // 2. Execute swap on buy pool
-        // 3. Execute swap on sell pool
-        // 4. Calculate actual profit
-
-        self.simulate_execution(opportunity).await
-    }
-
-    /// Simulate execution without sending transactions
-    async fn simulate_execution(
+    /// Execute a flashloan arbitrage using the QuoteRouter contract
+    pub async fn execute_flashloan(
         &self,
-        opportunity: &DexArbitrageOpportunity,
+        opportunity: DexArbitrageOpportunity,
+        paths: Vec<eth_dex_quote::quote_router::ExecHop>,
+        flashloan_amount: U256,
+        flashloan_token: Address,
+        potential_profit_usd: Option<f64>,
     ) -> Result<ExecutionResult> {
         let simulated_tx_hash = format!("0x{}", hex::encode(uuid::Uuid::new_v4().as_bytes()));
-
-        // Use USD profit directly (we don't calculate ETH profit anymore)
-        let potential_profit_usd = opportunity.potential_profit_usd.unwrap_or(0.0);
+        let profit_usd = potential_profit_usd.unwrap_or(0.0);
 
         if self.dry_run {
             info!(
-                "📊 [DRY RUN] Would execute: {} → Profit: {:.2}% | USD: ${:.2} | TX: {}",
-                opportunity,
-                opportunity.price_diff_percent,
-                potential_profit_usd,
+                "📊 [DRY RUN] Would execute flashloan for {} tokens. Profit: ${:.2} | TX: {}",
+                paths.len(),
+                profit_usd,
                 simulated_tx_hash
             );
+            return Ok(ExecutionResult {
+                trade: crate::types::ArbitrageTrade {
+                    opportunity: opportunity.clone(),
+                    amount_in: 0,
+                    min_amount_out: 0,
+                    max_gas_price: 0,
+                },
+                tx_hash: simulated_tx_hash,
+                actual_profit_eth: 0.0,
+                actual_profit_usd: Some(profit_usd),
+                status: ExecutionStatus::Pending,
+            });
         }
 
-        Ok(ExecutionResult {
-            trade: crate::types::ArbitrageTrade {
-                opportunity: opportunity.clone(),
-                amount_in: 0,
-                min_amount_out: 0,
-                max_gas_price: 0,
-            },
-            tx_hash: simulated_tx_hash,
-            actual_profit_eth: 0.0, // Ignoring ETH gas calculations for now
-            actual_profit_usd: Some(potential_profit_usd),
-            status: ExecutionStatus::Pending,
-        })
+        info!(
+            "🚀 Sending Flashloan Arbitrage TX to {}! Paths: {}",
+            self.router_address,
+            paths.len()
+        );
+
+        let contract = eth_dex_quote::quote_router::QuoteRouterContract::new(
+            self.router_address,
+            self.client.clone(),
+        );
+
+        let tx = contract.execute_arbitrage(paths, flashloan_amount, flashloan_token);
+
+        // Estimate gas before sending to avoid reverting blindly
+        match tx.estimate_gas().await {
+            Ok(gas) => {
+                info!("Gas limit estimated: {}", gas);
+                // Execute
+                let pending_tx = tx
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("Failed to send tx: {}", e))?;
+                let tx_hash = format!("{:?}", pending_tx.tx_hash());
+                info!("Flashloan Arbitrage broadcasted! TX Hash: {}", tx_hash);
+
+                Ok(ExecutionResult {
+                    trade: crate::types::ArbitrageTrade {
+                        opportunity,
+                        amount_in: 0,
+                        min_amount_out: 0,
+                        max_gas_price: 0,
+                    },
+                    tx_hash,
+                    actual_profit_eth: 0.0,
+                    actual_profit_usd: Some(profit_usd),
+                    status: ExecutionStatus::Pending,
+                })
+            }
+            Err(e) => {
+                warn!(
+                    "Execution would revert or fail! Restricting TX broadcast. Err: {:?}",
+                    e
+                );
+                Err(anyhow!("Gas estimation failed: {}", e))
+            }
+        }
     }
 
     /// Set slippage tolerance
@@ -111,70 +140,7 @@ impl ArbitrageExecutor {
 
     /// Get executor wallet address
     pub fn get_address(&self) -> String {
-        format!("{:?}", self.wallet.address())
-    }
-
-    /// Compute 2-hop arbitrage path: X -> A -> X
-    /// Returns (amount_a, amount_x_out, net_profit) where net_profit = amount_x_out - flashloan_amount
-    pub async fn compute_arbitrage_profit(
-        &self,
-        flashloan_amount: ethers::types::U256,
-        token_x: ethers::types::Address,
-        token_a: ethers::types::Address,
-        buy_pool: &eth_dex_quote::TokenPriceUpdate,
-        sell_pool: &eth_dex_quote::TokenPriceUpdate,
-        router_v2_address: ethers::types::Address,
-        quoter_v3_address: ethers::types::Address,
-        quoter_v4_address: ethers::types::Address,
-    ) -> Result<(ethers::types::U256, ethers::types::U256, i128)> {
-        utils::compute_arbitrage_path(
-            Arc::new(self.provider.clone()),
-            flashloan_amount,
-            token_x,
-            token_a,
-            buy_pool,
-            sell_pool,
-            router_v2_address,
-            quoter_v3_address,
-            quoter_v4_address,
-        )
-        .await
-    }
-
-    /// Compute 3-hop arbitrage path: X -> A -> B -> X
-    /// Returns (amount_a, amount_b, amount_x_out, net_profit) where net_profit = amount_x_out - flashloan_amount
-    pub async fn compute_3hop_arbitrage_profit(
-        &self,
-        flashloan_amount: ethers::types::U256,
-        token_x: ethers::types::Address,
-        token_a: ethers::types::Address,
-        token_b: ethers::types::Address,
-        pool_x_to_a: &eth_dex_quote::TokenPriceUpdate,
-        pool_a_to_b: &eth_dex_quote::TokenPriceUpdate,
-        pool_b_to_x: &eth_dex_quote::TokenPriceUpdate,
-        router_v2_address: ethers::types::Address,
-        quoter_v3_address: ethers::types::Address,
-        quoter_v4_address: ethers::types::Address,
-    ) -> Result<(
-        ethers::types::U256,
-        ethers::types::U256,
-        ethers::types::U256,
-        i128,
-    )> {
-        utils::compute_3hop_arbitrage_path(
-            Arc::new(self.provider.clone()),
-            flashloan_amount,
-            token_x,
-            token_a,
-            token_b,
-            pool_x_to_a,
-            pool_a_to_b,
-            pool_b_to_x,
-            router_v2_address,
-            quoter_v3_address,
-            quoter_v4_address,
-        )
-        .await
+        format!("{:?}", self.client.address())
     }
 }
 
@@ -213,8 +179,9 @@ mod tests {
             tick_spacing: None,
             hooks: None,
             eth_price_usd: 2000.0,
+            reserve0: None,
+            reserve1: None,
         };
-
         let sell_pool = TokenPriceUpdate {
             price_in_eth: 1.02,
             price_in_usd: Some(2040.0),

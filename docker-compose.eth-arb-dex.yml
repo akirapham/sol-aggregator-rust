@@ -1,0 +1,52 @@
+# Docker Compose for Ethereum DEX Arbitrage (AMM Listener + DEX Arbitrade)
+services:
+  # Ethereum AMM Listener
+  amm-eth:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.eth-arb-dex
+    container_name: amm-eth-listener
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+      - ./rocksdb_data/amm-eth:/app/rocksdb_data/amm-eth
+    networks:
+      - eth-dex-network
+    ports:
+      - "${ETH_PRICE_WS_PORT:-8080}:${ETH_PRICE_WS_PORT:-8080}"
+    command: /usr/local/bin/amm-eth
+
+  # Ethereum DEX Arbitrage Service
+  arbitrade-dex-eth:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.eth-arb-dex
+    tty: true
+    stdin_open: true
+    container_name: arbitrade-dex-eth-service
+    restart: unless-stopped
+    ports:
+      - "${ARBITRADE_DEX_PORT:-3002}:${ARBITRADE_DEX_PORT:-3002}"
+    environment:
+      - RUST_LOG=info
+      - DEX_PRICE_STREAM=ws://amm-eth:${ETH_PRICE_WS_PORT:-8080}
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+    networks:
+      - eth-dex-network
+    depends_on:
+      amm-eth:
+        condition: service_started
+    command: /usr/local/bin/arbitrade-dex-eth
+
+networks:
+  eth-dex-network:
+    driver: bridge

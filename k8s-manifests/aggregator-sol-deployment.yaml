@@ -1,0 +1,76 @@
+# Deployment for Aggregator-Sol
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator-sol
+  namespace: aggregators
+  labels:
+    app: aggregator-sol
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aggregator-sol
+  template:
+    metadata:
+      labels:
+        app: aggregator-sol
+    spec:
+      containers:
+        - name: aggregator-sol
+          image: ghcr.io/akirapham/sol-aggregator-rust:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          # Environment from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: aggregator-sol-config
+            - secretRef:
+                name: aggregator-sol-secrets
+          # Volume mounts
+          volumeMounts:
+            - name: rocksdb-data
+              mountPath: /app/rocksdb_data
+            - name: logs
+              mountPath: /app/logs
+          # Resource limits
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Graceful shutdown
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+      # Volumes
+      volumes:
+        - name: rocksdb-data
+          persistentVolumeClaim:
+            claimName: aggregator-sol-rocksdb-pvc
+        - name: logs
+          emptyDir: {}
+      # Termination grace period
+      terminationGracePeriodSeconds: 60

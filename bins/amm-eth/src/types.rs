@@ -52,6 +52,46 @@ impl Default for EthConfig {
 }
 
 impl EthConfig {
+    /// Create config from ETH_CHAIN environment variable
+    /// Defaults to Ethereum mainnet if not set
+    pub fn from_env() -> Self {
+        let chain = std::env::var("ETH_CHAIN").unwrap_or_else(|_| "ethereum".to_string());
+        match chain.to_lowercase().as_str() {
+            "arbitrum" => Self::arbitrum(),
+            _ => Self::default(),
+        }
+    }
+
+    /// Arbitrum One configuration
+    pub fn arbitrum() -> Self {
+        Self {
+            websocket_url: std::env::var("ETH_WEBSOCKET_URL")
+                .unwrap_or_else(|_| "wss://arbitrum-one-rpc.publicnode.com".to_string()),
+            // Arbitrum addresses — Uniswap V3 factory is same as mainnet
+            uniswap_v2_factory: "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"
+                .parse()
+                .unwrap(), // SushiSwap V2 factory on Arbitrum
+            uniswap_v3_factory: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+                .parse()
+                .unwrap(),
+            uniswap_v4_factory: None,
+            weth_address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
+                .parse()
+                .unwrap(),
+            usdc_address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+                .parse()
+                .unwrap(), // native USDC
+            usdt_address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+                .parse()
+                .unwrap(),
+            native_address: "0x0000000000000000000000000000000000000000"
+                .parse()
+                .unwrap(),
+            eth_price_usd: Arc::new(RwLock::new(None)),
+            eth_chain: EthChain::Arbitrum,
+        }
+    }
+
     /// Get known decimals for well-known tokens to avoid RPC calls
     pub fn get_known_decimals(&self, token_address: Address) -> Option<u8> {
         if token_address == self.weth_address || token_address == self.native_address {

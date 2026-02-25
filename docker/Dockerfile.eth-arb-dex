@@ -1,0 +1,49 @@
+# Build stage
+FROM rust:1.88 AS builder
+WORKDIR /app
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    libprotobuf-dev \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    libclang-dev \
+    clang \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Cargo files first for dependency caching
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY bins ./bins
+COPY contracts/out ./contracts/out
+
+ARG CACHEBUST=3
+# Build amm-eth + arbitrade-dex-eth
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --bin amm-eth --bin arbitrade-dex-eth && \
+    cp /app/target/release/amm-eth /amm-eth && \
+    cp /app/target/release/arbitrade-dex-eth /arbitrade-dex-eth
+
+# Runtime
+FROM debian:bookworm-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binaries from builder
+COPY --from=builder /amm-eth /usr/local/bin/amm-eth
+COPY --from=builder /arbitrade-dex-eth /usr/local/bin/arbitrade-dex-eth
+
+# Copy config file needed at runtime (must match CARGO_MANIFEST_DIR baked at compile time)
+COPY crates/eth-dex-quote/eth_dex_config.toml /app/crates/eth-dex-quote/eth_dex_config.toml
+
+# Use CMD instead of ENTRYPOINT so docker-compose command can override it
+CMD ["/usr/local/bin/amm-eth"]

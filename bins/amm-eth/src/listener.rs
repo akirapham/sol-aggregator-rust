@@ -500,6 +500,8 @@ impl EthSwapListener {
         };
 
         let pool_address_str = format!("{:?}", pool_address).to_lowercase();
+        let r0_str = format!("{}", reserve0_u256);
+        let r1_str = format!("{}", reserve1_u256);
         // Update prices for both tokens
         Self::update_token_price(
             pair_info.pool_token0,
@@ -514,6 +516,8 @@ impl EthSwapListener {
             pair_info.fee_tier,
             pair_info.tick_spacing,
             None,
+            Some(r0_str.clone()),
+            Some(r1_str.clone()),
         );
 
         Self::update_token_price(
@@ -529,6 +533,8 @@ impl EthSwapListener {
             pair_info.fee_tier,
             pair_info.tick_spacing,
             None,
+            Some(r0_str),
+            Some(r1_str),
         );
 
         Ok(())
@@ -806,6 +812,8 @@ impl EthSwapListener {
             pair_info.fee_tier,
             pair_info.tick_spacing,
             None,
+            None,
+            None,
         );
 
         Self::update_token_price(
@@ -820,6 +828,8 @@ impl EthSwapListener {
             config,
             pair_info.fee_tier,
             pair_info.tick_spacing,
+            None,
+            None,
             None,
         );
 
@@ -1052,6 +1062,8 @@ impl EthSwapListener {
         fee_tier: Option<u32>,
         tick_spacing: Option<i32>,
         hooks: Option<Address>,
+        reserve0: Option<String>,
+        reserve1: Option<String>,
     ) {
         // we do nothing if token is WETH, USDC or USDT
         if token_address == config.weth_address
@@ -1110,6 +1122,8 @@ impl EthSwapListener {
             tick_spacing,
             eth_price_usd: eth_usd,
             hooks,
+            reserve0,
+            reserve1,
         };
 
         price_store.update_price(token_address, token_price);
@@ -1470,6 +1484,8 @@ impl EthSwapListener {
             pair_info.fee_tier,
             pair_info.tick_spacing,
             pair_info.hooks,
+            None,
+            None,
         );
 
         Self::update_token_price(
@@ -1485,6 +1501,8 @@ impl EthSwapListener {
             pair_info.fee_tier,
             pair_info.tick_spacing,
             pair_info.hooks,
+            None,
+            None,
         );
 
         Ok(())

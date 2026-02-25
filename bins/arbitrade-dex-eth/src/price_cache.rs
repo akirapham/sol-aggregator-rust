@@ -203,8 +203,9 @@ mod tests {
             tick_spacing: None,
             hooks: None,
             eth_price_usd: 3000.0,
+            reserve0: None,
+            reserve1: None,
         };
-
         let price2 = TokenPriceUpdate {
             price_in_eth: 1.2, // Better buy price
             price_in_usd: Some(2400.0),

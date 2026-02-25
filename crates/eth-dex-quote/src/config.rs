@@ -6,8 +6,9 @@ use std::path::Path;
 /// Configuration for a single DEX on a specific chain
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DexConfig {
-    /// Router contract address
-    pub router: String,
+    /// Router contract address (optional — some DEXes like Camelot Algebra have no router)
+    #[serde(default)]
+    pub router: Option<String>,
     /// Factory contract address (for V2 style DEXes)
     #[serde(default)]
     pub factory: Option<String>,
@@ -40,6 +41,9 @@ pub struct ChainConfig {
     /// Base tokens that can be borrowed for flashloan arbitrage
     #[serde(default)]
     pub base_tokens: Vec<(String, bool)>, // (token address, is_stable)
+    /// Quote Router contract deployment address
+    #[serde(default)]
+    pub quote_router: Option<String>,
     /// DEXes configured for this chain, keyed by DEX name
     pub dexes: HashMap<String, DexConfig>,
 }
@@ -99,7 +103,7 @@ mod tests {
     #[test]
     fn test_dex_config_serialization() {
         let config = DexConfig {
-            router: "0x1111111254fb6c44bac0bed2854e76f90643097d".to_string(),
+            router: Some("0x1111111254fb6c44bac0bed2854e76f90643097d".to_string()),
             factory: Some("0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f".to_string()),
             quoter: None,
             vault: None,
@@ -156,7 +160,7 @@ mod tests {
 
         let uniswap_v2 = uniswap_v2.unwrap();
         assert!(
-            !uniswap_v2.router.is_empty(),
+            uniswap_v2.router.is_some(),
             "Uniswap V2 router should have an address"
         );
         assert!(
@@ -228,7 +232,7 @@ mod tests {
 
         let uniswap_v4 = uniswap_v4.unwrap();
         assert!(
-            !uniswap_v4.router.is_empty(),
+            uniswap_v4.router.is_some(),
             "Uniswap V4 should have a router/quote address"
         );
         assert!(

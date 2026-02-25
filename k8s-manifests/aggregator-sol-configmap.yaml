@@ -1,0 +1,56 @@
+# ConfigMap for Aggregator-Sol (non-sensitive configuration)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aggregator-sol-config
+  namespace: aggregators
+  labels:
+    app: aggregator-sol
+data:
+  # Logging
+  RUST_LOG: "info"
+  
+  # API Configuration
+  API_PORT: "3000"
+  
+  # Commitment Level
+  COMMITMENT_LEVEL: "processed"
+  
+  # Routing Configuration
+  MAX_SLIPPAGE: "0.05"
+  MAX_ROUTES: "5"
+  ENABLE_MULTI_HOP: "true"
+  ENABLE_SPLIT_TRADING: "true"
+  ENABLE_ARBITRAGE_DETECTION: "false"
+  MAX_HOPS: "3"
+  MIN_LIQUIDITY_THRESHOLD: "1000000"
+  PRICE_IMPACT_THRESHOLD: "0.05"
+  ENABLE_ROUTE_SIMULATION: "true"
+  ENABLE_DYNAMIC_SLIPPAGE: "true"
+  
+  # Gas Configuration
+  MAX_GAS_PRICE: "5000"
+  PRIORITY_FEE: "1000"
+  GAS_LIMIT: "200000"
+  OPTIMIZE_FOR_SPEED: "false"
+  
+  # MEV Protection
+  USE_PRIVATE_MEMPOOL: "false"
+  MAX_SLIPPAGE_TOLERANCE: "0.01"
+  MIN_LIQUIDITY_THRESHOLD_MEV: "10000000"
+  MAX_MEV_RISK_TOLERANCE: "medium"
+  USE_FLASHLOAN_PROTECTION: "false"
+  
+  # Split Trading
+  MAX_SPLITS: "3"
+  MIN_SPLIT_AMOUNT: "1000000"
+  MAX_PRICE_IMPACT_PER_SPLIT: "0.02"
+  PREFER_LOW_MEV: "true"
+  
+  # DEX Configuration (false = enabled)
+  DISABLE_PUMPFUN: "false"
+  DISABLE_PUMPFUN_SWAP: "false"
+  DISABLE_BONK: "false"
+  DISABLE_RAYDIUM_CPMM: "false"
+  DISABLE_RAYDIUM_CLMM: "false"
+  DISABLE_RAYDIUM_AMM_V4: "false"

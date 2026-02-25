@@ -194,21 +194,126 @@ pub async fn compute_multi_hop_arbitrage<P: ethers::providers::Middleware + 'sta
     Ok((intermediate_amounts, final_amount, net_profit))
 }
 
+/// Helper: Translate generic `TokenPriceUpdate` to `Hop` using Chain Config
+pub fn build_hop(
+    pool: &TokenPriceUpdate,
+    token_in: Address,
+    token_out: Address,
+    chain_config: &eth_dex_quote::config::ChainConfig,
+) -> Result<eth_dex_quote::quote_router::Hop> {
+    let raw_dex_name = pool.dex_version.to_lowercase();
+    let mapped_dex_name = match raw_dex_name.as_str() {
+        "uniswapv3" => "uniswap_v3",
+        "uniswapv2" => "uniswap_v2",
+        "sushiswapv2" => "sushiswap_v2",
+        "sushiswapv3" => "sushiswap_v3",
+        "pancakeswapv3" => "pancakeswap_v3",
+        "camelotv3" => "camelot_algebra",
+        _ => &raw_dex_name,
+    };
+
+    let dex_cfg = chain_config
+        .dexes
+        .get(mapped_dex_name)
+        .ok_or_else(|| anyhow!("Dex config missing for: {}", mapped_dex_name))?;
+
+    let (pool_type, router_addr) =
+        if mapped_dex_name.contains("v2") || mapped_dex_name.contains("sushiswap") {
+            (
+                0u8,
+                dex_cfg
+                    .router
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("V2 missing router address"))?
+                    .parse::<Address>()?,
+            )
+        } else if mapped_dex_name.contains("camelot") || mapped_dex_name.contains("algebra") {
+            (
+                2u8,
+                dex_cfg
+                    .quoter
+                    .as_ref()
+                    .or(dex_cfg.router.as_ref())
+                    .ok_or_else(|| anyhow!("Camelot missing quoter address"))?
+                    .parse::<Address>()?,
+            )
+        } else if mapped_dex_name.contains("v3") {
+            (
+                1u8,
+                dex_cfg
+                    .quoter
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("V3 missing quoter address"))?
+                    .parse::<Address>()?,
+            )
+        } else {
+            return Err(anyhow!(
+                "Unsupported dex for Hop Builder: {}",
+                mapped_dex_name
+            ));
+        };
+
+    Ok(eth_dex_quote::quote_router::Hop {
+        pool_type,
+        router: router_addr,
+        token_in,
+        token_out,
+        fee: pool.fee_tier.unwrap_or(0),
+    })
+}
+
+/// Helper: Translate generic `TokenPriceUpdate` to `ExecHop` which relies on executing swaps, not quotes.
+pub fn build_exec_hop(
+    pool: &TokenPriceUpdate,
+    token_in: Address,
+    token_out: Address,
+    chain_config: &eth_dex_quote::config::ChainConfig,
+) -> Result<eth_dex_quote::quote_router::ExecHop> {
+    let raw_dex_name = pool.dex_version.to_lowercase();
+    let mapped_dex_name = match raw_dex_name.as_str() {
+        "uniswapv3" => "uniswap_v3",
+        "uniswapv2" => "uniswap_v2",
+        "sushiswapv2" => "sushiswap_v2",
+        "sushiswapv3" => "sushiswap_v3",
+        "pancakeswapv3" => "pancakeswap_v3",
+        "camelotv3" => "camelot_algebra",
+        _ => &raw_dex_name,
+    };
+
+    let dex_cfg = chain_config
+        .dexes
+        .get(mapped_dex_name)
+        .ok_or_else(|| anyhow!("Dex config missing for: {}", mapped_dex_name))?;
+
+    let pool_type = if mapped_dex_name.contains("v2") || mapped_dex_name.contains("sushiswap") {
+        0u8
+    } else if mapped_dex_name.contains("camelot") || mapped_dex_name.contains("algebra") {
+        2u8
+    } else if mapped_dex_name.contains("v3") {
+        1u8
+    } else {
+        return Err(anyhow!(
+            "Unsupported dex for Exec Hop Builder: {}",
+            mapped_dex_name
+        ));
+    };
+
+    let router_addr = dex_cfg
+        .router
+        .as_ref()
+        .ok_or_else(|| anyhow!("Router missing for exec dex config: {}", mapped_dex_name))?
+        .parse::<Address>()?;
+
+    Ok(eth_dex_quote::quote_router::ExecHop {
+        pool_type,
+        router: router_addr,
+        token_in,
+        token_out,
+        fee: pool.fee_tier.unwrap_or(0),
+    })
+}
+
 /// Execute a 2-hop arbitrage path: X -> A -> X
-///
-/// # Arguments
-/// * `provider` - Ethereum provider
-/// * `flashloan_amount` - Amount of token X to flashloan (e.g., USDT amount)
-/// * `token_x` - Pairing token address (e.g., USDT/USDC)
-/// * `token_a` - Arbitrage token address
-/// * `buy_pool` - TokenPriceUpdate for the buy pool (X -> A)
-/// * `sell_pool` - TokenPriceUpdate for the sell pool (A -> X)
-/// * `router_v2_address` - V2 router address
-/// * `quoter_v3_address` - V3 quoter address
-/// * `quoter_v4_address` - V4 quoter address
-///
-/// # Returns
-/// (amount_a_from_buy, amount_x_from_sell, net_profit_x) where net_profit_x = amount_x_from_sell - flashloan_amount
 pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     provider: Arc<P>,
     flashloan_amount: U256,
@@ -216,51 +321,102 @@ pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     token_a: Address,
     buy_pool: &TokenPriceUpdate,
     sell_pool: &TokenPriceUpdate,
-    router_v2_address: Address,
-    quoter_v3_address: Address,
-    quoter_v4_address: Address,
+    chain_config: &eth_dex_quote::config::ChainConfig,
+    quote_router_client: Option<&eth_dex_quote::quote_router::QuoteRouterClient<P>>,
 ) -> Result<(U256, U256, i128)> {
     let other_token_in_sell = if token_a == sell_pool.pool_token0 {
         sell_pool.pool_token1
     } else {
         sell_pool.pool_token0
     };
-    let swap_path = vec![
-        (token_x, token_a, buy_pool),              // X -> A
-        (token_a, other_token_in_sell, sell_pool), // A -> X
-    ];
 
-    let (amounts, final_amount, net_profit) = compute_multi_hop_arbitrage(
-        provider,
-        flashloan_amount,
-        swap_path,
-        router_v2_address,
-        quoter_v3_address,
-        quoter_v4_address,
+    // Fast-path: Unified Quote Router single batch RPC
+    if let Some(router) = quote_router_client {
+        if let (Ok(hop1), Ok(hop2)) = (
+            build_hop(buy_pool, token_x, token_a, chain_config),
+            build_hop(sell_pool, token_a, other_token_in_sell, chain_config),
+        ) {
+            match router
+                .quote_arbitrage_2_hop(hop1, hop2, flashloan_amount)
+                .await
+            {
+                Ok((amount_out, profit)) => {
+                    // Convert profit dynamically
+                    let profit_i128 = if profit.is_negative() {
+                        let abs_raw = (!profit.into_raw())
+                            .overflowing_add(ethers::types::U256::one())
+                            .0;
+                        -(abs_raw.as_u128() as i128)
+                    } else {
+                        profit.into_raw().as_u128() as i128
+                    };
+                    return Ok((U256::zero(), amount_out, profit_i128));
+                }
+                Err(e) => log::warn!("QuoteRouter 2-hop failed: {:?}", e),
+            }
+        }
+    }
+
+    // Fallback path: Sequential RPC resolution
+    // Fallbacks fetch the router addresses via `build_hop` dynamically depending on specific `dex_version`
+    // ... we'll patch this dynamically in the loop instead of static arguments.
+    let hop1_cfg = build_hop(buy_pool, token_x, token_a, chain_config)?;
+    let hop2_cfg = build_hop(sell_pool, token_a, other_token_in_sell, chain_config)?;
+
+    let current_amount = flashloan_amount;
+
+    // Hop 1 (X -> A)
+    let amount_a = compute_swap_output(
+        provider.clone(),
+        current_amount,
+        token_x,
+        token_a,
+        buy_pool,
+        if hop1_cfg.pool_type == 0 {
+            hop1_cfg.router
+        } else {
+            Address::zero()
+        },
+        if hop1_cfg.pool_type == 1 || hop1_cfg.pool_type == 2 {
+            hop1_cfg.router
+        } else {
+            Address::zero()
+        },
+        Address::zero(), // quoter_v4 unused yet
     )
     .await?;
 
-    // amounts[0] = amount_a, amounts[1] = amount_x
-    Ok((amounts[0], final_amount, net_profit))
+    // Hop 2 (A -> X)
+    let amount_x_final = compute_swap_output(
+        provider.clone(),
+        amount_a,
+        token_a,
+        other_token_in_sell,
+        sell_pool,
+        if hop2_cfg.pool_type == 0 {
+            hop2_cfg.router
+        } else {
+            Address::zero()
+        },
+        if hop2_cfg.pool_type == 1 || hop2_cfg.pool_type == 2 {
+            hop2_cfg.router
+        } else {
+            Address::zero()
+        },
+        Address::zero(), // quoter_v4 unused yet
+    )
+    .await?;
+
+    let net_profit = if amount_x_final >= flashloan_amount {
+        (amount_x_final - flashloan_amount).as_u128() as i128
+    } else {
+        -((flashloan_amount - amount_x_final).as_u128() as i128)
+    };
+
+    Ok((amount_a, amount_x_final, net_profit))
 }
 
 /// Execute a 3-hop arbitrage path: X -> A -> B -> X
-///
-/// # Arguments
-/// * `provider` - Ethereum provider
-/// * `flashloan_amount` - Amount of token X to flashloan (e.g., USDT amount)
-/// * `token_x` - Pairing token address (e.g., USDT/USDC)
-/// * `token_a` - First arbitrage token address
-/// * `token_b` - Second arbitrage token address
-/// * `pool_x_to_a` - TokenPriceUpdate for the first pool (X -> A)
-/// * `pool_a_to_b` - TokenPriceUpdate for the second pool (A -> B)
-/// * `pool_b_to_x` - TokenPriceUpdate for the third pool (B -> X)
-/// * `router_v2_address` - V2 router address
-/// * `quoter_v3_address` - V3 quoter address
-/// * `quoter_v4_address` - V4 quoter address
-///
-/// # Returns
-/// (amount_a, amount_b, amount_x_final, net_profit_x) where net_profit_x = amount_x_final - flashloan_amount
 pub async fn compute_3hop_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     provider: Arc<P>,
     flashloan_amount: U256,
@@ -270,28 +426,103 @@ pub async fn compute_3hop_arbitrage_path<P: ethers::providers::Middleware + 'sta
     pool_x_to_a: &TokenPriceUpdate,
     pool_a_to_b: &TokenPriceUpdate,
     pool_b_to_x: &TokenPriceUpdate,
-    router_v2_address: Address,
-    quoter_v3_address: Address,
-    quoter_v4_address: Address,
+    chain_config: &eth_dex_quote::config::ChainConfig,
+    quote_router_client: Option<&eth_dex_quote::quote_router::QuoteRouterClient<P>>,
 ) -> Result<(U256, U256, U256, i128)> {
-    let swap_path = vec![
-        (token_x, token_a, pool_x_to_a), // X -> A
-        (token_a, token_b, pool_a_to_b), // A -> B
-        (token_b, token_x, pool_b_to_x), // B -> X
-    ];
+    // Fast path: Unified Quote Router single batch RPC
+    if let Some(router) = quote_router_client {
+        if let (Ok(hop1), Ok(hop2), Ok(hop3)) = (
+            build_hop(pool_x_to_a, token_x, token_a, chain_config),
+            build_hop(pool_a_to_b, token_a, token_b, chain_config),
+            build_hop(pool_b_to_x, token_b, token_x, chain_config),
+        ) {
+            let hops = vec![hop1, hop2, hop3];
+            match router.quote_single_path(hops, flashloan_amount).await {
+                Ok(final_amount) => {
+                    let profit = if final_amount >= flashloan_amount {
+                        (final_amount - flashloan_amount).as_u128() as i128
+                    } else {
+                        -((flashloan_amount - final_amount).as_u128() as i128)
+                    };
+                    return Ok((U256::zero(), U256::zero(), final_amount, profit));
+                }
+                Err(e) => log::warn!("QuoteRouter 3-hop failed: {:?}", e),
+            }
+        }
+    }
 
-    let (amounts, final_amount, net_profit) = compute_multi_hop_arbitrage(
-        provider,
+    // Fallback path: Sequential execution
+    let hop1_cfg = build_hop(pool_x_to_a, token_x, token_a, chain_config)?;
+    let hop2_cfg = build_hop(pool_a_to_b, token_a, token_b, chain_config)?;
+    let hop3_cfg = build_hop(pool_b_to_x, token_b, token_x, chain_config)?;
+
+    let amount_a = compute_swap_output(
+        provider.clone(),
         flashloan_amount,
-        swap_path,
-        router_v2_address,
-        quoter_v3_address,
-        quoter_v4_address,
+        token_x,
+        token_a,
+        pool_x_to_a,
+        if hop1_cfg.pool_type == 0 {
+            hop1_cfg.router
+        } else {
+            Address::zero()
+        },
+        if hop1_cfg.pool_type == 1 || hop1_cfg.pool_type == 2 {
+            hop1_cfg.router
+        } else {
+            Address::zero()
+        },
+        Address::zero(),
     )
     .await?;
 
-    // amounts[0] = amount_a, amounts[1] = amount_b, amounts[2] = amount_x
-    Ok((amounts[0], amounts[1], final_amount, net_profit))
+    let amount_b = compute_swap_output(
+        provider.clone(),
+        amount_a,
+        token_a,
+        token_b,
+        pool_a_to_b,
+        if hop2_cfg.pool_type == 0 {
+            hop2_cfg.router
+        } else {
+            Address::zero()
+        },
+        if hop2_cfg.pool_type == 1 || hop2_cfg.pool_type == 2 {
+            hop2_cfg.router
+        } else {
+            Address::zero()
+        },
+        Address::zero(),
+    )
+    .await?;
+
+    let final_amount = compute_swap_output(
+        provider.clone(),
+        amount_b,
+        token_b,
+        token_x,
+        pool_b_to_x,
+        if hop3_cfg.pool_type == 0 {
+            hop3_cfg.router
+        } else {
+            Address::zero()
+        },
+        if hop3_cfg.pool_type == 1 || hop3_cfg.pool_type == 2 {
+            hop3_cfg.router
+        } else {
+            Address::zero()
+        },
+        Address::zero(),
+    )
+    .await?;
+
+    let net_profit = if final_amount >= flashloan_amount {
+        (final_amount - flashloan_amount).as_u128() as i128
+    } else {
+        -((flashloan_amount - final_amount).as_u128() as i128)
+    };
+
+    Ok((amount_a, amount_b, final_amount, net_profit))
 }
 /// Helper function to compute swap output based on pool's dex_version
 async fn compute_swap_output<P: ethers::providers::Middleware + 'static>(
@@ -314,6 +545,29 @@ async fn compute_swap_output<P: ethers::providers::Middleware + 'static>(
 
     match dex_type {
         DexType::UniswapV2 => {
+            // Try off-chain math first if reserves are available (zero RPC calls)
+            if let (Some(r0_str), Some(r1_str)) = (&pool.reserve0, &pool.reserve1) {
+                if let (Some(r0), Some(r1)) = (
+                    eth_dex_quote::parse_reserve(r0_str),
+                    eth_dex_quote::parse_reserve(r1_str),
+                ) {
+                    if let Some(amount_out) = eth_dex_quote::compute_v2_swap(
+                        amount_in,
+                        token_in,
+                        pool.pool_token0,
+                        r0,
+                        r1,
+                        30, // standard 0.3% fee
+                    ) {
+                        info!(
+                            "V2 off-chain quote: {} -> {} (pool {})",
+                            amount_in, amount_out, pool.pool_address
+                        );
+                        return Ok(amount_out);
+                    }
+                }
+            }
+            // Fallback to on-chain router quote if reserves unavailable
             compute_output_amount_v2(provider, amount_in, token_in, token_out, router_v2_address)
                 .await
         }
@@ -393,9 +647,8 @@ pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
     token_x: Address,
     amount_b: U256,
     provider: Arc<P>,
-    router_v2_address: Address,
-    quoter_v3_address: Address,
-    quoter_v4_address: Address,
+    chain_config: &eth_dex_quote::config::ChainConfig,
+    _quote_router_client: Option<&eth_dex_quote::quote_router::QuoteRouterClient<P>>,
 ) -> Result<(TokenPriceUpdate, U256)> {
     // Fetch all pairs containing token B from amm-eth API
     let token_b_str = format!("{:?}", token_b).to_lowercase();
@@ -495,18 +748,32 @@ pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
             tick_spacing,
             hooks,
             eth_price_usd: 2500.0, // just any price
+            reserve0: None,
+            reserve1: None,
+        };
+        // Try to build a Hop just to get the router addresses right
+        let hop_cfg = match build_hop(&pool_update, token_b, token_x, chain_config) {
+            Ok(h) => h,
+            Err(_) => continue, // Skip unsupported Dexes
         };
 
-        // Get the actual quote for this swap
         match compute_swap_output(
             provider.clone(),
             amount_b,
             token_b,
             token_x,
             &pool_update,
-            router_v2_address,
-            quoter_v3_address,
-            quoter_v4_address,
+            if hop_cfg.pool_type == 0 {
+                hop_cfg.router
+            } else {
+                Address::zero()
+            },
+            if hop_cfg.pool_type == 1 || hop_cfg.pool_type == 2 {
+                hop_cfg.router
+            } else {
+                Address::zero()
+            },
+            Address::zero(),
         )
         .await
         {
@@ -647,6 +914,8 @@ mod tests {
             tick_spacing: Some(1),
             hooks: None,
             eth_price_usd: 2500.0,
+            reserve0: None,
+            reserve1: None,
         };
 
         // Test swap: 100 USDT -> USDC
@@ -725,6 +994,8 @@ mod tests {
             tick_spacing: Some(1),
             hooks: None,
             eth_price_usd: 2500.0,
+            reserve0: None,
+            reserve1: None,
         };
 
         // Sell USDC for USDT on V3 pool (0.05% fee)
@@ -743,14 +1014,36 @@ mod tests {
             tick_spacing: Some(10),
             hooks: None,
             eth_price_usd: 2500.0,
+            reserve0: None,
+            reserve1: None,
         };
 
         let flashloan_amount = usdt_to_u256(1000.0); // 1000 USDT
-        let quoter_v3 = "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6"
+        let _quoter_v3 = "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6"
             .parse::<Address>()
             .unwrap();
-        let router_v2 = Address::zero();
-        let quoter_v4 = Address::zero();
+        let mut dexes = std::collections::HashMap::new();
+        dexes.insert(
+            "uniswapv3".to_string(),
+            eth_dex_quote::config::DexConfig {
+                router: None,
+                factory: None,
+                quoter: Some("0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6".to_string()),
+                vault: None,
+                position_manager: None,
+                fee_tiers: vec![100, 500, 3000, 10000],
+                fee_bps: 1,
+            },
+        );
+
+        let mock_chain_config = eth_dex_quote::config::ChainConfig {
+            chain_id: 1,
+            chain_name: "ethereum".to_string(),
+            rpc_url: rpc_url.clone(),
+            base_tokens: vec![],
+            quote_router: None,
+            dexes,
+        };
 
         let result = compute_arbitrage_path(
             provider,
@@ -759,9 +1052,8 @@ mod tests {
             usdc,
             &buy_pool,
             &sell_pool,
-            router_v2,
-            quoter_v3,
-            quoter_v4,
+            &mock_chain_config,
+            None,
         )
         .await;
 
@@ -841,6 +1133,8 @@ mod tests {
             tick_spacing: Some(1),
             hooks: None,
             eth_price_usd: 2500.0,
+            reserve0: None,
+            reserve1: None,
         };
 
         // Pool 2: USDC -> DAI (V3, 0.01%)
@@ -859,6 +1153,8 @@ mod tests {
             tick_spacing: Some(1),
             hooks: None,
             eth_price_usd: 2500.0,
+            reserve0: None,
+            reserve1: None,
         };
 
         // Pool 3: DAI -> USDT (V3, 0.05%)
@@ -877,14 +1173,33 @@ mod tests {
             tick_spacing: Some(10),
             hooks: None,
             eth_price_usd: 2500.0,
+            reserve0: None,
+            reserve1: None,
         };
 
         let flashloan_amount = usdt_to_u256(500.0); // 500 USDT
-        let quoter_v3 = "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6"
-            .parse::<Address>()
-            .unwrap();
-        let router_v2 = Address::zero();
-        let quoter_v4 = Address::zero();
+        let mut dexes = std::collections::HashMap::new();
+        dexes.insert(
+            "uniswapv3".to_string(),
+            eth_dex_quote::config::DexConfig {
+                router: None,
+                factory: None,
+                quoter: Some("0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6".to_string()),
+                vault: None,
+                position_manager: None,
+                fee_tiers: vec![100, 500, 3000, 10000],
+                fee_bps: 1,
+            },
+        );
+
+        let mock_chain_config = eth_dex_quote::config::ChainConfig {
+            chain_id: 1,
+            chain_name: "ethereum".to_string(),
+            rpc_url: rpc_url.clone(),
+            base_tokens: vec![],
+            quote_router: None,
+            dexes,
+        };
 
         let result = compute_3hop_arbitrage_path(
             provider,
@@ -895,9 +1210,8 @@ mod tests {
             &pool_usdt_usdc,
             &pool_usdc_dai,
             &pool_dai_usdt,
-            router_v2,
-            quoter_v3,
-            quoter_v4,
+            &mock_chain_config,
+            None,
         )
         .await;
 

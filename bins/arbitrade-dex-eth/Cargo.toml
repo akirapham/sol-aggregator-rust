@@ -29,3 +29,6 @@ axum = "0.7"
 eth-dex-quote = { workspace = true}
 reqwest = { version = "0.11", features = ["json"] }
 lazy_static = "1.5.0"
+
+[dev-dependencies]
+ethers = "2.0"

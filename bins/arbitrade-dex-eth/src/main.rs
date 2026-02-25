@@ -77,9 +77,13 @@ async fn main() -> Result<()> {
     // Load DEX configuration for base tokens and contract addresses
     let dex_config =
         eth_dex_quote::DexConfiguration::load().expect("Failed to load eth_dex_config.toml");
-    let chain_config = dex_config
-        .get_chain("ethereum")
-        .expect("Failed to get ethereum chain config");
+    let chain_name = env::var("CHAIN_NAME").unwrap_or_else(|_| "arbitrum".to_string());
+    let chain_config = Arc::new(
+        dex_config
+            .get_chain(&chain_name)
+            .unwrap_or_else(|| panic!("Failed to get {} chain config", chain_name))
+            .clone(),
+    );
 
     // Parse base tokens (now tuples of (address, is_stable))
     let base_tokens: Vec<(ethers::types::Address, bool)> = chain_config
@@ -93,23 +97,17 @@ async fn main() -> Result<()> {
         .collect();
     info!("📋 Loaded {} base tokens for flashloan", base_tokens.len());
 
-    // Get router and quoter addresses
-    let uniswap_v2 = chain_config
-        .dexes
-        .get("uniswap_v2")
-        .expect("V2 config missing");
-    let uniswap_v3 = chain_config
-        .dexes
-        .get("uniswap_v3")
-        .expect("V3 config missing");
-    let uniswap_v4 = chain_config
-        .dexes
-        .get("uniswap_v4")
-        .expect("V4 config missing");
+    // Optional Quote Router deployment (if configured)
+    let quote_router_addr: Option<ethers::types::Address> = chain_config
+        .quote_router
+        .as_ref()
+        .map(|addr| addr.parse().expect("Invalid Quote Router address"));
 
-    let router_v2: ethers::types::Address = uniswap_v2.router.parse()?;
-    let quoter_v3: ethers::types::Address = uniswap_v3.quoter.as_ref().unwrap().parse()?;
-    let quoter_v4: ethers::types::Address = uniswap_v4.quoter.as_ref().unwrap().parse()?;
+    // Optional Quote Router deployment (if configured)
+    let quote_router_addr: Option<ethers::types::Address> = chain_config
+        .quote_router
+        .as_ref()
+        .map(|addr| addr.parse().expect("Invalid Quote Router address"));
 
     // Setup provider for on-chain queries
     let rpc_url = env::var("ETH_RPC_URL")
@@ -117,6 +115,41 @@ async fn main() -> Result<()> {
     let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(rpc_url)?;
     let provider = Arc::new(provider);
     info!("✅ Connected to Ethereum RPC");
+
+    let quote_router_client = quote_router_addr.map(|addr| {
+        Arc::new(eth_dex_quote::quote_router::QuoteRouterClient::new(
+            provider.clone(),
+            addr,
+        ))
+    });
+
+    let slippage_tolerance = env::var("SLIPPAGE_TOLERANCE_BPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100); // 1%
+
+    let dry_run = env::var("DRY_RUN")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(true);
+
+    let executor =
+        if let (Some(addr), Ok(private_key)) = (quote_router_addr, env::var("ETH_PRIVATE_KEY")) {
+            Some(Arc::new(
+                arbitrade_dex_eth::executor::ArbitrageExecutor::new(
+                    provider.clone(),
+                    private_key,
+                    addr,
+                    slippage_tolerance,
+                    dry_run,
+                    chain_config.chain_id.try_into().unwrap(),
+                )
+                .expect("Failed to create ArbitrageExecutor"),
+            ))
+        } else {
+            warn!("⚠️ ArbitrageExecutor NOT initialized (missing Quote Router or ETH_PRIVATE_KEY)");
+            None
+        };
 
     // Create price cache
     let price_cache = Arc::new(PriceCache::new());
@@ -145,6 +178,9 @@ async fn main() -> Result<()> {
     let opportunities_detected_clone = opportunities_detected.clone();
     let provider_for_ws = provider.clone();
     let base_tokens_for_ws = base_tokens.clone();
+    let quote_router_client_for_ws = quote_router_client.clone();
+    let chain_config_for_ws = chain_config.clone();
+    let executor_clone = executor.clone();
 
     tokio::spawn(async move {
         match ws_client_clone.start_with_reconnect().await {
@@ -183,11 +219,11 @@ async fn main() -> Result<()> {
                     let executions = executions_attempted.clone();
                     let provider_clone = provider_for_ws.clone();
                     let base_tokens_clone = base_tokens_for_ws.clone();
-                    let router_v2_clone = router_v2;
-                    let quoter_v3_clone = quoter_v3;
-                    let quoter_v4_clone = quoter_v4;
+                    let chain_config_clone = chain_config_for_ws.clone();
+                    let quote_router_client_clone = quote_router_client_for_ws.clone();
                     let dex_pair_api_clone = config.dex_pair_api_url.clone();
                     let http_client = reqwest::Client::new();
+                    let executor_clone = executor_clone.clone();
 
                     tokio::spawn(async move {
                         // Check for arbitrage opportunities for this specific token
@@ -201,27 +237,7 @@ async fn main() -> Result<()> {
                             );
 
                             for opp in opportunities.iter().take(5) {
-                                // let token_addr = opp.token_address;
-                                // let buy_pool_addr = &opp.buy_pool.pool_address;
-                                // let sell_pool_addr = &opp.sell_pool.pool_address;
-
-                                // let token_etherscan =
-                                //     format!("https://etherscan.io/token/{:?}", token_addr);
-                                // let buy_pool_etherscan =
-                                //     format!("https://etherscan.io/address/{}", buy_pool_addr);
-                                // let sell_pool_etherscan =
-                                //     format!("https://etherscan.io/address/{}", sell_pool_addr);
                                 let eth_price = opp.buy_pool.eth_price_usd;
-
-                                // info!(
-                                //     "   🎯 Token: {} | Buy@${:.6} ({}) / Sell@${:.6} ({}) = {:.2}% profit",
-                                //     token_etherscan,
-                                //     opp.buy_pool.price_in_usd.unwrap_or(0.0),
-                                //     buy_pool_etherscan,
-                                //     opp.sell_pool.price_in_usd.unwrap_or(0.0),
-                                //     sell_pool_etherscan,
-                                //     opp.price_diff_percent
-                                // );
 
                                 // Spawn task to compute exact arbitrage profit using on-chain quoters
                                 let opp_clone = opp.clone();
@@ -229,6 +245,9 @@ async fn main() -> Result<()> {
                                 let base_tokens_for_compute = base_tokens_clone.clone();
                                 let http_client_for_3hop = http_client.clone();
                                 let dex_pair_api_for_3hop = dex_pair_api_clone.clone();
+                                let chain_config_clone = chain_config_clone.clone();
+                                let quote_router_client_clone = quote_router_client_clone.clone();
+                                let executor_clone = executor_clone.clone();
 
                                 tokio::spawn(async move {
                                     // Check if we can use this token as flashloan input
@@ -299,9 +318,8 @@ async fn main() -> Result<()> {
                                             token_a,
                                             &opp_clone.buy_pool,
                                             &opp_clone.sell_pool,
-                                            router_v2_clone,
-                                            quoter_v3_clone,
-                                            quoter_v4_clone,
+                                            &chain_config_clone,
+                                            quote_router_client_clone.as_deref(),
                                         )
                                         .await
                                         {
@@ -327,7 +345,21 @@ async fn main() -> Result<()> {
                                                         if found_base_token_is_stable { "USDT" } else { "ETH" },
                                                         elapsed.as_secs_f64() * 1000.0
                                                     );
-                                                    // TODO: Execute the arbitrage if profit > gas costs
+
+                                                    if let Some(ref executor) = executor_clone {
+                                                        let hop1 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.buy_pool, token_x, token_a, &chain_config_clone);
+                                                        let hop2 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.sell_pool, token_a, token_x, &chain_config_clone);
+
+                                                        match (hop1, hop2) {
+                                                            (Ok(h1), Ok(h2)) => {
+                                                                match executor.execute_flashloan(opp_clone.clone(), vec![h1, h2], flashloan_amount, token_x, Some(net_profit_value)).await {
+                                                                    Ok(res) => info!("⚡️ 2-Hop Flashloan executed! Hash: {}", res.tx_hash),
+                                                                    Err(e) => warn!("⚠️ Flashloan aborted: {}", e),
+                                                                }
+                                                            }
+                                                            (e1, e2) => warn!("Failed building ExecHops: {:?} {:?}", e1.err(), e2.err())
+                                                        }
+                                                    }
                                                 } else {
                                                     let net_profit_abs = net_profit.abs();
                                                     let net_profit_after_decimals = net_profit_abs
@@ -370,9 +402,8 @@ async fn main() -> Result<()> {
                                             token_a,
                                             &opp_clone.buy_pool,
                                             &opp_clone.sell_pool,
-                                            router_v2_clone,
-                                            quoter_v3_clone,
-                                            quoter_v4_clone,
+                                            &chain_config_clone,
+                                            quote_router_client_clone.as_deref(),
                                         )
                                         .await
                                         {
@@ -387,9 +418,8 @@ async fn main() -> Result<()> {
                                                     token_x,
                                                     amount_b,
                                                     provider_for_compute.clone(),
-                                                    router_v2_clone,
-                                                    quoter_v3_clone,
-                                                    quoter_v4_clone,
+                                                    &chain_config_clone,
+                                                    quote_router_client_clone.as_deref(),
                                                 )
                                                 .await
                                                 {
@@ -418,7 +448,23 @@ async fn main() -> Result<()> {
                                                                 elapsed_3hop.as_secs_f64() * 1000.0,
                                                                 (elapsed_2hop + elapsed_3hop).as_secs_f64() * 1000.0
                                                             );
-                                                            // TODO: Execute the arbitrage if profit > gas costs
+
+                                                            if let Some(ref executor) = executor_clone {
+                                                                let hop1 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.buy_pool, token_x, token_a, &chain_config_clone);
+                                                                let hop2 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.sell_pool, token_a, token_b, &chain_config_clone);
+                                                                let hop3 = arbitrade_dex_eth::utils::build_exec_hop(&_best_pool, token_b, token_x, &chain_config_clone);
+
+
+                                                                match (hop1, hop2, hop3) {
+                                                                    (Ok(h1), Ok(h2), Ok(h3)) => {
+                                                                        match executor.execute_flashloan(opp_clone.clone(), vec![h1, h2, h3], flashloan_amount, token_x, Some(net_profit_value)).await {
+                                                                            Ok(res) => info!("⚡️ 3-Hop Flashloan executed! Hash: {}", res.tx_hash),
+                                                                            Err(e) => warn!("⚠️ Flashloan aborted: {}", e),
+                                                                        }
+                                                                    }
+                                                                    _ => warn!("Failed building 3-Hop ExecHops")
+                                                                }
+                                                            }
                                                         } else {
                                                             let net_profit_abs = net_profit.abs();
                                                             let net_profit_after_decimals = net_profit_abs as f64

@@ -48,8 +48,6 @@ pub fn clear_cache() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn test_failed_pool_cache() {

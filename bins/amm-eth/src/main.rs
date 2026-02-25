@@ -58,9 +58,10 @@ async fn main() -> Result<()> {
     });
     debug!("DEBUG: WebSocket server spawned");
 
-    // Create configuration
+    // Create configuration based on ETH_CHAIN env var (defaults to ethereum)
     debug!("DEBUG: Creating EthConfig...");
-    let config = EthConfig::default();
+    let config = EthConfig::from_env();
+    info!("Chain: {:?}", config.eth_chain);
     debug!("DEBUG: EthConfig created successfully");
 
     // Start Binance WebSocket for ETH price updates

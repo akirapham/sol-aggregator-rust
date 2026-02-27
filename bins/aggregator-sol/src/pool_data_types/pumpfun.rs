@@ -35,6 +35,7 @@ pub struct PumpfunPoolState {
     pub complete: bool,
     pub creator: Pubkey,
     pub is_mayhem_mode: bool,
+    #[serde(default)]
     pub is_cashback: bool,
 }
 

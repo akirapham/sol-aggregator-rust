@@ -73,6 +73,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     stop_grace_period: 60s
     stop_signal: SIGTERM
 

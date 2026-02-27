@@ -6,9 +6,21 @@ pub const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 pub const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 pub const USDT_MINT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 pub const USD1_MINT: &str = "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB";
+
+/// Pre-computed Pubkey constants — zero per-request parsing overhead
+pub const WSOL_PUBKEY: Pubkey = Pubkey::from_str_const(WSOL_MINT);
+pub const USDC_PUBKEY: Pubkey = Pubkey::from_str_const(USDC_MINT);
+pub const USDT_PUBKEY: Pubkey = Pubkey::from_str_const(USDT_MINT);
+pub const USD1_PUBKEY: Pubkey = Pubkey::from_str_const(USD1_MINT);
+
 pub fn wsol() -> Pubkey {
-    Pubkey::from_str_const(WSOL_MINT)
+    WSOL_PUBKEY
 }
+
+/// Pre-computed base token Pubkeys for fast iteration in routing
+pub static BASE_TOKEN_PUBKEYS: LazyLock<Vec<Pubkey>> = LazyLock::new(|| {
+    vec![WSOL_PUBKEY, USDC_PUBKEY, USDT_PUBKEY, USD1_PUBKEY]
+});
 
 pub static BASE_TOKENS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     let mut set = HashSet::new();

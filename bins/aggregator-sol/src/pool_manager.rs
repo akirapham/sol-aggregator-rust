@@ -21,6 +21,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use borsh::BorshDeserialize;
 use futures::stream::{self, StreamExt};
+use dashmap::{DashMap, DashSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,8 @@ use sqlx::{Pool, Postgres};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::{broadcast, Mutex, RwLock};
+// Note: DashMap/DashSet from dashmap crate used for PoolStorage, PairToPoolsMap,
+// DexPoolsMap, tick_synced_pools. tokio Mutex/RwLock still used for other fields.
 use tokio::time::interval;
 /// Event broadcasted to arbitrage monitors with pool data and token prices
 #[allow(unused)]
@@ -57,12 +60,12 @@ pub struct ArbitragePoolUpdate {
     pub timestamp: u64,
 }
 
-/// Type alias for the complex pool storage type
-type PoolStorage = Arc<RwLock<HashMap<Pubkey, Arc<Mutex<PoolState>>>>>;
+/// Type alias for pool storage — DashMap for lock-free per-shard concurrent access
+type PoolStorage = Arc<DashMap<Pubkey, PoolState>>;
 /// Type alias for token pair to pool addresses mapping
-type PairToPoolsMap = Arc<RwLock<HashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>>;
+type PairToPoolsMap = Arc<DashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>;
 /// Type alias for DEX to pool addresses mapping
-type DexPoolsMap = Arc<RwLock<HashMap<DexType, HashSet<Pubkey>>>>;
+type DexPoolsMap = Arc<DashMap<DexType, HashSet<Pubkey>>>;
 /// Type alias for pending pool updates buffer
 type PendingUpdatesMap = Arc<Mutex<HashMap<(Pubkey, PoolUpdateEventType, i32), PoolUpdateEvent>>>;
 /// Type alias for batch event receiver
@@ -130,7 +133,7 @@ pub struct PoolStateManager {
     /// Coalescing buffer: latest update per pool address
     pending_updates_account_event: PendingUpdatesMap,
     pending_pools_to_fetch_tick_arrays: PendingPoolsForTickFetching,
-    tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
+    tick_synced_pools: Arc<DashSet<Pubkey>>,
     /// Database abstraction
     db: Arc<dyn DatabaseTrait>,
     price_service: Arc<dyn PriceServiceTrait>,
@@ -177,9 +180,9 @@ impl PoolStateManager {
 
         let mut manager = Self {
             grpc_service,
-            pools: Arc::new(RwLock::new(HashMap::new())),
-            pair_to_pools: Arc::new(RwLock::new(HashMap::new())),
-            dex_pools: Arc::new(RwLock::new(HashMap::new())),
+            pools: Arc::new(DashMap::new()),
+            pair_to_pools: Arc::new(DashMap::new()),
+            dex_pools: Arc::new(DashMap::new()),
             token_cache: Arc::new(RwLock::new(HashMap::new())),
             pool_update_tx,
             rpc_client,
@@ -187,7 +190,7 @@ impl PoolStateManager {
             pending_updates: Arc::new(Mutex::new(HashMap::new())),
             pending_updates_account_event: Arc::new(Mutex::new(HashMap::new())),
             pending_pools_to_fetch_tick_arrays: Arc::new(Mutex::new(HashSet::new())),
-            tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
+            tick_synced_pools: Arc::new(DashSet::new()),
             db,
             price_service,
             chain_state,
@@ -234,13 +237,7 @@ impl PoolStateManager {
 
                 // Collect pools
                 let pools: Vec<PoolState> = {
-                    let pools_read = pools_clone.read().await;
-                    let mut entries = Vec::with_capacity(pools_read.len());
-                    for v in pools_read.values() {
-                        let guard = v.lock().await;
-                        entries.push((*guard).clone());
-                    }
-                    entries
+                    pools_clone.iter().map(|entry| entry.value().clone()).collect()
                 };
 
                 if let Err(e) = db_clone.save_tokens(&tokens).await {
@@ -274,29 +271,25 @@ impl PoolStateManager {
 
     #[cfg(test)]
     pub async fn inject_pool(&self, pool: PoolState) {
-        let mut pools = self.pools.write().await;
-        // Map pair to pools
         let (token_a, token_b) = pool.get_tokens();
         let pool_address = pool.address();
 
-        pools.insert(pool_address, Arc::new(Mutex::new(pool.clone())));
-
-        let mut pair_map = self.pair_to_pools.write().await;
+        self.pools.insert(pool_address, pool);
 
         // Insert both directions
-        pair_map
+        self.pair_to_pools
             .entry((token_a, token_b))
             .or_insert_with(HashSet::new)
             .insert(pool_address);
 
         if token_a != token_b {
-            pair_map
+            self.pair_to_pools
                 .entry((token_b, token_a))
                 .or_insert_with(HashSet::new)
                 .insert(pool_address);
         }
 
-        self.tick_synced_pools.lock().await.insert(pool_address);
+        self.tick_synced_pools.insert(pool_address);
     }
 
     #[cfg(test)]
@@ -320,9 +313,9 @@ impl PoolStateManager {
 
         Self {
             grpc_service: Arc::new(MockGrpcService),
-            pools: Arc::new(RwLock::new(HashMap::new())),
-            pair_to_pools: Arc::new(RwLock::new(HashMap::new())),
-            dex_pools: Arc::new(RwLock::new(HashMap::new())),
+            pools: Arc::new(DashMap::new()),
+            pair_to_pools: Arc::new(DashMap::new()),
+            dex_pools: Arc::new(DashMap::new()),
             token_cache: Arc::new(RwLock::new(HashMap::new())),
             pool_update_tx,
             rpc_client,
@@ -336,7 +329,7 @@ impl PoolStateManager {
             raydium_clmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
             raydium_cpmm_amm_config_cache: Arc::new(RwLock::new(HashMap::new())),
             pending_pools_to_fetch_tick_arrays: Arc::new(Mutex::new(HashSet::new())),
-            tick_synced_pools: Arc::new(Mutex::new(HashSet::new())),
+            tick_synced_pools: Arc::new(DashSet::new()),
             arbitrage_monitored_tokens: Arc::new(RwLock::new(HashSet::new())),
             startup_time: SystemTime::now(),
             config,
@@ -377,37 +370,33 @@ impl PoolStateManager {
                         let mut new_pools_count = 0;
                         let mut pools_to_save = Vec::new();
 
-                        // Scope for write locks
+                        // Insert directly into DashMaps
                         {
-                            let mut pools = pools_cache.write().await;
-                            let mut pair_map = pair_to_pools_cache.write().await;
-                            let mut dex_map = dex_pools_cache.write().await;
-
                             for pool in discovered_pools {
                                 let pool_address = pool.address();
 
                                 // Only add if not exists
                                 #[allow(clippy::map_entry)]
-                                if !pools.contains_key(&pool_address) {
+                                if !pools_cache.contains_key(&pool_address) {
                                     let (token_a, token_b) = pool.get_tokens();
 
-                                    pools.insert(pool_address, Arc::new(Mutex::new(pool.clone())));
+                                    pools_cache.insert(pool_address, pool.clone());
 
                                     // Update pair map
-                                    pair_map
+                                    pair_to_pools_cache
                                         .entry((token_a, token_b))
                                         .or_insert_with(HashSet::new)
                                         .insert(pool_address);
 
                                     if token_a != token_b {
-                                        pair_map
+                                        pair_to_pools_cache
                                             .entry((token_b, token_a))
                                             .or_insert_with(HashSet::new)
                                             .insert(pool_address);
                                     }
 
-                                    // Update dex map (assuming PumpFun dex type)
-                                    dex_map
+                                    // Update dex map
+                                    dex_pools_cache
                                         .entry(pool.dex())
                                         .or_insert_with(HashSet::new)
                                         .insert(pool_address);
@@ -642,21 +631,14 @@ impl PoolStateManager {
 
                         // check if pool_id already synced
                         {
-                            let tick_synced = tick_synced_pools_c.lock().await;
+                            let tick_synced = &tick_synced_pools_c;
                             if tick_synced.contains(&pool_id) {
                                 return;
                             }
                         }
 
-                        // first read pool state and clone it from pools
-                        let pool_mutex = {
-                            let pools_guard = pools_c.read().await;
-                            pools_guard.get(&pool_id).cloned()
-                        };
-
-                        if let Some(pool_mutex) = &pool_mutex {
-                            let pool_guard = pool_mutex.lock().await;
-                            let pool_state = (*pool_guard).clone();
+                        if let Some(pool_ref) = pools_c.get(&pool_id) {
+                            let pool_state = pool_ref.value().clone();
 
                             match dex_type {
                                 DexType::RaydiumClmm => {
@@ -669,8 +651,7 @@ impl PoolStateManager {
                                             Ok(tick_arrays) => {
                                                 // mark ticks synced pools
                                                 {
-                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
-                                                    tick_synced.insert(pool_id);
+                                                    tick_synced_pools_c.insert(pool_id);
                                                 }
                                                 // create raw events and sending it to start_batch_event_processing
 
@@ -711,8 +692,7 @@ impl PoolStateManager {
                                             Ok(tick_arrays) => {
                                                 // mark ticks synced pools
                                                 {
-                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
-                                                    tick_synced.insert(pool_id);
+                                                    tick_synced_pools_c.insert(pool_id);
                                                 }
                                                 // create raw events and sending it to start_batch_event_processing
 
@@ -764,8 +744,7 @@ impl PoolStateManager {
                                                 // Even if tick array fetch fails, mark as synced so the pool can be used for routing
                                                 // This allows routing with just the current pool state without full tick traversal
                                                 {
-                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
-                                                    tick_synced.insert(pool_id);
+                                                    tick_synced_pools_c.insert(pool_id);
                                                 }
                                             }
                                         }
@@ -779,8 +758,7 @@ impl PoolStateManager {
                                             Ok(bin_arrays) => {
                                                 // log::info!("Fetched {} bin arrays for Meteora DLMM pool {}", bin_arrays.len(), pool_id);
                                                 {
-                                                    let mut tick_synced = tick_synced_pools_c.lock().await;
-                                                    tick_synced.insert(pool_id);
+                                                    tick_synced_pools_c.insert(pool_id);
                                                 }
                                                 bin_arrays.iter().for_each(|bin_array| {
                                                     let mut bin_arrays_map = HashMap::new();
@@ -816,15 +794,13 @@ impl PoolStateManager {
                                         dex_type
                                     );
                                     {
-                                        let mut tick_synced = tick_synced_pools_c.lock().await;
-                                        tick_synced.insert(pool_id);
+                                        tick_synced_pools_c.insert(pool_id);
                                     }
                                 }
                             }
                         } else {
                             // pool not found, mark as synced to avoid repeated attempts
-                            let mut tick_synced = tick_synced_pools_c.lock().await;
-                            tick_synced.insert(pool_id);
+                            tick_synced_pools_c.insert(pool_id);
                         }
                     }
                 }))
@@ -1158,7 +1134,7 @@ impl PoolStateManager {
         dex_pools: DexPoolsMap,
         token_cache: Arc<RwLock<HashMap<Pubkey, Token>>>,
         pending_pools_to_fetch_tick_arrays: PendingPoolsForTickFetching,
-        tick_synced_pools: Arc<Mutex<HashSet<Pubkey>>>,
+        tick_synced_pools: Arc<DashSet<Pubkey>>,
         rpc_client: Arc<RpcClient>,
         sol_price: f64,
         arbitrage_pool_tx: &broadcast::Sender<ArbitragePoolUpdate>,
@@ -1228,22 +1204,13 @@ impl PoolStateManager {
         let mut pool_dex_type: Option<DexType> = None;
 
         // check if pool exists
-        let pool_exists = {
-            let pools_read = pools.read().await;
-            pools_read.contains_key(&pool_address)
-        };
+        let pool_exists = pools.contains_key(&pool_address);
 
         if pool_exists {
-            // Get the pool's individual mutex (no blocking other pools)
-            let pool_mutex = {
-                let pools_read = pools.read().await;
-                pools_read.get(&pool_address).cloned()
-            };
-
-            if let Some(pool_mutex) = pool_mutex {
-                let mut pool_guard = pool_mutex.lock().await;
-                pool_with_ticks = update_pool_state_by_event(update, &mut pool_guard, sol_price);
-                pool_dex_type = Some(pool_guard.dex());
+            // Update pool in-place via DashMap RefMut
+            if let Some(mut pool_ref) = pools.get_mut(&pool_address) {
+                pool_with_ticks = update_pool_state_by_event(update, pool_ref.value_mut(), sol_price);
+                pool_dex_type = Some(pool_ref.value().dex());
             }
         } else {
             // Insert new pool
@@ -1274,9 +1241,7 @@ impl PoolStateManager {
 
         if pool_with_ticks {
             if let Some(dex_type) = pool_dex_type {
-                let tick_synced = tick_synced_pools.lock().await;
-                if !tick_synced.contains(&pool_address) {
-                    drop(tick_synced); // release lock early
+            if !tick_synced_pools.contains(&pool_address) {
                     let mut pending_fetch = pending_pools_to_fetch_tick_arrays.lock().await;
                     pending_fetch.insert(PoolForTickFetching {
                         address: pool_address,
@@ -1288,12 +1253,8 @@ impl PoolStateManager {
 
         // Broadcast arbitrage update if pool contains monitored tokens
         if !arbitrage_monitored_tokens.is_empty() {
-            if let Some(pool_mutex) = {
-                let pools_read = pools.read().await;
-                pools_read.get(&pool_address).cloned()
-            } {
-                let pool_guard = pool_mutex.lock().await;
-                let (token_a, token_b) = pool_guard.get_tokens();
+            if let Some(pool_ref) = pools.get(&pool_address) {
+                let (token_a, token_b) = pool_ref.value().get_tokens();
 
                 // Check if this pool involves any monitored tokens
                 if arbitrage_monitored_tokens.contains(&token_a)
@@ -1312,7 +1273,7 @@ impl PoolStateManager {
                     drop(token_cache_read);
 
                     let (price_a, price_b) =
-                        pool_guard.calculate_token_prices(sol_price, decimals_a, decimals_b);
+                        pool_ref.value().calculate_token_prices(sol_price, decimals_a, decimals_b);
 
                     // Calculate prices in both directions
                     let (forward_price, reverse_price) =
@@ -1328,7 +1289,7 @@ impl PoolStateManager {
                         pool_address,
                         token_a,
                         token_b,
-                        dex: pool_guard.dex(),
+                        dex: pool_ref.value().dex(),
                         forward_price,
                         reverse_price,
                         timestamp: std::time::SystemTime::now()
@@ -1357,46 +1318,35 @@ impl PoolStateManager {
         let (token_a, token_b) = pool_state.get_tokens();
 
         // Insert pool
-        {
-            let mut pools_write = pools.write().await;
-            match pools_write.entry(pool_address) {
-                std::collections::hash_map::Entry::Vacant(v) => {
-                    // move pool_state in (no clone)
-                    v.insert(Arc::new(Mutex::new(pool_state)));
-                }
-                std::collections::hash_map::Entry::Occupied(_) => {
-                    // Another task inserted concurrently — keep existing one
-                    log::warn!(
-                        "Pool {:?} was inserted concurrently, skipping insert",
-                        pool_address
-                    );
-                    return;
-                }
+        match pools.entry(pool_address) {
+            dashmap::mapref::entry::Entry::Vacant(v) => {
+                v.insert(pool_state);
+            }
+            dashmap::mapref::entry::Entry::Occupied(_) => {
+                log::warn!(
+                    "Pool {:?} was inserted concurrently, skipping insert",
+                    pool_address
+                );
+                return;
             }
         }
 
         // Update mappings
-        {
-            let mut pair_to_pools_write = pair_to_pools.write().await;
-            pair_to_pools_write
-                .entry((token_a, token_b))
+        pair_to_pools
+            .entry((token_a, token_b))
+            .or_insert_with(HashSet::new)
+            .insert(pool_address);
+        if (token_a, token_b) != (token_b, token_a) {
+            pair_to_pools
+                .entry((token_b, token_a))
                 .or_insert_with(HashSet::new)
                 .insert(pool_address);
-            if (token_a, token_b) != (token_b, token_a) {
-                pair_to_pools_write
-                    .entry((token_b, token_a))
-                    .or_insert_with(HashSet::new)
-                    .insert(pool_address);
-            }
         }
 
-        {
-            let mut dex_pools_write = dex_pools.write().await;
-            dex_pools_write
-                .entry(dex)
-                .or_insert_with(HashSet::new)
-                .insert(pool_address);
-        }
+        dex_pools
+            .entry(dex)
+            .or_insert_with(HashSet::new)
+            .insert(pool_address);
 
         // check if token metadata is cached, if not cache it
         let token_cache_read = token_cache.read().await;
@@ -1427,87 +1377,63 @@ impl PoolStateManager {
         pool_last_update < self.startup_time + Duration::from_secs(10)
     }
 
-    pub async fn is_pool_tick_synced(&self, pool_address: &Pubkey) -> bool {
-        let tick_synced = self.tick_synced_pools.lock().await;
-        tick_synced.contains(pool_address)
+    pub fn is_pool_tick_synced(&self, pool_address: &Pubkey) -> bool {
+        self.tick_synced_pools.contains(pool_address)
     }
 
     /// Get pool state by address
-    pub async fn get_pool(&self, pool_address: &Pubkey) -> Option<PoolState> {
-        let pools = self.pools.read().await;
-        if let Some(pool_mutex) = pools.get(pool_address) {
-            let pool_guard = pool_mutex.lock().await;
-            Some((*pool_guard).clone())
-        } else {
-            None
-        }
+    pub fn get_pool(&self, pool_address: &Pubkey) -> Option<PoolState> {
+        self.pools.get(pool_address).map(|r| r.value().clone())
     }
 
     /// Get all pools for a token pair (excluding stale pools)
-    pub async fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState> {
+    pub fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState> {
         // Step 1: Get pool addresses (quick map read)
-        let pool_addresses = {
-            let pair_to_pools = self.pair_to_pools.read().await;
-            let key = if token_a < token_b {
-                (*token_a, *token_b)
-            } else {
-                (*token_b, *token_a)
-            };
-            pair_to_pools.get(&key).cloned().unwrap_or_default()
+        let key = if token_a < token_b {
+            (*token_a, *token_b)
+        } else {
+            (*token_b, *token_a)
         };
+        let pool_addresses = self
+            .pair_to_pools
+            .get(&key)
+            .map(|r| r.value().clone())
+            .unwrap_or_default();
 
-        // Step 2: Get pool mutexes (another quick map read)
-        let pool_mutexes = {
-            let pools = self.pools.read().await;
-            pool_addresses
-                .iter()
-                .filter_map(|addr| pools.get(addr).cloned())
-                .collect::<Vec<_>>()
-        };
-
-        // Step 3: Read pools concurrently and filter out stale ones
+        // Step 2: Read pools directly via DashMap
         let mut results = Vec::new();
-        for mutex in pool_mutexes {
-            let pool_guard = mutex.lock().await; // Only locks this specific pool
-            let pool_state = (*pool_guard).clone();
-            // Exclude stale pools
-            if !self.is_pool_stale(&pool_state) {
-                results.push(pool_state);
+        for addr in &pool_addresses {
+            if let Some(pool_ref) = self.pools.get(addr) {
+                let pool_state = pool_ref.value().clone();
+                if !self.is_pool_stale(&pool_state) {
+                    results.push(pool_state);
+                }
             }
         }
         results
     }
 
-    pub async fn get_pool_states_by_addresses(
+    pub fn get_pool_states_by_addresses(
         &self,
         pool_addresses: &HashSet<Pubkey>,
     ) -> HashMap<Pubkey, PoolState> {
-        let pool_mutexes = {
-            let pools = self.pools.read().await;
-            pool_addresses
-                .iter()
-                .filter_map(|addr| pools.get(addr).cloned())
-                .collect::<Vec<_>>()
-        };
-
         let mut results = HashMap::new();
-        for mutex in pool_mutexes {
-            let pool_guard = mutex.lock().await; // Only locks this specific pool
-            let pool_cloned = (*pool_guard).clone();
-            // Exclude stale pools
-            if !self.is_pool_stale(&pool_cloned) {
-                results.insert(pool_cloned.address(), pool_cloned);
+        for addr in pool_addresses {
+            if let Some(pool_ref) = self.pools.get(addr) {
+                let pool_state = pool_ref.value().clone();
+                if !self.is_pool_stale(&pool_state) {
+                    results.insert(pool_state.address(), pool_state);
+                }
             }
         }
         results
     }
 
-    pub async fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState> {
-        let pools = self.pools.read().await;
-        if let Some(pool_mutex) = pools.get(pool_address) {
-            let pool_guard = pool_mutex.lock().await;
-            if !self.is_pool_stale(&(*pool_guard).clone()) {
-                Some((*pool_guard).clone())
+    pub fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState> {
+        if let Some(pool_ref) = self.pools.get(pool_address) {
+            let pool_state = pool_ref.value().clone();
+            if !self.is_pool_stale(&pool_state) {
+                Some(pool_state)
             } else {
                 None
             }
@@ -1526,28 +1452,32 @@ impl PoolStateManager {
         Arc::clone(&self.rpc_client)
     }
 
-    pub async fn get_pool_addresses_for_pair(
+    pub fn get_pool_addresses_for_pair(
         &self,
         token_a: &Pubkey,
         token_b: &Pubkey,
     ) -> HashSet<Pubkey> {
-        let pair_to_pools = self.pair_to_pools.read().await;
         let key = if token_a < token_b {
             (*token_a, *token_b)
         } else {
             (*token_b, *token_a)
         };
-        pair_to_pools.get(&key).cloned().unwrap_or_default()
+        self.pair_to_pools
+            .get(&key)
+            .map(|r| r.value().clone())
+            .unwrap_or_default()
     }
 
-    pub async fn get_pool_count_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> usize {
-        let pair_to_pools = self.pair_to_pools.read().await;
+    pub fn get_pool_count_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> usize {
         let key = if token_a < token_b {
             (*token_a, *token_b)
         } else {
             (*token_b, *token_a)
         };
-        pair_to_pools.get(&key).map(|s| s.len()).unwrap_or(0)
+        self.pair_to_pools
+            .get(&key)
+            .map(|r| r.value().len())
+            .unwrap_or(0)
     }
 
     /// Get token metadata from cache
@@ -1563,39 +1493,21 @@ impl PoolStateManager {
     }
 
     /// Get pools for a specific DEX (excluding stale pools)
-    pub async fn get_pools_for_dex(&self, dex: DexType) -> Vec<PoolState> {
+    pub fn get_pools_for_dex(&self, dex: DexType) -> Vec<PoolState> {
         // Step 1: Get pool addresses for this DEX
-        let pool_addresses = {
-            let dex_pools = self.dex_pools.read().await;
-            dex_pools.get(&dex).cloned().unwrap_or_default()
-        };
+        let pool_addresses = self
+            .dex_pools
+            .get(&dex)
+            .map(|r| r.value().clone())
+            .unwrap_or_default();
 
-        // Step 2: Get pool mutexes
-        let pool_mutexes = {
-            let pools = self.pools.read().await;
-            pool_addresses
-                .iter()
-                .filter_map(|addr| pools.get(addr).cloned())
-                .collect::<Vec<_>>()
-        };
-
-        // Step 3: Read all pools concurrently and filter out stale ones
-        let tasks: Vec<_> = pool_mutexes
-            .into_iter()
-            .map(|mutex| {
-                tokio::spawn(async move {
-                    let pool_guard = mutex.lock().await;
-                    (*pool_guard).clone()
-                })
-            })
-            .collect();
-
+        // Step 2: Read all pools and filter stale ones
         let mut results = Vec::new();
-        for task in tasks {
-            if let Ok(pool) = task.await {
-                // Exclude stale pools
-                if !self.is_pool_stale(&pool) {
-                    results.push(pool);
+        for addr in &pool_addresses {
+            if let Some(pool_ref) = self.pools.get(addr) {
+                let pool_state = pool_ref.value().clone();
+                if !self.is_pool_stale(&pool_state) {
+                    results.push(pool_state);
                 }
             }
         }
@@ -1603,12 +1515,9 @@ impl PoolStateManager {
     }
 
     /// Remove a pool from the manager
-    pub async fn remove_pool(&self, pool_address: &Pubkey) {
-        let mut pools = self.pools.write().await;
-        pools.remove(pool_address);
-
+    pub fn remove_pool(&self, pool_address: &Pubkey) {
+        self.pools.remove(pool_address);
         // Note: We don't remove from other mappings for performance reasons
-        // These will be cleaned up periodically
     }
 
     /// Get all cached tokens
@@ -1619,39 +1528,29 @@ impl PoolStateManager {
 
     /// Get pool statistics
     pub async fn get_stats(&self) -> PoolManagerStats {
-        let pools = self.pools.read().await;
-        let pair_to_pools = self.pair_to_pools.read().await;
-        let dex_pools = self.dex_pools.read().await;
         let token_cache = self.token_cache.read().await;
 
         PoolManagerStats {
-            total_pools: pools.len(),
-            total_pairs: pair_to_pools.len(),
+            total_pools: self.pools.len(),
+            total_pairs: self.pair_to_pools.len(),
             total_tokens: token_cache.len(),
-            pools_by_dex: dex_pools
+            pools_by_dex: self.dex_pools
                 .iter()
-                .map(|(dex, pools)| (*dex, pools.len()))
+                .map(|entry| (*entry.key(), entry.value().len()))
                 .collect(),
         }
     }
 
     /// Get all pools containing a specific token
-    pub async fn get_pools_for_token(&self, token_address: &Pubkey) -> Vec<PoolState> {
-        // Collect all pool mutexes first under read lock
-        let pool_mutexes = {
-            let pools = self.pools.read().await;
-            pools.values().cloned().collect::<Vec<_>>()
-        };
-
+    pub fn get_pools_for_token(&self, token_address: &Pubkey) -> Vec<PoolState> {
         let mut results = Vec::new();
-        for mutex in pool_mutexes {
-            let pool_guard = mutex.lock().await;
-            let pool_cloned = (*pool_guard).clone();
-            let (token_a, token_b) = pool_cloned.get_tokens();
+        for entry in self.pools.iter() {
+            let pool_state = entry.value().clone();
+            let (token_a, token_b) = pool_state.get_tokens();
             if (&token_a == token_address || &token_b == token_address)
-                && !self.is_pool_stale(&pool_cloned)
+                && !self.is_pool_stale(&pool_state)
             {
-                results.push(pool_cloned);
+                results.push(pool_state);
             }
         }
         results
@@ -1664,11 +1563,10 @@ impl PoolStateManager {
         // 1. Load Pools
         match self.db.load_pools().await {
             Ok(pools) => {
-                let mut pools_write = self.pools.write().await;
                 for pool_state in pools {
-                    pools_write.insert(pool_state.address(), Arc::new(Mutex::new(pool_state)));
+                    self.pools.insert(pool_state.address(), pool_state);
                 }
-                log::info!("Loaded {} pools from Postgres", pools_write.len());
+                log::info!("Loaded {} pools from Postgres", self.pools.len());
             }
             Err(e) => {
                 log::error!("Failed to load pools from Postgres: {}", e);
@@ -1709,76 +1607,50 @@ impl PoolStateManager {
 
     /// Rebuild pair_to_pools and dex_pools mappings from existing pools
     async fn rebuild_mappings_from_pools(&self) {
-        let pools_read = self.pools.read().await;
         let mut pair_to_pools_map: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> = HashMap::new();
         let mut dex_pools_map: HashMap<DexType, HashSet<Pubkey>> = HashMap::new();
         let mut raydium_clmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
         let mut raydium_cpmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
 
-        log::info!("Rebuilding mappings from {} pools...", pools_read.len());
+        log::info!("Rebuilding mappings from {} pools...", self.pools.len());
         let _tick_fetcher = TickArrayFetcher::new(
             self.rpc_client.clone(),
             RaydiumClmmPoolState::get_program_id(),
         );
 
-        for (pool_address, pool_mutex) in pools_read.iter() {
-            // Get pool state (we know these exist since we just loaded them)
-            let pool_guard = pool_mutex.lock().await; // Safe since we're loading on startup
-            let pool_state = &*pool_guard;
+        for entry in self.pools.iter() {
+            let pool_address = entry.key();
+            let pool_state = entry.value();
 
-            match &pool_state {
+            match pool_state {
                 PoolState::Pumpfun(_) => {
                     if !self.config.enable_pumpfun {
-                        log::debug!(
-                            "Skipping Pumpfun pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
                 }
                 PoolState::PumpSwap(_) => {
                     if !self.config.enable_pumpfun_swap {
-                        log::debug!(
-                            "Skipping PumpSwap pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
                 }
                 PoolState::RaydiumAmmV4(_) => {
                     if !self.config.enable_raydium_amm_v4 {
-                        log::debug!(
-                            "Skipping Raydium AMM V4 pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
                 }
                 PoolState::RaydiumCpmm(cpmm_pool_state) => {
                     if !self.config.enable_raydium_cpmm {
-                        log::debug!(
-                            "Skipping Raydium CPMM pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
                     raydium_cpmm_amm_configs_set.insert(cpmm_pool_state.amm_config);
                 }
                 PoolState::Bonk(_) => {
                     if !self.config.enable_bonk {
-                        log::debug!(
-                            "Skipping Bonk pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
                 }
                 PoolState::RadyiumClmm(clmm_pool_state) => {
                     if !self.config.enable_raydium_clmm {
-                        log::debug!(
-                            "Skipping Raydium CLMM pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
 
@@ -1788,34 +1660,22 @@ impl PoolStateManager {
                         address: *pool_address,
                         dex_type: DexType::RaydiumClmm,
                     });
-                    drop(pending); // release lock early
+                    drop(pending);
 
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);
                 }
                 PoolState::MeteoraDbc(_) => {
                     if !self.config.enable_meteora_dbc {
-                        log::debug!(
-                            "Skipping Meteora DBC pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
                 }
                 PoolState::MeteoraDammV2(_) => {
                     if !self.config.enable_meteora_dammv2 {
-                        log::debug!(
-                            "Skipping Meteora DAMMV2 pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
                 }
                 PoolState::MeteoraDlmm(_) => {
                     if !self.config.enable_meteora_dlmm {
-                        log::debug!(
-                            "Skipping Meteora DLMMPool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
 
@@ -1825,14 +1685,10 @@ impl PoolStateManager {
                         address: *pool_address,
                         dex_type: DexType::MeteoraDlmm,
                     });
-                    drop(pending); // release lock early
+                    drop(pending);
                 }
                 PoolState::OrcaWhirlpool(_) => {
                     if !self.config.enable_orca_whirlpools {
-                        log::debug!(
-                            "Skipping OrcaWhirlpool pool {} - disabled in configuration",
-                            pool_address
-                        );
                         continue;
                     }
 
@@ -1842,7 +1698,7 @@ impl PoolStateManager {
                         address: *pool_address,
                         dex_type: DexType::Orca,
                     });
-                    drop(pending); // release lock early
+                    drop(pending);
                 }
             }
 
@@ -1874,20 +1730,18 @@ impl PoolStateManager {
                 .insert(*pool_address);
         }
 
-        drop(pools_read); // Release the pools read lock
-
-        // Update the mappings
-        {
-            let mut pair_to_pools_write = self.pair_to_pools.write().await;
-            *pair_to_pools_write = pair_to_pools_map;
-            log::info!("Rebuilt {} pair mappings", pair_to_pools_write.len());
+        // Bulk-insert into DashMaps
+        self.pair_to_pools.clear();
+        for (pair, addrs) in pair_to_pools_map {
+            self.pair_to_pools.insert(pair, addrs);
         }
+        log::info!("Rebuilt {} pair mappings", self.pair_to_pools.len());
 
-        {
-            let mut dex_pools_write = self.dex_pools.write().await;
-            *dex_pools_write = dex_pools_map;
-            log::info!("Rebuilt {} DEX mappings", dex_pools_write.len());
+        self.dex_pools.clear();
+        for (dex, addrs) in dex_pools_map {
+            self.dex_pools.insert(dex, addrs);
         }
+        log::info!("Rebuilt {} DEX mappings", self.dex_pools.len());
 
         // fetching amm configs from on-chain in background to avoid blocking startup
         let rpc_client = self.rpc_client.clone();
@@ -2002,15 +1856,7 @@ impl PoolStateManager {
         };
 
         // Collect pools
-        let pools: Vec<PoolState> = {
-            let pools_read = self.pools.read().await;
-            let mut entries = Vec::with_capacity(pools_read.len());
-            for v in pools_read.values() {
-                let guard = v.lock().await;
-                entries.push((*guard).clone());
-            }
-            entries
-        };
+        let pools: Vec<PoolState> = self.pools.iter().map(|entry| entry.value().clone()).collect();
 
         self.db.save_tokens(&tokens).await?;
         self.db.save_pools(&pools).await?;
@@ -2061,23 +1907,9 @@ impl PoolStateManager {
         log::info!("Saved {} tokens to Postgres", tokens.len());
 
         // 2. Save Pools
-        let pools_read = pools.read().await;
-        let mut pool_count = 0;
+        let mut pool_count: usize = 0;
 
-        // Convert to vector for batch processing if needed, OR just loop insert
-        // For 1000s of pools, batching is recommended, but let's do simple loop first or chunks
-        // Creating a large JSONB object might be heavy, so we can iterate.
-        // However, converting PoolState to JSON is the key here.
-
-        let pool_entries: Vec<PoolState> = {
-            let mut entries = Vec::with_capacity(pools_read.len());
-            for v in pools_read.values() {
-                let guard = v.lock().await;
-                entries.push((*guard).clone());
-            }
-            entries
-        };
-        drop(pools_read); // Release lock
+        let pool_entries: Vec<PoolState> = pools.iter().map(|entry| entry.value().clone()).collect();
 
         for chunk in pool_entries.chunks(500) {
             // We can't easily use UNNEST with heterogeneous JSON types unless we serialize to a specific struct
@@ -2219,15 +2051,15 @@ impl PoolDataProvider for PoolStateManager {
         token_a: &Pubkey,
         token_b: &Pubkey,
     ) -> HashSet<Pubkey> {
-        self.get_pool_addresses_for_pair(token_a, token_b).await
+        self.get_pool_addresses_for_pair(token_a, token_b)
     }
 
     async fn get_pool_state_by_address(&self, pool_address: &Pubkey) -> Option<PoolState> {
-        self.get_pool_state_by_address(pool_address).await
+        self.get_pool_state_by_address(pool_address)
     }
 
     async fn is_pool_tick_synced(&self, pool_address: &Pubkey) -> bool {
-        self.is_pool_tick_synced(pool_address).await
+        self.is_pool_tick_synced(pool_address)
     }
 
     async fn get_token(&self, token_address: &Pubkey) -> Option<Token> {
@@ -2239,11 +2071,11 @@ impl PoolDataProvider for PoolStateManager {
     }
 
     async fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState> {
-        self.get_pools_for_pair(token_a, token_b).await
+        self.get_pools_for_pair(token_a, token_b)
     }
 
     async fn get_pools_for_token(&self, token_address: &Pubkey) -> Vec<PoolState> {
-        self.get_pools_for_token(token_address).await
+        self.get_pools_for_token(token_address)
     }
 
     async fn get_stats(&self) -> PoolManagerStats {

@@ -7,6 +7,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
+use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::types::{BondingCurve, BondingCurveLegacy};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -36,45 +37,16 @@ struct TopRunnerItem {
     coin: CoinRecord,
 }
 
-// Recommended list endpoint `recommended` likely returns a list.
-
-/// Raw bonding curve state from on-chain account (post-cashback upgrade)
-#[derive(Debug, Clone, BorshDeserialize)]
-pub struct BondingCurveRaw {
-    pub virtual_token_reserves: u64,
-    pub virtual_sol_reserves: u64,
-    pub real_token_reserves: u64,
-    pub real_sol_reserves: u64,
-    pub token_total_supply: u64,
-    pub complete: bool,
-    pub creator: Pubkey,
-    pub is_mayhem_mode: bool,
-    pub is_cashback: bool,
-}
-
-/// Legacy bonding curve state (pre-cashback upgrade)
-#[derive(Debug, Clone, BorshDeserialize)]
-pub struct BondingCurveRawLegacy {
-    pub virtual_token_reserves: u64,
-    pub virtual_sol_reserves: u64,
-    pub real_token_reserves: u64,
-    pub real_sol_reserves: u64,
-    pub token_total_supply: u64,
-    pub complete: bool,
-    pub creator: Pubkey,
-    pub is_mayhem_mode: bool,
-}
-
-fn decode_bonding_curve_raw(data: &[u8]) -> Option<BondingCurveRaw> {
+fn decode_bonding_curve_raw(data: &[u8]) -> Option<BondingCurve> {
     // Try new format first (with is_cashback)
     let mut slice = data;
-    if let Ok(raw) = BondingCurveRaw::deserialize(&mut slice) {
+    if let Ok(raw) = <BondingCurve as BorshDeserialize>::deserialize(&mut slice) {
         return Some(raw);
     }
     // Fallback to legacy format
     let mut slice = data;
-    if let Ok(legacy) = BondingCurveRawLegacy::deserialize(&mut slice) {
-        return Some(BondingCurveRaw {
+    if let Ok(legacy) = <BondingCurveLegacy as BorshDeserialize>::deserialize(&mut slice) {
+        return Some(BondingCurve {
             virtual_token_reserves: legacy.virtual_token_reserves,
             virtual_sol_reserves: legacy.virtual_sol_reserves,
             real_token_reserves: legacy.real_token_reserves,

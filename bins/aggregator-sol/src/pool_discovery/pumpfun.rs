@@ -38,7 +38,7 @@ struct TopRunnerItem {
 
 // Recommended list endpoint `recommended` likely returns a list.
 
-/// Raw bonding curve state from on-chain account
+/// Raw bonding curve state from on-chain account (post-cashback upgrade)
 #[derive(Debug, Clone, BorshDeserialize)]
 pub struct BondingCurveRaw {
     pub virtual_token_reserves: u64,
@@ -49,6 +49,44 @@ pub struct BondingCurveRaw {
     pub complete: bool,
     pub creator: Pubkey,
     pub is_mayhem_mode: bool,
+    pub is_cashback: bool,
+}
+
+/// Legacy bonding curve state (pre-cashback upgrade)
+#[derive(Debug, Clone, BorshDeserialize)]
+pub struct BondingCurveRawLegacy {
+    pub virtual_token_reserves: u64,
+    pub virtual_sol_reserves: u64,
+    pub real_token_reserves: u64,
+    pub real_sol_reserves: u64,
+    pub token_total_supply: u64,
+    pub complete: bool,
+    pub creator: Pubkey,
+    pub is_mayhem_mode: bool,
+}
+
+fn decode_bonding_curve_raw(data: &[u8]) -> Option<BondingCurveRaw> {
+    // Try new format first (with is_cashback)
+    let mut slice = data;
+    if let Ok(raw) = BondingCurveRaw::deserialize(&mut slice) {
+        return Some(raw);
+    }
+    // Fallback to legacy format
+    let mut slice = data;
+    if let Ok(legacy) = BondingCurveRawLegacy::deserialize(&mut slice) {
+        return Some(BondingCurveRaw {
+            virtual_token_reserves: legacy.virtual_token_reserves,
+            virtual_sol_reserves: legacy.virtual_sol_reserves,
+            real_token_reserves: legacy.real_token_reserves,
+            real_sol_reserves: legacy.real_sol_reserves,
+            token_total_supply: legacy.token_total_supply,
+            complete: legacy.complete,
+            creator: legacy.creator,
+            is_mayhem_mode: legacy.is_mayhem_mode,
+            is_cashback: false,
+        });
+    }
+    None
 }
 
 pub struct PumpFunDiscovery {
@@ -167,9 +205,9 @@ impl PoolDiscovery for PumpFunDiscovery {
                         continue;
                     }
 
-                    let mut data_slice = &data[8..];
-                    match BondingCurveRaw::deserialize(&mut data_slice) {
-                        Ok(raw_state) => {
+                    let data_slice = &data[8..];
+                    match decode_bonding_curve_raw(data_slice) {
+                        Some(raw_state) => {
                             if let Ok(mint) = Pubkey::try_from(coin.mint.as_str()) {
                                 let state = PumpfunPoolState {
                                     slot: 0,
@@ -186,16 +224,13 @@ impl PoolDiscovery for PumpFunDiscovery {
                                     complete: raw_state.complete,
                                     creator: raw_state.creator,
                                     is_mayhem_mode: raw_state.is_mayhem_mode,
+                                    is_cashback: raw_state.is_cashback,
                                 };
                                 discovered_pools.push(PoolState::Pumpfun(state));
                             }
                         }
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to deserialize bonding curve {}: {}",
-                                curve_pubkey,
-                                e
-                            );
+                        None => {
+                            log::warn!("Failed to deserialize bonding curve {}", curve_pubkey,);
                         }
                     }
                 }

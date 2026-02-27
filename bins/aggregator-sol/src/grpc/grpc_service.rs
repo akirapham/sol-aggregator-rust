@@ -281,7 +281,7 @@ impl GrpcServiceTrait for GrpcService {
         // If this blocks, it's fine because the consumer is already running in a separate task.
         if let Err(e) = self.start().await {
             log::error!("GrpcService failed to start: {}", e);
-            return Err(e.into());
+            return Err(e);
         }
         Ok(())
     }

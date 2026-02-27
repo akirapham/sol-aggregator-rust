@@ -28,6 +28,7 @@ pub struct BondingCurveRaw {
     pub complete: bool,
     pub creator: Pubkey,
     pub is_mayhem_mode: bool,
+    pub is_cashback: bool,
 }
 
 #[tokio::test]
@@ -81,6 +82,7 @@ async fn test_pumpfun_quote_simulation() {
         complete: raw_state.complete,
         creator: raw_state.creator,
         is_mayhem_mode: raw_state.is_mayhem_mode,
+        is_cashback: raw_state.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -115,7 +117,7 @@ async fn test_pumpfun_quote_simulation() {
         output_token: token_mint_address.to_string(),
         user_wallet: user_wallet_str.clone(),
         input_amount,
-        slippage_bps: 100,
+        slippage_bps: 500,
     };
 
     println!("Calling get_quote handler...");
@@ -211,6 +213,7 @@ async fn test_pumpfun_quote() {
         complete: raw_state.complete,
         creator: raw_state.creator,
         is_mayhem_mode: raw_state.is_mayhem_mode,
+        is_cashback: raw_state.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -286,6 +289,7 @@ async fn test_pumpswap_quote() {
         coin_creator: pumpswap_pool.coin_creator,
         protocol_fee_recipient: Pubkey::from_str("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV")
             .unwrap(),
+        is_cashback: pumpswap_pool.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -349,6 +353,7 @@ async fn test_pumpfun_quote_reverse() {
         complete: raw_state.complete,
         creator: raw_state.creator,
         is_mayhem_mode: raw_state.is_mayhem_mode,
+        is_cashback: raw_state.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -376,8 +381,8 @@ async fn test_pumpfun_quote_reverse() {
 #[tokio::test]
 async fn test_pumpswap_quote_reverse() {
     let (pool_manager, config) = create_test_setup(vec!["pumpswap"]).await;
-    let pool_address = Pubkey::from_str("4w2cysotX6czaUGmmWg13hDpY4QEMG2CzeKYEQyK9Ama").unwrap();
-    let token_mint = Pubkey::from_str("5UUH9RTDiSpq6HKS6bp4NdU9PNJpXRXuiw6ShBTBhgH2").unwrap();
+    let pool_address = Pubkey::from_str("F3g7TCcqpQHuFzDcn9xXhCTgrxzuRANnYX9jkzWGpJrZ").unwrap();
+    let token_mint = Pubkey::from_str("3few1wmJAtaFLd4mwT9e7gaaTuccnn5BakUTJSz9pump").unwrap();
 
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
@@ -421,6 +426,7 @@ async fn test_pumpswap_quote_reverse() {
         coin_creator: pumpswap_pool.coin_creator,
         protocol_fee_recipient: Pubkey::from_str("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV")
             .unwrap(),
+        is_cashback: pumpswap_pool.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -432,7 +438,7 @@ async fn test_pumpswap_quote_reverse() {
             symbol: Some("TOKEN".to_string()),
             name: Some("PumpSwap Token".to_string()),
             decimals: 6,
-            is_token_2022: false,
+            is_token_2022: true,
             logo_uri: None,
         })
         .await;
@@ -446,7 +452,7 @@ async fn test_pumpswap_quote_reverse() {
             symbol: Some("TOKEN".to_string()),
             name: Some("PumpSwap Token".to_string()),
             decimals: 6,
-            is_token_2022: false,
+            is_token_2022: true,
             logo_uri: None,
         },
         wsol_token(),
@@ -496,6 +502,7 @@ async fn test_pumpfun_quote_simulation_reverse() {
         complete: raw_state.complete,
         creator: raw_state.creator,
         is_mayhem_mode: raw_state.is_mayhem_mode,
+        is_cashback: raw_state.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -531,7 +538,7 @@ async fn test_pumpfun_quote_simulation_reverse() {
         output_token: token_mint_address.to_string(),
         user_wallet: user_wallet_str.clone(),
         input_amount: buy_input_amount,
-        slippage_bps: 100,
+        slippage_bps: 500,
     };
 
     println!("Getting Buy Quote...");
@@ -564,7 +571,7 @@ async fn test_pumpfun_quote_simulation_reverse() {
         output_token: "So11111111111111111111111111111111111111112".to_string(),
         user_wallet: user_wallet_str.clone(),
         input_amount: sell_input_amount,
-        slippage_bps: 100,
+        slippage_bps: 500,
     };
 
     let sell_result = crate::api::handlers::get_quote(
@@ -702,9 +709,9 @@ async fn test_pumpfun_quote_simulation_reverse() {
 async fn test_pumpswap_quote_simulation() {
     let (pool_manager, config) = create_test_setup(vec!["pumpswap"]).await;
 
-    let pool_address = Pubkey::from_str("4w2cysotX6czaUGmmWg13hDpY4QEMG2CzeKYEQyK9Ama").unwrap();
+    let pool_address = Pubkey::from_str("F3g7TCcqpQHuFzDcn9xXhCTgrxzuRANnYX9jkzWGpJrZ").unwrap();
     let token_mint_address =
-        Pubkey::from_str("5UUH9RTDiSpq6HKS6bp4NdU9PNJpXRXuiw6ShBTBhgH2").unwrap();
+        Pubkey::from_str("3few1wmJAtaFLd4mwT9e7gaaTuccnn5BakUTJSz9pump").unwrap();
 
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
@@ -750,6 +757,7 @@ async fn test_pumpswap_quote_simulation() {
         coin_creator: pumpswap_pool.coin_creator,
         protocol_fee_recipient: Pubkey::from_str("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV")
             .unwrap(),
+        is_cashback: pumpswap_pool.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -761,7 +769,7 @@ async fn test_pumpswap_quote_simulation() {
             symbol: Some("TOKEN".to_string()),
             name: Some("PumpSwap Token".to_string()),
             decimals: 6,
-            is_token_2022: false,
+            is_token_2022: true,
             logo_uri: None,
         })
         .await;
@@ -775,14 +783,14 @@ async fn test_pumpswap_quote_simulation() {
     });
 
     let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
-    let input_amount = 100_000_000;
+    let input_amount = 10_000_000; // 0.01 SOL
 
     let request = QuoteRequest {
         input_token: "So11111111111111111111111111111111111111112".to_string(), // WSOL
         output_token: token_mint_address.to_string(),
         user_wallet: user_wallet_str.clone(),
         input_amount,
-        slippage_bps: 100,
+        slippage_bps: 200,
     };
 
     println!("Calling get_quote handler (Buy)...");
@@ -841,9 +849,9 @@ async fn test_pumpswap_quote_simulation() {
 async fn test_pumpswap_quote_simulation_reverse() {
     let (pool_manager, config) = create_test_setup(vec!["pumpswap"]).await;
 
-    let pool_address = Pubkey::from_str("4w2cysotX6czaUGmmWg13hDpY4QEMG2CzeKYEQyK9Ama").unwrap();
+    let pool_address = Pubkey::from_str("F3g7TCcqpQHuFzDcn9xXhCTgrxzuRANnYX9jkzWGpJrZ").unwrap();
     let token_mint_address =
-        Pubkey::from_str("5UUH9RTDiSpq6HKS6bp4NdU9PNJpXRXuiw6ShBTBhgH2").unwrap();
+        Pubkey::from_str("3few1wmJAtaFLd4mwT9e7gaaTuccnn5BakUTJSz9pump").unwrap();
 
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
@@ -889,6 +897,7 @@ async fn test_pumpswap_quote_simulation_reverse() {
         coin_creator: pumpswap_pool.coin_creator,
         protocol_fee_recipient: Pubkey::from_str("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV")
             .unwrap(),
+        is_cashback: pumpswap_pool.is_cashback,
     });
 
     pool_manager.inject_pool(pool_state).await;
@@ -900,7 +909,7 @@ async fn test_pumpswap_quote_simulation_reverse() {
             symbol: Some("TOKEN".to_string()),
             name: Some("PumpSwap Token".to_string()),
             decimals: 6,
-            is_token_2022: false,
+            is_token_2022: true,
             logo_uri: None,
         })
         .await;
@@ -914,16 +923,17 @@ async fn test_pumpswap_quote_simulation_reverse() {
     });
 
     // Composite Simulation
-    let user_wallet_str = "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string();
+    // Use an account with lots of SOL (e.g. a Binance Hot Wallet or a super rich address: 5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1 - Raydium Authority)
+    let user_wallet_str = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1".to_string();
     let payer = Pubkey::from_str(&user_wallet_str).unwrap();
 
-    let buy_input_amount = 100_000_000;
+    let buy_input_amount = 100; // tiny amount
     let buy_request = QuoteRequest {
         input_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
         output_token: token_mint_address.to_string(),
         user_wallet: user_wallet_str.clone(),
         input_amount: buy_input_amount,
-        slippage_bps: 100,
+        slippage_bps: 200,
     };
 
     println!("Getting Buy Quote...");
@@ -935,7 +945,10 @@ async fn test_pumpswap_quote_simulation_reverse() {
     .expect("Buy request failed");
 
     let buy_response = match buy_result {
-        axum::Json(res) => res,
+        axum::Json(res) => {
+            println!("buy_response.output_amount: {}", res.output_amount);
+            res
+        }
     };
 
     let buy_tx_bytes = base64::engine::general_purpose::STANDARD
@@ -955,7 +968,7 @@ async fn test_pumpswap_quote_simulation_reverse() {
         output_token: "So11111111111111111111111111111111111111112".to_string(), // SOL
         user_wallet: user_wallet_str.clone(),
         input_amount: sell_input_amount,
-        slippage_bps: 100,
+        slippage_bps: 200,
     };
 
     let sell_result = crate::api::handlers::get_quote(

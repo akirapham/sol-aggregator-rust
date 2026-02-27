@@ -35,6 +35,7 @@ pub struct PumpfunPoolState {
     pub complete: bool,
     pub creator: Pubkey,
     pub is_mayhem_mode: bool,
+    pub is_cashback: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,7 @@ pub struct PumpfunPoolUpdate {
     pub is_account_state_update: bool,
     pub pool_update_event_type: PoolUpdateEventType,
     pub additional_event_type: i32, // for tick array index tracking, 0 for others
+    pub is_cashback: Option<bool>,
 }
 
 #[allow(dead_code)]
@@ -96,8 +98,8 @@ impl PumpfunPoolState {
             // dx = (xy + x*dy_net - xy) / (y + dy_net)
             // dx = (x * dy_net) / (y + dy_net)
 
-            let numerator = x.checked_mul(dy_net).unwrap_or(0);
-            let denominator = y.checked_add(dy_net).unwrap_or(u128::MAX);
+            let numerator = x.saturating_mul(dy_net);
+            let denominator = y.saturating_add(dy_net);
 
             let amount_out = numerator.checked_div(denominator).unwrap_or(0);
             amount_out as u64
@@ -192,8 +194,8 @@ impl BuildSwapInstruction for PumpfunPoolState {
             let fee = dy / 100;
             let dy_net = dy.saturating_sub(fee);
 
-            let numerator = x.checked_mul(dy_net).unwrap_or(0);
-            let denominator = y.checked_add(dy_net).unwrap_or(u128::MAX);
+            let numerator = x.saturating_mul(dy_net);
+            let denominator = y.saturating_add(dy_net);
 
             let expected_token_amount = (numerator.checked_div(denominator).unwrap_or(0)) as u64;
 
@@ -282,7 +284,12 @@ impl BuildSwapInstruction for PumpfunPoolState {
             // 13: User Volume Accumulator
             // 14: Fee Config
             // 15: Fee Program
-            let buy_accounts: Vec<AccountMeta> = vec![
+            let (bonding_curve_v2, _) = Pubkey::find_program_address(
+                &[b"bonding-curve-v2", params.output_token.address.as_ref()],
+                &pumpf_functions::accounts::PUMPFUN,
+            );
+
+            let mut buy_accounts: Vec<AccountMeta> = vec![
                 constants::PUMPFUN_GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,
                 AccountMeta::new_readonly(params.output_token.address, false),
@@ -300,6 +307,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 constants::PUMPFUN_FEE_CONFIG_META,
                 constants::PUMPFUN_FEE_PROGRAM_META,
             ];
+            buy_accounts.push(AccountMeta::new_readonly(bonding_curve_v2, false));
 
             instructions.push(Instruction::new_with_bytes(
                 Self::get_program_id(),
@@ -389,7 +397,12 @@ impl BuildSwapInstruction for PumpfunPoolState {
             // 9: Token Program
             // 10: Creator Vault
             // ...
-            let sell_accounts: Vec<AccountMeta> = vec![
+            let (bonding_curve_v2, _) = Pubkey::find_program_address(
+                &[b"bonding-curve-v2", params.input_token.address.as_ref()],
+                &pumpf_functions::accounts::PUMPFUN,
+            );
+
+            let mut sell_accounts: Vec<AccountMeta> = vec![
                 constants::PUMPFUN_GLOBAL_ACCOUNT_META,
                 fee_recipient_meta,
                 AccountMeta::new_readonly(params.input_token.address, false),
@@ -405,6 +418,14 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 constants::PUMPFUN_FEE_CONFIG_META,
                 constants::PUMPFUN_FEE_PROGRAM_META,
             ];
+            if self.is_cashback {
+                let (user_volume_accumulator, _) = Pubkey::find_program_address(
+                    &[b"user_volume_accumulator", params.user_wallet.as_ref()],
+                    &pumpf_functions::accounts::PUMPFUN,
+                );
+                sell_accounts.push(AccountMeta::new(user_volume_accumulator, false));
+            }
+            sell_accounts.push(AccountMeta::new_readonly(bonding_curve_v2, false));
 
             instructions.push(Instruction::new_with_bytes(
                 Self::get_program_id(),

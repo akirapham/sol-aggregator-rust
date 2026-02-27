@@ -112,7 +112,7 @@ impl MeteoraDlmmPoolState {
                 match meteora_dlmm_sdk::dlmm::accounts::BinArray::bin_id_to_bin_array_index(
                     lb_pair.active_id,
                 ) {
-                    Ok(idx) => idx as i32,
+                    Ok(idx) => idx,
                     Err(e) => {
                         println!("DEBUG: Error calculating bin array index: {:?}", e);
                         log::debug!("Error calculating bin array index: {:?}", e);

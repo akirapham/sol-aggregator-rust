@@ -387,6 +387,7 @@ impl PoolStateManager {
                                 let pool_address = pool.address();
 
                                 // Only add if not exists
+                                #[allow(clippy::map_entry)]
                                 if !pools.contains_key(&pool_address) {
                                     let (token_a, token_b) = pool.get_tokens();
 

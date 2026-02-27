@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 pub mod chains;
 pub mod config;
 pub mod quoter;

@@ -41,6 +41,7 @@ pub struct PumpSwapPoolState {
     pub is_state_keys_initialized: bool,
     pub coin_creator: Pubkey,
     pub protocol_fee_recipient: Pubkey,
+    pub is_cashback: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +63,7 @@ pub struct PumpSwapPoolUpdate {
     pub is_account_state_update: bool,
     pub pool_update_event_type: PoolUpdateEventType,
     pub additional_event_type: i32, // for tick array index tracking, 0 for others
+    pub is_cashback: Option<bool>,
 }
 
 #[allow(dead_code)]
@@ -213,6 +215,10 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             return Err("PumpSwap calculated amounts must be greater than zero".to_string());
         }
 
+        // Determine if this is an actual BUY or SELL instruction
+        let is_buy_instruction =
+            (is_buy && quote_is_wsol_or_usdc) || (!is_buy && !quote_is_wsol_or_usdc);
+
         // Convert Address types to anchor_lang Pubkey for compatibility
         let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
         let base_mint_anchor = functions::to_pubkey(&base_mint);
@@ -321,7 +327,9 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             AccountMeta::new(coin_creator_vault_ata, false), // coin_creator_vault_ata
             AccountMeta::new_readonly(coin_creator_vault_authority, false), // coin_creator_vault_authority (readonly)
         ]);
-        if (is_buy && quote_is_wsol_or_usdc) || (!is_buy && !quote_is_wsol_or_usdc) {
+        // For BUY instructions, global_volume_accumulator (idx 19) and user_volume_accumulator (idx 20)
+        // are ALWAYS present per the IDL. For SELL, they are NOT in the IDL accounts.
+        if is_buy_instruction {
             accounts.push(constants::PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR_META);
             accounts.push(AccountMeta::new(
                 get_user_volume_accumulator_pda(&params.user_wallet).unwrap(),
@@ -331,40 +339,81 @@ impl BuildSwapInstruction for PumpSwapPoolState {
         accounts.push(constants::PUMPSWAP_FEE_CONFIG_META);
         accounts.push(constants::PUMPSWAP_FEE_PROGRAM_META);
 
-        // Create instruction data
-        let mut data = [0u8; 24];
-        if is_buy {
-            if quote_is_wsol_or_usdc {
-                data[..8].copy_from_slice(&BUY_DISCRIMINATOR);
-                // base_amount_out
-                data[8..16].copy_from_slice(&token_amount.to_le_bytes());
-                // max_quote_amount_in
-                data[16..24].copy_from_slice(&sol_amount.to_le_bytes());
+        // Cashback remaining accounts (per pump-swap-sdk)
+        if self.is_cashback {
+            let user_volume_acc = get_user_volume_accumulator_pda(&params.user_wallet)
+                .ok_or("Failed to derive user_volume_accumulator PDA")?;
+            let user_volume_acc_anchor = functions::to_pubkey(&user_volume_acc);
+            let quote_token_program_anchor = functions::to_pubkey(&quote_token_program);
+
+            if is_buy_instruction {
+                // SDK buy: ATA(NATIVE_MINT, userVolumeAccumulatorPda(user), true, quoteTokenProgram)
+                let native_mint_anchor =
+                    functions::to_pubkey(&common::constants::WSOL_TOKEN_ACCOUNT);
+                let spl_token_program_anchor =
+                    functions::to_pubkey(&common::constants::TOKEN_PROGRAM);
+                let user_vol_acc_ata = functions::to_address(
+                    &spl_associated_token_account::get_associated_token_address_with_program_id(
+                        &user_volume_acc_anchor,
+                        &native_mint_anchor,
+                        &spl_token_program_anchor,
+                    ),
+                );
+                accounts.push(AccountMeta::new(user_vol_acc_ata, false));
             } else {
-                data[..8].copy_from_slice(&SELL_DISCRIMINATOR);
-                // base_amount_in
-                data[8..16].copy_from_slice(&sol_amount.to_le_bytes());
-                // min_quote_amount_out
-                data[16..24].copy_from_slice(&token_amount.to_le_bytes());
+                // SDK sell: ATA(quoteMint, userVolumeAccumulatorPda(user), true, quoteTokenProgram)
+                //         + userVolumeAccumulatorPda(user)
+                let user_vol_acc_ata = functions::to_address(
+                    &spl_associated_token_account::get_associated_token_address_with_program_id(
+                        &user_volume_acc_anchor,
+                        &quote_mint_anchor,
+                        &quote_token_program_anchor,
+                    ),
+                );
+                accounts.push(AccountMeta::new(user_vol_acc_ata, false));
+                accounts.push(AccountMeta::new(user_volume_acc, false));
             }
-        } else if quote_is_wsol_or_usdc {
-            data[..8].copy_from_slice(&SELL_DISCRIMINATOR);
-            // base_amount_in
-            data[8..16].copy_from_slice(&token_amount.to_le_bytes());
-            // min_quote_amount_out
-            data[16..24].copy_from_slice(&sol_amount.to_le_bytes());
+        }
+
+        // pool-v2 PDA (appended as last remaining account, per TS SDK pumpfunAmm.ts:161)
+        let (pool_v2, _) = Pubkey::find_program_address(
+            &[b"pool-v2", base_mint.as_ref()],
+            &pumpf_functions::accounts::AMM_PROGRAM,
+        );
+        accounts.push(AccountMeta::new_readonly(pool_v2, false));
+
+        // Create instruction data dynamically based on buy/sell sizes
+        let mut data = Vec::with_capacity(26);
+
+        if is_buy_instruction {
+            data.extend_from_slice(&BUY_DISCRIMINATOR);
         } else {
-            data[..8].copy_from_slice(&BUY_DISCRIMINATOR);
+            data.extend_from_slice(&SELL_DISCRIMINATOR);
+        }
+
+        // Populate amounts into the data slice (Always Exact In for our aggregator params)
+        if is_buy_instruction {
             // base_amount_out
-            data[8..16].copy_from_slice(&sol_amount.to_le_bytes());
+            data.extend_from_slice(&token_amount.to_le_bytes());
             // max_quote_amount_in
-            data[16..24].copy_from_slice(&token_amount.to_le_bytes());
+            data.extend_from_slice(&sol_amount.to_le_bytes());
+        } else {
+            // base_amount_in
+            data.extend_from_slice(&token_amount.to_le_bytes());
+            // min_quote_amount_out
+            data.extend_from_slice(&sol_amount.to_le_bytes());
+        }
+
+        if is_buy_instruction {
+            // track_volume parameter: OptionBool is a STRUCT { bool } in the IDL,
+            // NOT Option<bool>. Borsh serializes it as a single byte.
+            data.push(0x01); // value: true
         }
 
         let instruction = Instruction {
             program_id: accounts::AMM_PROGRAM,
             accounts: accounts.clone(),
-            data: data.to_vec(),
+            data,
         };
 
         instructions.push(instruction);

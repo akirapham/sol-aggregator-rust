@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use solana_sdk::pubkey::Pubkey;
-use tokio::sync::MutexGuard;
+
 
 use crate::constants::is_base_token;
 use crate::pool_data_types::{
@@ -555,13 +555,13 @@ pub fn pool_update_event_to_pool_state(
 
 pub fn update_pool_state_by_event(
     event: &PoolUpdateEvent,
-    existing_state: &mut MutexGuard<PoolState>,
+    existing_state: &mut PoolState,
     sol_price: f64,
 ) -> bool {
     let mut is_pool_with_ticks = false;
     match event {
         PoolUpdateEvent::Pumpfun(pumpfun_pool_update) => {
-            if let PoolState::Pumpfun(state) = &mut **existing_state {
+            if let PoolState::Pumpfun(state) = &mut *existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !pumpfun_pool_update.is_account_state_update {
                     state.last_updated = pumpfun_pool_update.last_updated;
@@ -587,7 +587,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::Raydium(raydium_pool_update) => {
-            if let PoolState::RaydiumAmmV4(state) = &mut **existing_state {
+            if let PoolState::RaydiumAmmV4(state) = &mut *existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !raydium_pool_update.is_account_state_update {
                     state.last_updated = raydium_pool_update.last_updated;
@@ -650,7 +650,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::PumpSwap(pump_swap_pool_update) => {
-            if let PoolState::PumpSwap(state) = &mut **existing_state {
+            if let PoolState::PumpSwap(state) = &mut *existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !pump_swap_pool_update.is_account_state_update {
                     state.last_updated = pump_swap_pool_update.last_updated;
@@ -686,7 +686,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::RaydiumCpmm(raydium_cpmm_pool_update) => {
-            if let PoolState::RaydiumCpmm(state) = &mut **existing_state {
+            if let PoolState::RaydiumCpmm(state) = &mut *existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !raydium_cpmm_pool_update.is_account_state_update {
                     state.last_updated = raydium_cpmm_pool_update.last_updated;
@@ -721,7 +721,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::Bonk(bonk_pool_update) => {
-            if let PoolState::Bonk(state) = &mut **existing_state {
+            if let PoolState::Bonk(state) = &mut *existing_state {
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !bonk_pool_update.is_account_state_update {
                     state.last_updated = bonk_pool_update.last_updated;
@@ -748,7 +748,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::RaydiumClmm(raydium_clmm_pool_update) => {
-            if let PoolState::RadyiumClmm(state) = &mut **existing_state {
+            if let PoolState::RadyiumClmm(state) = &mut *existing_state {
                 is_pool_with_ticks = true;
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !raydium_clmm_pool_update.is_account_state_update {
@@ -858,7 +858,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::Whirlpool(whirlpool_update) => {
-            if let PoolState::OrcaWhirlpool(state) = &mut **existing_state {
+            if let PoolState::OrcaWhirlpool(state) = &mut *existing_state {
                 is_pool_with_ticks = true;
                 // only update last_updated if it's transaction event update that we can collect reserves
                 if !whirlpool_update.is_account_state_update {
@@ -933,7 +933,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::MeteoraDbc(dbc_pool_update) => {
-            if let PoolState::MeteoraDbc(state) = &mut **existing_state {
+            if let PoolState::MeteoraDbc(state) = &mut *existing_state {
                 state.last_updated = dbc_pool_update.last_updated;
                 state.slot = dbc_pool_update.slot;
                 state.transaction_index = dbc_pool_update.transaction_index;
@@ -982,7 +982,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::MeteoraDammV2(meteora_dammv2_pool_update) => {
-            if let PoolState::MeteoraDammV2(state) = &mut **existing_state {
+            if let PoolState::MeteoraDammV2(state) = &mut *existing_state {
                 // Update slot and timestamp
                 state.last_updated = meteora_dammv2_pool_update.last_updated;
 
@@ -1031,7 +1031,7 @@ pub fn update_pool_state_by_event(
             }
         }
         PoolUpdateEvent::MeteoraDlmm(meteora_dlmm_pool_update) => {
-            if let PoolState::MeteoraDlmm(state) = &mut **existing_state {
+            if let PoolState::MeteoraDlmm(state) = &mut *existing_state {
                 is_pool_with_ticks = true;
 
                 state.slot = meteora_dlmm_pool_update.slot;

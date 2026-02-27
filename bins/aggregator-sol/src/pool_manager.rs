@@ -1253,14 +1253,21 @@ impl PoolStateManager {
 
         // Broadcast arbitrage update if pool contains monitored tokens
         if !arbitrage_monitored_tokens.is_empty() {
-            if let Some(pool_ref) = pools.get(&pool_address) {
+            // Clone needed data from DashMap guard immediately to avoid holding it across .await
+            let pool_data = pools.get(&pool_address).map(|pool_ref| {
                 let (token_a, token_b) = pool_ref.value().get_tokens();
+                let dex = pool_ref.value().dex();
+                let calculate_fn_data = pool_ref.value().clone();
+                (token_a, token_b, dex, calculate_fn_data)
+            });
+            // DashMap guard is dropped here
 
+            if let Some((token_a, token_b, dex, pool_state)) = pool_data {
                 // Check if this pool involves any monitored tokens
                 if arbitrage_monitored_tokens.contains(&token_a)
                     || arbitrage_monitored_tokens.contains(&token_b)
                 {
-                    // Get decimals from token cache
+                    // Safe to .await now — no DashMap guards held
                     let token_cache_read = token_cache.read().await;
                     let decimals_a = token_cache_read
                         .get(&token_a)
@@ -1273,15 +1280,13 @@ impl PoolStateManager {
                     drop(token_cache_read);
 
                     let (price_a, price_b) =
-                        pool_ref.value().calculate_token_prices(sol_price, decimals_a, decimals_b);
+                        pool_state.calculate_token_prices(sol_price, decimals_a, decimals_b);
 
                     // Calculate prices in both directions
                     let (forward_price, reverse_price) =
                         if arbitrage_monitored_tokens.contains(&token_a) {
-                            // Forward: token_a -> token_b, Reverse: token_b -> token_a
                             (price_b, price_a)
                         } else {
-                            // Swap if token_b is primary
                             (price_b, price_a)
                         };
 
@@ -1289,7 +1294,7 @@ impl PoolStateManager {
                         pool_address,
                         token_a,
                         token_b,
-                        dex: pool_ref.value().dex(),
+                        dex,
                         forward_price,
                         reverse_price,
                         timestamp: std::time::SystemTime::now()
@@ -1298,7 +1303,6 @@ impl PoolStateManager {
                             .as_secs(),
                     };
 
-                    // Broadcast to all subscribers (ignore if no receivers)
                     let _ = arbitrage_pool_tx.send(broadcast_event);
                 }
             }

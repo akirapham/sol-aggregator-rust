@@ -49,7 +49,7 @@ impl<P: ethers::providers::Middleware + 'static> UniswapV3Quoter<P> {
         // Call quoteExactInputSingle using the generated binding
         // .call() performs an eth_call (staticcall) under the hood
         let amount_out: U256 = quoter_contract
-            .quote_exact_input_single(token_in, token_out, fee as u32, amount_in, U256::zero())
+            .quote_exact_input_single(token_in, token_out, fee, amount_in, U256::zero())
             .call()
             .await
             .map_err(|e| {

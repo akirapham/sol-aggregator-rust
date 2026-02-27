@@ -78,7 +78,7 @@ impl BonkPoolState {
         }
         let is_buy = tokens_equal(input_token, &self.quote_mint);
 
-        let result = if is_buy {
+        if is_buy {
             get_buy_token_amount_from_sol_amount(
                 input_amount,
                 self.base_reserve as u128,
@@ -99,8 +99,8 @@ impl BonkPoolState {
                 return 0;
             }
 
-            let numerator = y.checked_mul(dx).unwrap_or(0);
-            let denominator = x.checked_add(dx).unwrap_or(u128::MAX);
+            let numerator = y.saturating_mul(dx);
+            let denominator = x.saturating_add(dx);
 
             let amount_out_gross = numerator.checked_div(denominator).unwrap_or(0);
 
@@ -109,9 +109,7 @@ impl BonkPoolState {
             let amount_out_net = amount_out_gross.saturating_sub(fee);
 
             amount_out_net as u64
-        };
-
-        result
+        }
     }
 
     pub fn calculate_token_prices(

@@ -141,6 +141,7 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpFunTrade,
                         additional_event_type: 0,
+                        is_cashback: None,
                     }));
             },
             PumpFunMigrateEvent => |e: PumpFunMigrateEvent| {
@@ -161,6 +162,7 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpFunMigrate,
                         additional_event_type: 0,
+                        is_cashback: None,
                     }));
             },
             PumpFunCreateTokenEvent => |e: PumpFunCreateTokenEvent| {
@@ -181,6 +183,7 @@ pub fn handle_dex_event(
                         is_account_state_update: false,
                         pool_update_event_type: PoolUpdateEventType::PumpFunCreateToken,
                         additional_event_type: 0,
+                        is_cashback: None,
                     }));
             },
             // -------------------------- pumpswap -----------------------
@@ -204,6 +207,7 @@ pub fn handle_dex_event(
                         additional_event_type: 0,
                         coin_creator: e.coin_creator,
                         protocol_fee_recipient: e.protocol_fee_recipient,
+                        is_cashback: None,
                     }));
             },
             PumpSwapSellEvent => |e: PumpSwapSellEvent| {
@@ -226,6 +230,7 @@ pub fn handle_dex_event(
                         additional_event_type: 0,
                         coin_creator: e.coin_creator,
                         protocol_fee_recipient: e.protocol_fee_recipient,
+                        is_cashback: None,
                     }));
             },
             PumpSwapCreatePoolEvent => |e: PumpSwapCreatePoolEvent| {
@@ -248,6 +253,7 @@ pub fn handle_dex_event(
                         additional_event_type: 0,
                         coin_creator: e.coin_creator,
                         protocol_fee_recipient: Pubkey::default(),
+                        is_cashback: None,
                     }));
             },
             PumpSwapDepositEvent => |e: PumpSwapDepositEvent| {
@@ -270,6 +276,7 @@ pub fn handle_dex_event(
                         additional_event_type: 0,
                         coin_creator: Pubkey::default(),
                         protocol_fee_recipient: Pubkey::default(),
+                        is_cashback: None,
                     }));
             },
             PumpSwapWithdrawEvent => |e: PumpSwapWithdrawEvent| {
@@ -292,6 +299,7 @@ pub fn handle_dex_event(
                         additional_event_type: 0,
                         coin_creator: Pubkey::default(),
                         protocol_fee_recipient: Pubkey::default(),
+                        is_cashback: None,
                     }));
             },
             // -------------------------- raydium_cpmm -----------------------
@@ -1095,6 +1103,7 @@ pub fn handle_dex_event(
                         additional_event_type: 0,
                         coin_creator: e.pool.coin_creator,
                         protocol_fee_recipient: Pubkey::default(),
+                        is_cashback: Some(e.pool.is_cashback),
                     }));
             },
             PumpFunBondingCurveAccountEvent => |e: PumpFunBondingCurveAccountEvent| {
@@ -1115,6 +1124,7 @@ pub fn handle_dex_event(
                         is_account_state_update: true,
                         pool_update_event_type: PoolUpdateEventType::PumpFunBondingCurveAccount,
                         additional_event_type: 0,
+                        is_cashback: Some(e.bonding_curve.is_cashback),
                     }));
             },
             PumpFunGlobalAccountEvent => |e: PumpFunGlobalAccountEvent| {

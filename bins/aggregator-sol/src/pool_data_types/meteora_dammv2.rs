@@ -348,12 +348,10 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
             } else {
                 spl_token::id()
             }
+        } else if self.token_b_flag == 1 {
+            spl_token_2022::id()
         } else {
-            if self.token_b_flag == 1 {
-                spl_token_2022::id()
-            } else {
-                spl_token::id()
-            }
+            spl_token::id()
         };
 
         let output_program_id = if params.output_token.address == self.token_a_mint {
@@ -362,12 +360,10 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
             } else {
                 spl_token::id()
             }
+        } else if self.token_b_flag == 1 {
+            spl_token_2022::id()
         } else {
-            if self.token_b_flag == 1 {
-                spl_token_2022::id()
-            } else {
-                spl_token::id()
-            }
+            spl_token::id()
         };
 
         let sdk_params = SdkSwapParams {

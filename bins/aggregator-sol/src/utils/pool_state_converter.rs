@@ -104,6 +104,7 @@ pub fn pool_update_event_to_pool_state(
                 slot: pumpfun_pool_update.slot,
                 transaction_index: pumpfun_pool_update.transaction_index,
                 is_state_keys_initialized: pumpfun_pool_update.is_account_state_update,
+                is_cashback: pumpfun_pool_update.is_cashback.unwrap_or(false),
             })),
             false,
         ),
@@ -182,6 +183,7 @@ pub fn pool_update_event_to_pool_state(
                     liquidity_usd,
                     coin_creator: pump_swap_pool_update.coin_creator,
                     protocol_fee_recipient: pump_swap_pool_update.protocol_fee_recipient,
+                    is_cashback: pump_swap_pool_update.is_cashback.unwrap_or(false),
                 })),
                 false,
             )
@@ -579,6 +581,9 @@ pub fn update_pool_state_by_event(
                 if pumpfun_pool_update.is_mayhem_mode {
                     state.is_mayhem_mode = pumpfun_pool_update.is_mayhem_mode;
                 }
+                if let Some(is_cashback) = pumpfun_pool_update.is_cashback {
+                    state.is_cashback = is_cashback;
+                }
             }
         }
         PoolUpdateEvent::Raydium(raydium_pool_update) => {
@@ -674,6 +679,9 @@ pub fn update_pool_state_by_event(
                 }
                 if pump_swap_pool_update.protocol_fee_recipient != Pubkey::default() {
                     state.protocol_fee_recipient = pump_swap_pool_update.protocol_fee_recipient;
+                }
+                if let Some(is_cashback) = pump_swap_pool_update.is_cashback {
+                    state.is_cashback = is_cashback;
                 }
             }
         }

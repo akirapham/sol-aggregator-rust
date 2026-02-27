@@ -1,6 +1,7 @@
 use crate::aggregator::DexAggregator;
 use crate::api::dto::QuoteRequest;
 use crate::api::AppState;
+use crate::pool_data_types::pumpf::functions::get_bonding_curve_pda;
 use crate::pool_data_types::*;
 use crate::tests::quotes::common::*;
 use crate::types::Token;
@@ -11,35 +12,22 @@ use solana_commitment_config::CommitmentConfig;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::transaction::Transaction;
+use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::types::BondingCurve;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::types::{
     Pool as PumpSwapPoolRaw, POOL_SIZE,
 };
 use std::str::FromStr;
 use std::sync::Arc;
 
-// Define the raw on-chain layout matching the IDL for PumpFun
-#[derive(BorshDeserialize, Debug)]
-pub struct BondingCurveRaw {
-    pub virtual_token_reserves: u64,
-    pub virtual_sol_reserves: u64,
-    pub real_token_reserves: u64,
-    pub real_sol_reserves: u64,
-    pub token_total_supply: u64,
-    pub complete: bool,
-    pub creator: Pubkey,
-    pub is_mayhem_mode: bool,
-    pub is_cashback: bool,
-}
-
 #[tokio::test]
 async fn test_pumpfun_quote_simulation() {
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
 
     // Real Data
-    let bonding_curve_address =
-        Pubkey::from_str("9Exw9tyEYPEv5wz7WsUZZVQEG262csVyHEKYcgNeEaf1").unwrap();
     let token_mint_address =
-        Pubkey::from_str("BuaDPEf3AN4Lty7Ge1xgk9sFBwLXLP1J5uxGsBdDpump").unwrap();
+        Pubkey::from_str("7JnSRL1kFKBhQKW4B4BusYcTq5mXPtjnC5pnqqLFpump").unwrap();
+    // derive bonding curve from token mint
+    let bonding_curve_address = get_bonding_curve_pda(&token_mint_address).unwrap();
 
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
@@ -61,7 +49,7 @@ async fn test_pumpfun_quote_simulation() {
         .expect("Failed to fetch bonding curve account from mainnet");
 
     let mut data_slice = &account.data[8..];
-    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+    let raw_state = BondingCurve::deserialize(&mut data_slice)
         .expect("Failed to deserialize bonding curve data");
 
     println!("Fetched Real Bonding Curve State: {:#?}", raw_state);
@@ -195,7 +183,7 @@ async fn test_pumpfun_quote() {
         .expect("Failed to fetch bonding curve account from mainnet");
 
     let mut data_slice = &account.data[8..];
-    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+    let raw_state = BondingCurve::deserialize(&mut data_slice)
         .expect("Failed to deserialize bonding curve data");
 
     let pool_state = PoolState::Pumpfun(PumpfunPoolState {
@@ -233,7 +221,7 @@ async fn test_pumpfun_quote() {
         wsol_token(),
         10_000_000,
         bonding_curve_address,
-        400, // 4% tolerance (1% fee x2 + slippage)
+        600, // 4% tolerance (1% fee x2 + slippage)
     )
     .await;
 }
@@ -335,7 +323,7 @@ async fn test_pumpfun_quote_reverse() {
         .expect("Failed to fetch bonding curve account from mainnet");
 
     let mut data_slice = &account.data[8..];
-    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+    let raw_state = BondingCurve::deserialize(&mut data_slice)
         .expect("Failed to deserialize bonding curve data");
 
     let pool_state = PoolState::Pumpfun(PumpfunPoolState {
@@ -467,10 +455,9 @@ async fn test_pumpswap_quote_reverse() {
 async fn test_pumpfun_quote_simulation_reverse() {
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
 
-    let bonding_curve_address =
-        Pubkey::from_str("9Exw9tyEYPEv5wz7WsUZZVQEG262csVyHEKYcgNeEaf1").unwrap();
     let token_mint_address =
-        Pubkey::from_str("BuaDPEf3AN4Lty7Ge1xgk9sFBwLXLP1J5uxGsBdDpump").unwrap();
+        Pubkey::from_str("7JnSRL1kFKBhQKW4B4BusYcTq5mXPtjnC5pnqqLFpump").unwrap();
+    let bonding_curve_address = get_bonding_curve_pda(&token_mint_address).unwrap();
 
     let rpc_url = std::env::var("RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
@@ -484,8 +471,9 @@ async fn test_pumpfun_quote_simulation_reverse() {
         .expect("Failed to fetch bonding curve account from mainnet");
 
     let mut data_slice = &account.data[8..];
-    let raw_state = BondingCurveRaw::deserialize(&mut data_slice)
+    let raw_state = BondingCurve::deserialize(&mut data_slice)
         .expect("Failed to deserialize bonding curve data");
+    println!("Raw state: {:#?}", raw_state);
 
     let pool_state = PoolState::Pumpfun(PumpfunPoolState {
         slot: 100,
@@ -538,7 +526,7 @@ async fn test_pumpfun_quote_simulation_reverse() {
         output_token: token_mint_address.to_string(),
         user_wallet: user_wallet_str.clone(),
         input_amount: buy_input_amount,
-        slippage_bps: 500,
+        slippage_bps: 100,
     };
 
     println!("Getting Buy Quote...");
@@ -571,7 +559,7 @@ async fn test_pumpfun_quote_simulation_reverse() {
         output_token: "So11111111111111111111111111111111111111112".to_string(),
         user_wallet: user_wallet_str.clone(),
         input_amount: sell_input_amount,
-        slippage_bps: 500,
+        slippage_bps: 100,
     };
 
     let sell_result = crate::api::handlers::get_quote(

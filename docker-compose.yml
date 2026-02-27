@@ -44,13 +44,12 @@ services:
       dockerfile: docker/Dockerfile.sol
     container_name: solana-aggregator
     restart: unless-stopped
-    ports:
-      - "${API_PORT:-3000}:${API_PORT:-3000}"
+    network_mode: host
     environment:
       - RUST_LOG=${RUST_LOG:-info}
       # Path inside the container where arbitrage_config.toml will be mounted
       - ARBITRAGE_CONFIG_PATH=/app/arbitrage_config.toml
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-aggregator}:${POSTGRES_PASSWORD:-aggregator_password}@postgres:5432/${POSTGRES_DB:-aggregator_db}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-aggregator}:${POSTGRES_PASSWORD:-aggregator_password}@127.0.0.1:5432/${POSTGRES_DB:-aggregator_db}
       - ENABLE_ARBITRAGE_DETECTION=false
     env_file:
       - .env
@@ -62,8 +61,6 @@ services:
       - ./rocksdb_data:/app/rocksdb_data
       # Mount the arbitrage config so the service can find it at runtime
       - ./bins/aggregator-sol/arbitrage_config.toml:/app/arbitrage_config.toml:ro
-    networks:
-      - aggregator-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,8 +70,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     stop_grace_period: 60s
     stop_signal: SIGTERM
 

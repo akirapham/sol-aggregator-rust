@@ -1611,6 +1611,8 @@ impl PoolStateManager {
         let mut dex_pools_map: HashMap<DexType, HashSet<Pubkey>> = HashMap::new();
         let mut raydium_clmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
         let mut raydium_cpmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
+        // Collect pools that need tick/bin array fetching — do NOT .await inside DashMap iter
+        let mut pools_needing_tick_fetch: Vec<PoolForTickFetching> = Vec::new();
 
         log::info!("Rebuilding mappings from {} pools...", self.pools.len());
         let _tick_fetcher = TickArrayFetcher::new(
@@ -1653,15 +1655,10 @@ impl PoolStateManager {
                     if !self.config.enable_raydium_clmm {
                         continue;
                     }
-
-                    // add pool to pending pools to fetch tick arrays
-                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
-                    pending.insert(PoolForTickFetching {
+                    pools_needing_tick_fetch.push(PoolForTickFetching {
                         address: *pool_address,
                         dex_type: DexType::RaydiumClmm,
                     });
-                    drop(pending);
-
                     raydium_clmm_amm_configs_set.insert(clmm_pool_state.amm_config);
                 }
                 PoolState::MeteoraDbc(_) => {
@@ -1678,27 +1675,19 @@ impl PoolStateManager {
                     if !self.config.enable_meteora_dlmm {
                         continue;
                     }
-
-                    // add pool to pending pools to fetch bin arrays
-                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
-                    pending.insert(PoolForTickFetching {
+                    pools_needing_tick_fetch.push(PoolForTickFetching {
                         address: *pool_address,
                         dex_type: DexType::MeteoraDlmm,
                     });
-                    drop(pending);
                 }
                 PoolState::OrcaWhirlpool(_) => {
                     if !self.config.enable_orca_whirlpools {
                         continue;
                     }
-
-                    // add pool to pending pools to fetch tick arrays
-                    let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
-                    pending.insert(PoolForTickFetching {
+                    pools_needing_tick_fetch.push(PoolForTickFetching {
                         address: *pool_address,
                         dex_type: DexType::Orca,
                     });
-                    drop(pending);
                 }
             }
 
@@ -1728,6 +1717,16 @@ impl PoolStateManager {
                 .entry(dex_type)
                 .or_default()
                 .insert(*pool_address);
+        }
+        // DashMap iter guards are now dropped
+
+        // Now safe to .await — insert pending tick fetches
+        if !pools_needing_tick_fetch.is_empty() {
+            let mut pending = self.pending_pools_to_fetch_tick_arrays.lock().await;
+            for pool in pools_needing_tick_fetch {
+                pending.insert(pool);
+            }
+            log::info!("Queued {} pools for tick/bin array fetching", pending.len());
         }
 
         // Bulk-insert into DashMaps

@@ -41,6 +41,7 @@ pub struct PumpSwapPoolState {
     pub is_state_keys_initialized: bool,
     pub coin_creator: Pubkey,
     pub protocol_fee_recipient: Pubkey,
+    #[serde(default)]
     pub is_cashback: bool,
 }
 

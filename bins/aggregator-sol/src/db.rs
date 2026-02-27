@@ -51,17 +51,20 @@ impl DatabaseTrait for Database {
         let rows = pools_query.fetch_all(&self.pool).await?;
 
         let mut pools = Vec::new();
+        let mut skipped = 0usize;
         for row in rows {
             use sqlx::Row;
             let data: serde_json::Value = row.try_get("data").unwrap_or_default();
-            let pool_state: PoolState = serde_json::from_value(data).unwrap_or_else(|e| {
-                log::error!("Failed to deserialize pool state from DB: {}", e);
-                // Return a dummy or panic logic? For now let's skip/propagate error?
-                // Using existing logic which was panic on corruption or skip.
-                // Converting to anyhow error.
-                panic!("Critical: DB data corruption");
-            });
-            pools.push(pool_state);
+            match serde_json::from_value::<PoolState>(data) {
+                Ok(pool_state) => pools.push(pool_state),
+                Err(e) => {
+                    skipped += 1;
+                    log::warn!("Skipping pool with incompatible schema: {}", e);
+                }
+            }
+        }
+        if skipped > 0 {
+            log::warn!("Skipped {} pools due to schema changes (will be overwritten on next save)", skipped);
         }
         Ok(pools)
     }

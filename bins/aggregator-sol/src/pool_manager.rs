@@ -637,8 +637,9 @@ impl PoolStateManager {
                             }
                         }
 
-                        if let Some(pool_ref) = pools_c.get(&pool_id) {
-                            let pool_state = pool_ref.value().clone();
+                        let pool_state_opt = pools_c.get(&pool_id).map(|r| r.value().clone());
+
+                        if let Some(pool_state) = pool_state_opt {
 
                             match dex_type {
                                 DexType::RaydiumClmm => {

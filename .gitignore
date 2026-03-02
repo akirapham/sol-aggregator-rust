@@ -36,6 +36,5 @@ debug_dlmm
 .gitignore
 aws/
 k8s-manifests/
-out/
 cache/
 broadcast/

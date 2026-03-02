@@ -1,7 +1,10 @@
 use eth_dex_quote::{DexVersion, EthChain};
 use ethers::types::Address;
 
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashSet,
+    sync::{Arc, RwLock},
+};
 
 /// Configuration for Ethereum WebSocket client
 #[derive(Debug, Clone)]
@@ -17,7 +20,9 @@ pub struct EthConfig {
     pub eth_price_usd: Arc<RwLock<Option<f64>>>,
     pub eth_chain: EthChain,
     /// Target pools to eagerly load on startup
-    pub target_pools: Vec<String>,
+    pub target_pools: HashSet<String>,
+    // Enable arbitrage detection to filter out non-arbitrage pools
+    pub enable_arbitrage_detection: bool,
 }
 
 impl Default for EthConfig {
@@ -45,13 +50,20 @@ impl Default for EthConfig {
             native_address: "0x0000000000000000000000000000000000000000"
                 .parse()
                 .unwrap(),
+            enable_arbitrage_detection: std::env::var("ENABLE_ETH_ARBITRAGE")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
             // ETH price will be updated from Binance WebSocket
             eth_price_usd: Arc::new(RwLock::new(None)),
             eth_chain: EthChain::Mainnet,
             target_pools: eth_dex_quote::DexConfiguration::load()
                 .ok()
                 .and_then(|c| c.get_chain("ethereum").map(|ch| ch.target_pools.clone()))
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect(),
         }
     }
 }
@@ -94,10 +106,17 @@ impl EthConfig {
                 .unwrap(),
             eth_price_usd: Arc::new(RwLock::new(None)),
             eth_chain: EthChain::Arbitrum,
+            enable_arbitrage_detection: std::env::var("ENABLE_ETH_ARBITRAGE")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
             target_pools: eth_dex_quote::DexConfiguration::load()
                 .ok()
                 .and_then(|c| c.get_chain("arbitrum").map(|ch| ch.target_pools.clone()))
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect(),
         }
     }
 
@@ -105,9 +124,7 @@ impl EthConfig {
     pub fn get_known_decimals(&self, token_address: Address) -> Option<u8> {
         if token_address == self.weth_address || token_address == self.native_address {
             Some(18)
-        } else if token_address == self.usdc_address {
-            Some(6)
-        } else if token_address == self.usdt_address {
+        } else if token_address == self.usdc_address || token_address == self.usdt_address {
             Some(6)
         } else {
             None

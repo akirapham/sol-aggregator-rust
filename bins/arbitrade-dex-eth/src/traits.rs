@@ -13,6 +13,7 @@ pub trait ArbitrageDetectorTrait: Send + Sync {
     fn check_opportunities_for_token(
         &self,
         token_address: &Address,
+        token_price_update: &TokenPriceUpdate,
     ) -> Vec<DexArbitrageOpportunity>;
 }
 

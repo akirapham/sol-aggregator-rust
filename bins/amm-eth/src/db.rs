@@ -50,6 +50,7 @@ impl TokenPairDb {
     }
 
     /// Save token pair to database with decimals
+    #[allow(clippy::too_many_arguments)]
     pub fn save_token_pair(
         &self,
         pool_address: String,
@@ -74,11 +75,7 @@ impl TokenPairDb {
             factory: format!("{:?}", factory),
             fee_tier,
             tick_spacing,
-            hooks: if let Some(hooks_addr) = hooks {
-                Some(format!("{:?}", hooks_addr).to_lowercase())
-            } else {
-                None
-            },
+            hooks: hooks.map(|hooks_addr| format!("{:?}", hooks_addr).to_lowercase()),
         };
 
         let value = serde_json::to_vec(&data)?;
@@ -240,7 +237,7 @@ impl TokenPairDb {
                                         pair_cache.insert(
                                             pool_address.clone(),
                                             PairInfo {
-                                                pool_address: pool_address,
+                                                pool_address,
                                                 pool_token0: token0,
                                                 pool_token1: token1,
                                                 dex_version,
@@ -248,7 +245,7 @@ impl TokenPairDb {
                                                 decimals1: data.token1_decimals,
                                                 factory,
                                                 fee_tier,
-                                                tick_spacing: tick_spacing,
+                                                tick_spacing,
                                                 hooks,
                                             },
                                         );

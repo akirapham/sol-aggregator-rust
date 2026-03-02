@@ -16,6 +16,7 @@ use uuid::Uuid;
 /// Message types that can be sent to clients
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::large_enum_variant)]
 pub enum WsMessage {
     #[serde(rename = "price_update")]
     PriceUpdate { data: TokenPriceUpdate },

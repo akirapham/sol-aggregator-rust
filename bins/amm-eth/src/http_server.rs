@@ -42,11 +42,9 @@ impl From<PairInfo> for PairInfoResponse {
             factory: format!("{:?}", pair.factory).to_lowercase(),
             fee_tier: pair.fee_tier,
             tick_spacing: pair.tick_spacing,
-            hooks: if let Some(hooks_addr) = pair.hooks {
-                Some(format!("{:?}", hooks_addr).to_lowercase())
-            } else {
-                None
-            },
+            hooks: pair
+                .hooks
+                .map(|hooks_addr| format!("{:?}", hooks_addr).to_lowercase()),
         }
     }
 }

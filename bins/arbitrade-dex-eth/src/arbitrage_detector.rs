@@ -82,6 +82,7 @@ impl ArbitrageDetectorTrait for ArbitrageDetector {
     fn check_opportunities_for_token(
         &self,
         token_address: &Address,
+        token_price_update: &TokenPriceUpdate,
     ) -> Vec<DexArbitrageOpportunity> {
         let token_address_str = format!("{:?}", token_address).to_lowercase();
 
@@ -132,22 +133,16 @@ impl ArbitrageDetectorTrait for ArbitrageDetector {
         let mut opportunities = vec![];
 
         // Compare all pairs of pools
-        for (i, buy_pool) in all_prices.iter().enumerate() {
-            for sell_pool in all_prices.iter().skip(i + 1) {
-                debug!(
-                    "  Comparing pools: buy={} (${:.6}), sell={} (${:.6})",
-                    buy_pool.pool_address,
-                    buy_pool.price_in_eth,
-                    sell_pool.pool_address,
-                    sell_pool.price_in_eth
-                );
-                // Try both directions
-                if let Some(opp) = self.check_pair(buy_pool.clone(), sell_pool.clone()) {
-                    opportunities.push(opp);
-                }
-                if let Some(opp) = self.check_pair(sell_pool.clone(), buy_pool.clone()) {
-                    opportunities.push(opp);
-                }
+        for other_pool in all_prices.iter() {
+            if other_pool.pool_address == token_price_update.pool_address {
+                continue;
+            }
+            // Try both directions
+            if let Some(opp) = self.check_pair(token_price_update.clone(), other_pool.clone()) {
+                opportunities.push(opp);
+            }
+            if let Some(opp) = self.check_pair(other_pool.clone(), token_price_update.clone()) {
+                opportunities.push(opp);
             }
         }
 
@@ -207,10 +202,10 @@ mod tests {
             ..buy_pool.clone()
         };
 
-        cache.update_price(buy_pool);
-        cache.update_price(sell_pool);
+        cache.update_price(buy_pool.clone());
+        cache.update_price(sell_pool.clone());
 
-        let opportunities = detector.check_opportunities_for_token(&token);
+        let opportunities = detector.check_opportunities_for_token(&token, &buy_pool);
         assert_eq!(opportunities.len(), 1);
         assert!(
             opportunities[0].price_diff_percent > 1.9 && opportunities[0].price_diff_percent < 2.1

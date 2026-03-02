@@ -138,7 +138,7 @@ impl EthSwapListener {
             self.config.target_pools.len()
         );
 
-        let mut remaining: Vec<String> = self.config.target_pools.clone();
+        let mut remaining: Vec<String> = self.config.target_pools.clone().into_iter().collect();
         let mut total_seeded = 0usize;
         let max_passes = 3;
 
@@ -504,6 +504,14 @@ impl EthSwapListener {
         token_cache: &Arc<DashMap<String, PairInfo>>,
         token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
     ) -> Result<()> {
+        if config.enable_arbitrage_detection
+            && !config
+                .target_pools
+                .contains(&log.address.to_string().to_lowercase())
+        {
+            // skip if not in target pools
+            return Ok(());
+        }
         let pool_address = log.address;
 
         // Try to parse as V2 Sync event
@@ -838,6 +846,14 @@ impl EthSwapListener {
         token_to_pools: &Arc<DashMap<String, HashSet<String>>>,
     ) -> Result<()> {
         let pool_address = log.address;
+        if config.enable_arbitrage_detection
+            && !config
+                .target_pools
+                .contains(&pool_address.to_string().to_lowercase())
+        {
+            // skip if not in target pools
+            return Ok(());
+        }
 
         // Try to parse as V3 Swap event
         let swap_event: uniswap_v3_pool::SwapFilter =
@@ -934,19 +950,15 @@ impl EthSwapListener {
         let q192 = U256::from(1u128) << 192;
 
         let decimals_diff = decimals0 as i32 - decimals1 as i32;
-        let ret = if decimals_diff >= 0 {
+        if decimals_diff >= 0 {
             let multiplier = U256::from(10u128).pow(U256::from(decimals_diff as u32));
             let numerator = sqrt_price_squared.saturating_mul(multiplier);
-            let temp = Self::u256_to_f64_ratio(numerator, q192);
-
-            temp
+            Self::u256_to_f64_ratio(numerator, q192)
         } else {
             let multiplier = U256::from(10u128).pow(U256::from((-decimals_diff) as u32));
             let denominator = q192.saturating_mul(multiplier);
             Self::u256_to_f64_ratio(sqrt_price_squared, denominator)
-        };
-
-        ret
+        }
     }
 
     /// Get or fetch token pair from cache (with decimals)
@@ -1005,11 +1017,11 @@ impl EthSwapListener {
 
                     token_to_pools
                         .entry(token0_str)
-                        .or_insert_with(HashSet::new)
+                        .or_default()
                         .insert(pool_address.to_string().to_lowercase());
                     token_to_pools
                         .entry(token1_str)
-                        .or_insert_with(HashSet::new)
+                        .or_default()
                         .insert(pool_address.to_string().to_lowercase());
 
                     debug!(
@@ -1139,6 +1151,7 @@ impl EthSwapListener {
     }
 
     /// Update token price in the price store
+    #[allow(clippy::too_many_arguments)]
     fn update_token_price(
         token_address: Address,
         paired_with: Address,
@@ -1513,8 +1526,11 @@ impl EthSwapListener {
             };
 
         // Extract pool ID (bytes32) from the event
-        let pool_id: [u8; 32] = swap_event.id.into();
+        let pool_id: [u8; 32] = swap_event.id;
         let pool_id_hex = format!("0x{}", hex::encode(pool_id));
+        if config.enable_arbitrage_detection && !config.target_pools.contains(&pool_id_hex) {
+            return Ok(());
+        }
 
         // Get or fetch token information for this pool ID
         let pair_info = match Self::get_or_fetch_v4_pool_info(
@@ -1787,11 +1803,11 @@ impl EthSwapListener {
         let token1_str = format!("{:?}", token1).to_lowercase();
         token_to_pools
             .entry(token0_str)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(pool_id_hex.clone());
         token_to_pools
             .entry(token1_str)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(pool_id_hex);
 
         Ok(pool_info)

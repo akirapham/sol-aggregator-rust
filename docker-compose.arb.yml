@@ -9,8 +9,8 @@ services:
     command: /usr/local/bin/amm-eth
     environment:
       - ETH_CHAIN=arbitrum
-      - ETH_WEBSOCKET_URL=${ARB_WEBSOCKET_URL:-wss://arbitrum-one-rpc.publicnode.com}
-      - ETH_RPC_URL=${ARB_RPC_URL:-https://arbitrum-one-rpc.publicnode.com}
+      - ETH_WEBSOCKET_URL=${ARB_WEBSOCKET_URL:-wss://arb1.arbitrum.io/feed}
+      - ETH_RPC_URL=${ARB_RPC_URL:-https://arb1.arbitrum.io/rpc}
       - ETH_PRICE_WS_PORT=8080
       - ETH_API_PORT=2222
       - RUST_LOG=info
@@ -33,11 +33,13 @@ services:
       - ETH_CHAIN=arbitrum
       - AMM_ETH_WS_URL=ws://amm-eth:8080
       - DEX_PAIR_API_URL=http://amm-eth:2222
-      - ETH_RPC_URL=${ARB_RPC_URL:-https://arbitrum-one-rpc.publicnode.com}
-      - ETH_WEBSOCKET_URL=${ARB_WEBSOCKET_URL:-wss://arbitrum-one-rpc.publicnode.com}
+      - ETH_RPC_URL=${ARB_RPC_URL:-https://arb1.arbitrum.io/rpc}
+      - ETH_WEBSOCKET_URL=${ARB_WEBSOCKET_URL:-wss://arb1.arbitrum.io/feed}
       - ARBITRADE_DEX_PORT=3002
       - MIN_PROFIT_PERCENT=0.001
-      - QUOTE_ROUTER_ADDRESS=0x79730852db8E1864987c90B5167143D4165EBcf5
+      - QUOTE_ROUTER_ADDRESS=0x09e2f790bD344cF842E1c5D37BAffB39f5c09985
+      - ETH_ARBITRADE_KEY=${ETH_ARBITRADE_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - CHAIN_NAME=arbitrum
       - RUST_LOG=info
     ports:
       - "${ARB_ARBITRADE_PORT:-3004}:3002"

@@ -313,17 +313,31 @@ contract QuoteRouter is UUPSUpgradeable, OwnableUpgradeable {
             amountOut = amounts[amounts.length - 1];
             
         } else if (hop.poolType == PoolType.UniswapV3) {
-            ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-                tokenIn: hop.tokenIn,
-                tokenOut: hop.tokenOut,
-                fee: hop.fee,
-                recipient: address(this),
-                deadline: block.timestamp + 1200,
-                amountIn: amountIn,
-                amountOutMinimum: 1,
-                sqrtPriceLimitX96: 0
-            });
-            amountOut = ISwapRouter(hop.router).exactInputSingle(params);
+            // Check if this is the PancakeSwap V3 Arbitrum router which lacks the deadline parameter
+            if (hop.router == 0x32226588378236Fd0c7c4053999F88aC0e5cAc77) {
+                IPancakeV3SwapRouter.ExactInputSingleParams memory params = IPancakeV3SwapRouter.ExactInputSingleParams({
+                    tokenIn: hop.tokenIn,
+                    tokenOut: hop.tokenOut,
+                    fee: hop.fee,
+                    recipient: address(this),
+                    amountIn: amountIn,
+                    amountOutMinimum: 1,
+                    sqrtPriceLimitX96: 0
+                });
+                amountOut = IPancakeV3SwapRouter(hop.router).exactInputSingle(params);
+            } else {
+                ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+                    tokenIn: hop.tokenIn,
+                    tokenOut: hop.tokenOut,
+                    fee: hop.fee,
+                    recipient: address(this),
+                    deadline: block.timestamp + 1200,
+                    amountIn: amountIn,
+                    amountOutMinimum: 1,
+                    sqrtPriceLimitX96: 0
+                });
+                amountOut = ISwapRouter(hop.router).exactInputSingle(params);
+            }
         } else if (hop.poolType == PoolType.CamelotAlgebra) {
             IAlgebraSwapRouter.ExactInputSingleParams memory params = IAlgebraSwapRouter.ExactInputSingleParams({
                 tokenIn: hop.tokenIn,
@@ -338,10 +352,10 @@ contract QuoteRouter is UUPSUpgradeable, OwnableUpgradeable {
         }
     }
 
-    // ─── Version ─────────────────────────────────────────
+    // ─── Version ─────────────────────────────────────────    // --- Internal Helpers ---
 
     function version() external pure returns (string memory) {
-        return "1.0.0";
+        return "1.1.0";
     }
 }
 
@@ -385,6 +399,19 @@ interface IAlgebraSwapRouter {
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 limitSqrtPrice;
+    }
+    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+}
+
+interface IPancakeV3SwapRouter {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
     }
     function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
 }

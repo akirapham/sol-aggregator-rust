@@ -86,6 +86,7 @@ pub async fn compute_output_amount_v3<P: ethers::providers::Middleware + 'static
 ///
 /// # Returns
 /// Expected output amount in tokens from the actual pool contract
+#[allow(clippy::too_many_arguments)]
 pub async fn compute_output_amount_v4<P: ethers::providers::Middleware + 'static>(
     provider: Arc<P>,
     amount_in: U256,
@@ -314,6 +315,7 @@ pub fn build_exec_hop(
 }
 
 /// Execute a 2-hop arbitrage path: X -> A -> X
+#[allow(clippy::too_many_arguments)]
 pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     provider: Arc<P>,
     flashloan_amount: U256,
@@ -322,7 +324,7 @@ pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     buy_pool: &TokenPriceUpdate,
     sell_pool: &TokenPriceUpdate,
     chain_config: &eth_dex_quote::config::ChainConfig,
-    quote_router_client: Option<&eth_dex_quote::quote_router::QuoteRouterClient<P>>,
+    router: &eth_dex_quote::quote_router::QuoteRouterClient<P>,
 ) -> Result<(U256, U256, i128)> {
     let other_token_in_sell = if token_a == sell_pool.pool_token0 {
         sell_pool.pool_token1
@@ -331,29 +333,27 @@ pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     };
 
     // Fast-path: Unified Quote Router single batch RPC
-    if let Some(router) = quote_router_client {
-        if let (Ok(hop1), Ok(hop2)) = (
-            build_hop(buy_pool, token_x, token_a, chain_config),
-            build_hop(sell_pool, token_a, other_token_in_sell, chain_config),
-        ) {
-            match router
-                .quote_arbitrage_2_hop(hop1, hop2, flashloan_amount)
-                .await
-            {
-                Ok((amount_out, profit)) => {
-                    // Convert profit dynamically
-                    let profit_i128 = if profit.is_negative() {
-                        let abs_raw = (!profit.into_raw())
-                            .overflowing_add(ethers::types::U256::one())
-                            .0;
-                        -(abs_raw.as_u128() as i128)
-                    } else {
-                        profit.into_raw().as_u128() as i128
-                    };
-                    return Ok((U256::zero(), amount_out, profit_i128));
-                }
-                Err(e) => log::warn!("QuoteRouter 2-hop failed: {:?}", e),
+    if let (Ok(hop1), Ok(hop2)) = (
+        build_hop(buy_pool, token_x, token_a, chain_config),
+        build_hop(sell_pool, token_a, other_token_in_sell, chain_config),
+    ) {
+        match router
+            .quote_arbitrage_2_hop(hop1, hop2, flashloan_amount)
+            .await
+        {
+            Ok((amount_out, profit)) => {
+                // Convert profit dynamically
+                let profit_i128 = if profit.is_negative() {
+                    let abs_raw = (!profit.into_raw())
+                        .overflowing_add(ethers::types::U256::one())
+                        .0;
+                    -(abs_raw.as_u128() as i128)
+                } else {
+                    profit.into_raw().as_u128() as i128
+                };
+                return Ok((U256::zero(), amount_out, profit_i128));
             }
+            Err(e) => log::warn!("QuoteRouter 2-hop failed: {:?}", e),
         }
     }
 
@@ -417,6 +417,7 @@ pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
 }
 
 /// Execute a 3-hop arbitrage path: X -> A -> B -> X
+#[allow(clippy::too_many_arguments)]
 pub async fn compute_3hop_arbitrage_path<P: ethers::providers::Middleware + 'static>(
     provider: Arc<P>,
     flashloan_amount: U256,
@@ -427,27 +428,25 @@ pub async fn compute_3hop_arbitrage_path<P: ethers::providers::Middleware + 'sta
     pool_a_to_b: &TokenPriceUpdate,
     pool_b_to_x: &TokenPriceUpdate,
     chain_config: &eth_dex_quote::config::ChainConfig,
-    quote_router_client: Option<&eth_dex_quote::quote_router::QuoteRouterClient<P>>,
+    router: &eth_dex_quote::quote_router::QuoteRouterClient<P>,
 ) -> Result<(U256, U256, U256, i128)> {
     // Fast path: Unified Quote Router single batch RPC
-    if let Some(router) = quote_router_client {
-        if let (Ok(hop1), Ok(hop2), Ok(hop3)) = (
-            build_hop(pool_x_to_a, token_x, token_a, chain_config),
-            build_hop(pool_a_to_b, token_a, token_b, chain_config),
-            build_hop(pool_b_to_x, token_b, token_x, chain_config),
-        ) {
-            let hops = vec![hop1, hop2, hop3];
-            match router.quote_single_path(hops, flashloan_amount).await {
-                Ok(final_amount) => {
-                    let profit = if final_amount >= flashloan_amount {
-                        (final_amount - flashloan_amount).as_u128() as i128
-                    } else {
-                        -((flashloan_amount - final_amount).as_u128() as i128)
-                    };
-                    return Ok((U256::zero(), U256::zero(), final_amount, profit));
-                }
-                Err(e) => log::warn!("QuoteRouter 3-hop failed: {:?}", e),
+    if let (Ok(hop1), Ok(hop2), Ok(hop3)) = (
+        build_hop(pool_x_to_a, token_x, token_a, chain_config),
+        build_hop(pool_a_to_b, token_a, token_b, chain_config),
+        build_hop(pool_b_to_x, token_b, token_x, chain_config),
+    ) {
+        let hops = vec![hop1, hop2, hop3];
+        match router.quote_single_path(hops, flashloan_amount).await {
+            Ok(final_amount) => {
+                let profit = if final_amount >= flashloan_amount {
+                    (final_amount - flashloan_amount).as_u128() as i128
+                } else {
+                    -((flashloan_amount - final_amount).as_u128() as i128)
+                };
+                return Ok((U256::zero(), U256::zero(), final_amount, profit));
             }
+            Err(e) => log::warn!("QuoteRouter 3-hop failed: {:?}", e),
         }
     }
 
@@ -525,6 +524,7 @@ pub async fn compute_3hop_arbitrage_path<P: ethers::providers::Middleware + 'sta
     Ok((amount_a, amount_b, final_amount, net_profit))
 }
 /// Helper function to compute swap output based on pool's dex_version
+#[allow(clippy::too_many_arguments)]
 async fn compute_swap_output<P: ethers::providers::Middleware + 'static>(
     provider: Arc<P>,
     amount_in: U256,
@@ -640,6 +640,7 @@ pub fn usdc_to_u256(amount: f64) -> U256 {
 ///
 /// # Returns
 /// (best_pool, best_amount_x, pool_info) tuple with best swap result
+#[allow(clippy::too_many_arguments)]
 pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
     http_client: reqwest::Client,
     dex_pair_api_url: &str,
@@ -648,7 +649,7 @@ pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
     amount_b: U256,
     provider: Arc<P>,
     chain_config: &eth_dex_quote::config::ChainConfig,
-    _quote_router_client: Option<&eth_dex_quote::quote_router::QuoteRouterClient<P>>,
+    _quote_router_client: &eth_dex_quote::quote_router::QuoteRouterClient<P>,
 ) -> Result<(TokenPriceUpdate, U256)> {
     // Fetch all pairs containing token B from amm-eth API
     let token_b_str = format!("{:?}", token_b).to_lowercase();

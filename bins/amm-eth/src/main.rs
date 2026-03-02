@@ -186,6 +186,11 @@ async fn main() -> Result<()> {
     });
     debug!("DEBUG: Statistics logger spawned");
 
+    // Eagerly seed target pools
+    if let Err(e) = listener.seed_target_pools().await {
+        log::error!("Failed to seed target pools: {}", e);
+    }
+
     // Start listening to swap events
     info!("Starting swap event listener...");
     debug!("DEBUG: About to start listener.start()...");

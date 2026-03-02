@@ -126,6 +126,96 @@ impl EthSwapListener {
         self.token_to_pools.clone()
     }
 
+    /// Eagerly seed target pools defined in the configuration
+    pub async fn seed_target_pools(&self) -> Result<()> {
+        if self.config.target_pools.is_empty() {
+            debug!("No target pools configured for eager seeding.");
+            return Ok(());
+        }
+
+        info!(
+            "Seeding {} target pools from config...",
+            self.config.target_pools.len()
+        );
+
+        let mut remaining: Vec<String> = self.config.target_pools.clone();
+        let mut total_seeded = 0usize;
+        let max_passes = 3;
+
+        for pass in 1..=max_passes {
+            if remaining.is_empty() {
+                break;
+            }
+            if pass > 1 {
+                info!(
+                    "Retry pass {}/{} for {} remaining pools...",
+                    pass,
+                    max_passes,
+                    remaining.len()
+                );
+                // Wait 2s between passes to let rate limits cool down
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+
+            let mut still_failing = Vec::new();
+
+            for pool_addr_str in &remaining {
+                if let Ok(pool_address) = pool_addr_str.parse::<Address>() {
+                    // All target pools support standard V3 ABI (token0/token1/factory/fee)
+                    // Try V3 first; if fee() call fails due to RPC timeout, still try as V3
+                    let dex_version = DexVersion::UniswapV3;
+
+                    match Self::get_or_fetch_token_pair(
+                        pool_address,
+                        &self.token_pair_cache,
+                        &self.token_to_pools,
+                        &self.config,
+                        dex_version,
+                    )
+                    .await
+                    {
+                        Ok(pair) => {
+                            total_seeded += 1;
+                            info!(
+                                "✅ Seeded pool {} ({:?}/{:?} fee={:?})",
+                                pool_addr_str, pair.pool_token0, pair.pool_token1, pair.fee_tier
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to seed target pool {} (pass {}): {}",
+                                pool_addr_str, pass, e
+                            );
+                            still_failing.push(pool_addr_str.clone());
+                        }
+                    }
+                } else {
+                    warn!("Invalid pool address in target_pools: {}", pool_addr_str);
+                }
+                // 500ms between pools to stay within public RPC rate limits
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+
+            remaining = still_failing;
+        }
+
+        if !remaining.is_empty() {
+            warn!(
+                "Could not seed {} target pools after {} passes: {:?}",
+                remaining.len(),
+                max_passes,
+                remaining
+            );
+        }
+
+        info!(
+            "Eagerly seeded {}/{} target pools from config",
+            total_seeded,
+            self.config.target_pools.len()
+        );
+        Ok(())
+    }
+
     /// Start listening to swap events
     pub async fn start(&self) -> Result<()> {
         info!("Starting Ethereum swap event listener (V2, V3, V4)");

@@ -1,6 +1,7 @@
 use crate::types::{DexArbitrageOpportunity, ExecutionResult, ExecutionStatus};
-use crate::utils;
+use crate::ArbitrageExecutorTrait;
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use ethers::middleware::SignerMiddleware;
 use ethers::providers::Middleware;
 use ethers::signers::{LocalWallet, Signer};
@@ -42,8 +43,31 @@ impl<M: Middleware + 'static> ArbitrageExecutor<M> {
         })
     }
 
+    /// Set slippage tolerance
+    pub fn set_slippage_tolerance(&mut self, slippage_basis_points: u16) {
+        self.slippage_tolerance = slippage_basis_points;
+    }
+
+    /// Set dry run mode
+    pub fn set_dry_run(&mut self, enabled: bool) {
+        self.dry_run = enabled;
+        if enabled {
+            info!("🔒 Dry run mode ENABLED - trades will not be executed");
+        } else {
+            warn!("⚠️  Dry run mode DISABLED - trades will be executed on-chain");
+        }
+    }
+
+    /// Get executor wallet address
+    pub fn get_address(&self) -> String {
+        format!("{:?}", self.client.address())
+    }
+}
+
+#[async_trait]
+impl<M: Middleware + 'static> ArbitrageExecutorTrait for ArbitrageExecutor<M> {
     /// Execute a flashloan arbitrage using the QuoteRouter contract
-    pub async fn execute_flashloan(
+    async fn execute_flashloan(
         &self,
         opportunity: DexArbitrageOpportunity,
         paths: Vec<eth_dex_quote::quote_router::ExecHop>,
@@ -121,26 +145,6 @@ impl<M: Middleware + 'static> ArbitrageExecutor<M> {
                 Err(anyhow!("Gas estimation failed: {}", e))
             }
         }
-    }
-
-    /// Set slippage tolerance
-    pub fn set_slippage_tolerance(&mut self, slippage_basis_points: u16) {
-        self.slippage_tolerance = slippage_basis_points;
-    }
-
-    /// Set dry run mode
-    pub fn set_dry_run(&mut self, enabled: bool) {
-        self.dry_run = enabled;
-        if enabled {
-            info!("🔒 Dry run mode ENABLED - trades will not be executed");
-        } else {
-            warn!("⚠️  Dry run mode DISABLED - trades will be executed on-chain");
-        }
-    }
-
-    /// Get executor wallet address
-    pub fn get_address(&self) -> String {
-        format!("{:?}", self.client.address())
     }
 }
 

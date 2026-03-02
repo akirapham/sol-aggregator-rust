@@ -14,9 +14,10 @@ pub struct EthConfig {
     pub usdc_address: Address,
     pub usdt_address: Address,
     pub native_address: Address,
-    /// Shared ETH price updated from Binance WebSocket
     pub eth_price_usd: Arc<RwLock<Option<f64>>>,
     pub eth_chain: EthChain,
+    /// Target pools to eagerly load on startup
+    pub target_pools: Vec<String>,
 }
 
 impl Default for EthConfig {
@@ -47,6 +48,10 @@ impl Default for EthConfig {
             // ETH price will be updated from Binance WebSocket
             eth_price_usd: Arc::new(RwLock::new(None)),
             eth_chain: EthChain::Mainnet,
+            target_pools: eth_dex_quote::DexConfiguration::load()
+                .ok()
+                .and_then(|c| c.get_chain("ethereum").map(|ch| ch.target_pools.clone()))
+                .unwrap_or_default(),
         }
     }
 }
@@ -89,6 +94,10 @@ impl EthConfig {
                 .unwrap(),
             eth_price_usd: Arc::new(RwLock::new(None)),
             eth_chain: EthChain::Arbitrum,
+            target_pools: eth_dex_quote::DexConfiguration::load()
+                .ok()
+                .and_then(|c| c.get_chain("arbitrum").map(|ch| ch.target_pools.clone()))
+                .unwrap_or_default(),
         }
     }
 

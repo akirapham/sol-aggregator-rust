@@ -7,7 +7,6 @@ use ethers::types::U256;
 /// where fee_factor = 10000 - fee_bps
 ///
 /// Standard Uniswap/SushiSwap V2 uses fee_bps=30 (0.3%), giving fee_factor=9970.
-
 /// Compute the output amount for a V2 swap given reserves and fee.
 ///
 /// # Arguments

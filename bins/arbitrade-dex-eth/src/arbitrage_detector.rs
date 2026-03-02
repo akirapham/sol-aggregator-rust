@@ -1,5 +1,6 @@
 use crate::price_cache::PriceCache;
 use crate::types::DexArbitrageOpportunity;
+use crate::ArbitrageDetectorTrait;
 use dashmap::DashMap;
 use eth_dex_quote::TokenPriceUpdate;
 use ethers::types::Address;
@@ -32,9 +33,53 @@ impl ArbitrageDetector {
         }
     }
 
+    /// Check if a buy/sell pool pair creates an arbitrage opportunity
+    /// We trade USDT pairs, so we compare prices in USD
+    fn check_pair(
+        &self,
+        buy_pool: TokenPriceUpdate,
+        sell_pool: TokenPriceUpdate,
+    ) -> Option<DexArbitrageOpportunity> {
+        // Both prices must be in USD
+        let buy_price_usd = buy_pool.price_in_usd?;
+        let sell_price_usd = sell_pool.price_in_usd?;
+
+        // Check if it's profitable: sell price must be higher than buy price
+        if sell_price_usd <= buy_price_usd {
+            return None;
+        }
+
+        let price_diff_usd = sell_price_usd - buy_price_usd;
+        let price_diff_percent = (price_diff_usd / buy_price_usd) * 100.0;
+
+        // Filter by minimum thresholds
+        if price_diff_percent < self.min_profit_percent {
+            return None;
+        }
+
+        let detected_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Parse token address
+        let token_address = Address::from_str(&buy_pool.token_address).unwrap_or(Address::zero());
+
+        Some(DexArbitrageOpportunity {
+            token_address,
+            buy_pool,
+            sell_pool,
+            price_diff_percent,
+            potential_profit_usd: Some(price_diff_usd),
+            detected_at,
+        })
+    }
+}
+
+impl ArbitrageDetectorTrait for ArbitrageDetector {
     /// Check for arbitrage opportunities when a new price update arrives
     /// This is called reactively from the WebSocket listener
-    pub fn check_opportunities_for_token(
+    fn check_opportunities_for_token(
         &self,
         token_address: &Address,
     ) -> Vec<DexArbitrageOpportunity> {
@@ -114,48 +159,6 @@ impl ArbitrageDetector {
         });
 
         opportunities
-    }
-
-    /// Check if a buy/sell pool pair creates an arbitrage opportunity
-    /// We trade USDT pairs, so we compare prices in USD
-    fn check_pair(
-        &self,
-        buy_pool: TokenPriceUpdate,
-        sell_pool: TokenPriceUpdate,
-    ) -> Option<DexArbitrageOpportunity> {
-        // Both prices must be in USD
-        let buy_price_usd = buy_pool.price_in_usd?;
-        let sell_price_usd = sell_pool.price_in_usd?;
-
-        // Check if it's profitable: sell price must be higher than buy price
-        if sell_price_usd <= buy_price_usd {
-            return None;
-        }
-
-        let price_diff_usd = sell_price_usd - buy_price_usd;
-        let price_diff_percent = (price_diff_usd / buy_price_usd) * 100.0;
-
-        // Filter by minimum thresholds
-        if price_diff_percent < self.min_profit_percent {
-            return None;
-        }
-
-        let detected_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        // Parse token address
-        let token_address = Address::from_str(&buy_pool.token_address).unwrap_or(Address::zero());
-
-        Some(DexArbitrageOpportunity {
-            token_address,
-            buy_pool,
-            sell_pool,
-            price_diff_percent,
-            potential_profit_usd: Some(price_diff_usd),
-            detected_at,
-        })
     }
 }
 

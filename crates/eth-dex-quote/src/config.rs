@@ -41,6 +41,9 @@ pub struct ChainConfig {
     /// Base tokens that can be borrowed for flashloan arbitrage
     #[serde(default)]
     pub base_tokens: Vec<(String, bool)>, // (token address, is_stable)
+    /// Target pools to eagerly load on startup
+    #[serde(default)]
+    pub target_pools: Vec<String>,
     /// Quote Router contract deployment address
     #[serde(default)]
     pub quote_router: Option<String>,

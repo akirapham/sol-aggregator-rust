@@ -15,7 +15,7 @@ dotenv = { workspace = true }
 ethers = { version = "2.0", features = ["ws", "abigen"] }
 dashmap = { workspace = true }
 rocksdb = { workspace = true }
-async-trait = { workspace = true }
+async-trait.workspace = true
 futures = { workspace = true }
 uuid = { workspace = true }
 hex = { workspace = true }

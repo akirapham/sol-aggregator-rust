@@ -164,7 +164,7 @@ impl From<TokenPrice> for TokenPriceUpdate {
             price_in_eth: price.price_in_eth,
             price_in_usd: price.price_in_usd,
             last_updated: price.last_updated,
-            pool_address: format!("{}", price.pool_address),
+            pool_address: price.pool_address.to_string(),
             dex_version: format!("{:?}", price.dex_version),
             decimals: price.decimals,
             pool_token0: price.pool_token0,

@@ -42,6 +42,7 @@ abigen!(
 );
 
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait V4Quoter: Send + Sync {
     async fn get_quote(
         &self,
@@ -70,6 +71,7 @@ impl<P: ethers::providers::Middleware + 'static> UniswapV4Quoter<P> {
 
     /// Call Uniswap V4 Quote Router to get amount out
     /// V4 requires full pool key specification including hooks
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_quote_from_contract(
         &self,
         token_in: Address,

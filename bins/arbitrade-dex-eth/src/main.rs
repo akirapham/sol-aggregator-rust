@@ -1,12 +1,13 @@
 use anyhow::Result;
-use arbitrade_dex_eth::{ArbitrageDetector, DexWsClient, PriceCache};
+use arbitrade_dex_eth::{ArbitrageDetector, ArbitrageHandler, DexWsClient, PriceCache};
 use dashmap::DashMap;
 use dotenv::dotenv;
 use env_logger::Env;
-use log::{debug, error, info, warn};
+use ethers::types::Address;
+use log::{debug, error, info};
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Configuration for arbitrade-dex-eth service
 #[derive(Debug, Clone)]
@@ -21,6 +22,12 @@ struct Config {
     min_price_diff_eth: f64,
     /// Interval (seconds) to check for opportunities
     check_interval_secs: u64,
+    private_key: String,
+    quote_router_address: Address,
+    chain_name: String,
+    rpc_url: String,
+    slippage_tolerance: u16,
+    dry_run: bool,
 }
 
 impl Config {
@@ -41,12 +48,38 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .unwrap_or(5);
 
+        let private_key = env::var("ETH_ARBITRADE_KEY").expect("ETH_ARBITRADE_KEY not set");
+
+        let quote_router_address =
+            env::var("QUOTE_ROUTER_ADDRESS").expect("QUOTE_ROUTER_ADDRESS not set");
+
+        let chain_name = env::var("CHAIN_NAME").expect("CHAIN_NAME not set");
+
+        let rpc_url = env::var("ETH_RPC_URL").expect("ETH_RPC_URL not set");
+
+        let slippage_tolerance = env::var("SLIPPAGE_TOLERANCE_BPS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100); // 1%
+
+        let dry_run = env::var("DRY_RUN")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(true);
+
         Config {
             amm_eth_ws_url,
             dex_pair_api_url,
             min_profit_percent,
             min_price_diff_eth: 0.0, // Deprecated: we use min_profit_percent only now
             check_interval_secs,
+            private_key,
+            quote_router_address: Address::from_str(&quote_router_address)
+                .expect("Invalid Quote Router address"),
+            chain_name,
+            rpc_url,
+            slippage_tolerance,
+            dry_run,
         }
     }
 }
@@ -77,13 +110,10 @@ async fn main() -> Result<()> {
     // Load DEX configuration for base tokens and contract addresses
     let dex_config =
         eth_dex_quote::DexConfiguration::load().expect("Failed to load eth_dex_config.toml");
-    let chain_name = env::var("CHAIN_NAME").unwrap_or_else(|_| "arbitrum".to_string());
-    let chain_config = Arc::new(
-        dex_config
-            .get_chain(&chain_name)
-            .unwrap_or_else(|| panic!("Failed to get {} chain config", chain_name))
-            .clone(),
-    );
+    let chain_config = dex_config
+        .get_chain(&config.chain_name)
+        .unwrap_or_else(|| panic!("Failed to get {} chain config", config.chain_name))
+        .clone();
 
     // Parse base tokens (now tuples of (address, is_stable))
     let base_tokens: Vec<(ethers::types::Address, bool)> = chain_config
@@ -97,59 +127,28 @@ async fn main() -> Result<()> {
         .collect();
     info!("📋 Loaded {} base tokens for flashloan", base_tokens.len());
 
-    // Optional Quote Router deployment (if configured)
-    let quote_router_addr: Option<ethers::types::Address> = chain_config
-        .quote_router
-        .as_ref()
-        .map(|addr| addr.parse().expect("Invalid Quote Router address"));
-
-    // Optional Quote Router deployment (if configured)
-    let quote_router_addr: Option<ethers::types::Address> = chain_config
-        .quote_router
-        .as_ref()
-        .map(|addr| addr.parse().expect("Invalid Quote Router address"));
-
     // Setup provider for on-chain queries
-    let rpc_url = env::var("ETH_RPC_URL")
-        .unwrap_or_else(|_| "https://ethereum-rpc.publicnode.com".to_string());
-    let provider = ethers::providers::Provider::<ethers::providers::Http>::try_from(rpc_url)?;
+    let provider =
+        ethers::providers::Provider::<ethers::providers::Http>::try_from(config.rpc_url)?;
     let provider = Arc::new(provider);
     info!("✅ Connected to Ethereum RPC");
 
-    let quote_router_client = quote_router_addr.map(|addr| {
-        Arc::new(eth_dex_quote::quote_router::QuoteRouterClient::new(
+    let quote_router_client = Arc::new(eth_dex_quote::quote_router::QuoteRouterClient::new(
+        provider.clone(),
+        config.quote_router_address,
+    ));
+
+    let executor = Arc::new(
+        arbitrade_dex_eth::executor::ArbitrageExecutor::new(
             provider.clone(),
-            addr,
-        ))
-    });
-
-    let slippage_tolerance = env::var("SLIPPAGE_TOLERANCE_BPS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100); // 1%
-
-    let dry_run = env::var("DRY_RUN")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(true);
-
-    let executor =
-        if let (Some(addr), Ok(private_key)) = (quote_router_addr, env::var("ETH_PRIVATE_KEY")) {
-            Some(Arc::new(
-                arbitrade_dex_eth::executor::ArbitrageExecutor::new(
-                    provider.clone(),
-                    private_key,
-                    addr,
-                    slippage_tolerance,
-                    dry_run,
-                    chain_config.chain_id.try_into().unwrap(),
-                )
-                .expect("Failed to create ArbitrageExecutor"),
-            ))
-        } else {
-            warn!("⚠️ ArbitrageExecutor NOT initialized (missing Quote Router or ETH_PRIVATE_KEY)");
-            None
-        };
+            config.private_key,
+            config.quote_router_address,
+            config.slippage_tolerance,
+            config.dry_run,
+            chain_config.chain_id,
+        )
+        .expect("Failed to create ArbitrageExecutor"),
+    );
 
     // Create price cache
     let price_cache = Arc::new(PriceCache::new());
@@ -169,21 +168,21 @@ async fn main() -> Result<()> {
 
     // Track opportunities detected
     let opportunities_detected = Arc::new(DashMap::new());
-    let executions_attempted = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-    // Start WebSocket listener in background - spawn detector on each price update
-    let price_cache_clone = price_cache.clone();
-    let ws_client_clone = ws_client.clone();
-    let detector_clone = detector.clone();
-    let opportunities_detected_clone = opportunities_detected.clone();
-    let provider_for_ws = provider.clone();
-    let base_tokens_for_ws = base_tokens.clone();
-    let quote_router_client_for_ws = quote_router_client.clone();
-    let chain_config_for_ws = chain_config.clone();
-    let executor_clone = executor.clone();
+    let arbitrage_handler = Arc::new(ArbitrageHandler::new(
+        price_cache.clone(),
+        detector.clone(),
+        opportunities_detected.clone(),
+        provider.clone(),
+        base_tokens.clone(),
+        quote_router_client.clone(),
+        chain_config.clone(),
+        executor.clone(),
+        config.dex_pair_api_url.clone(),
+    ));
 
     tokio::spawn(async move {
-        match ws_client_clone.start_with_reconnect().await {
+        match ws_client.start_with_reconnect().await {
             Ok(mut rx) => {
                 while let Some(price_update) = rx.recv().await {
                     debug!(
@@ -192,328 +191,9 @@ async fn main() -> Result<()> {
                         price_update.pool_address,
                         price_update.price_in_eth
                     );
-                    price_cache_clone.update_price(price_update.clone());
-
-                    // IMPORTANT: Check opportunities reactively when a price update arrives
-                    // This is much more efficient than polling all tokens every N seconds
-                    let token_address =
-                        match price_update.token_address.parse::<ethers::types::Address>() {
-                            Ok(addr) => addr,
-                            Err(e) => {
-                                warn!(
-                                    "Failed to parse token_address '{}' as Address: {}",
-                                    price_update.token_address, e
-                                );
-                                continue;
-                            }
-                        };
-                    // check again if price cache has been updated
-                    debug!(
-                        "After update, cache has {} tokens",
-                        price_cache_clone.get_all_prices(&token_address).len()
-                    );
-
-                    // Spawn async task to check opportunities for this token
-                    let detector = detector_clone.clone();
-                    let opps_detected = opportunities_detected_clone.clone();
-                    let executions = executions_attempted.clone();
-                    let provider_clone = provider_for_ws.clone();
-                    let base_tokens_clone = base_tokens_for_ws.clone();
-                    let chain_config_clone = chain_config_for_ws.clone();
-                    let quote_router_client_clone = quote_router_client_for_ws.clone();
-                    let dex_pair_api_clone = config.dex_pair_api_url.clone();
-                    let http_client = reqwest::Client::new();
-                    let executor_clone = executor_clone.clone();
-
-                    tokio::spawn(async move {
-                        // Check for arbitrage opportunities for this specific token
-                        let opportunities = detector.check_opportunities_for_token(&token_address);
-
-                        if !opportunities.is_empty() {
-                            info!(
-                                "💰 Found {} arbitrage opportunity(ies) for token {}",
-                                opportunities.len(),
-                                format!("{:?}", token_address).to_lowercase()
-                            );
-
-                            for opp in opportunities.iter().take(5) {
-                                let eth_price = opp.buy_pool.eth_price_usd;
-
-                                // Spawn task to compute exact arbitrage profit using on-chain quoters
-                                let opp_clone = opp.clone();
-                                let provider_for_compute = provider_clone.clone();
-                                let base_tokens_for_compute = base_tokens_clone.clone();
-                                let http_client_for_3hop = http_client.clone();
-                                let dex_pair_api_for_3hop = dex_pair_api_clone.clone();
-                                let chain_config_clone = chain_config_clone.clone();
-                                let quote_router_client_clone = quote_router_client_clone.clone();
-                                let executor_clone = executor_clone.clone();
-
-                                tokio::spawn(async move {
-                                    // Check if we can use this token as flashloan input
-                                    let token_a = opp_clone.token_address;
-
-                                    // Find a base token that pairs with token_a
-                                    let mut found_base_token = None;
-                                    let mut found_base_token_is_stable = false;
-                                    for (base_token, is_stable) in &base_tokens_for_compute {
-                                        // Check if buy_pool or sell_pool involves this base token
-                                        // pool_token0 and pool_token1 are already Address types
-                                        let buy_token0 = opp_clone.buy_pool.pool_token0;
-                                        let buy_token1 = opp_clone.buy_pool.pool_token1;
-
-                                        if buy_token0 == *base_token || buy_token1 == *base_token {
-                                            found_base_token = Some(*base_token);
-                                            found_base_token_is_stable = *is_stable;
-                                            break;
-                                        }
-                                    }
-
-                                    let token_x = match found_base_token {
-                                        Some(t) => t,
-                                        None => {
-                                            debug!("No base token found for this opportunity, skipping computation");
-                                            return;
-                                        }
-                                    };
-
-                                    // check wether we should do 2 or 3 hop arbitrage
-                                    let other_token_in_sell_pool =
-                                        if opp_clone.sell_pool.pool_token0 == token_a {
-                                            opp_clone.sell_pool.pool_token1
-                                        } else {
-                                            opp_clone.sell_pool.pool_token0
-                                        };
-
-                                    // Flashloan amount: 500 USDT or 500 USD worth (assuming 6 decimals for stables, 18 for WETH)
-                                    let base_token_decimals =
-                                        if found_base_token_is_stable { 6 } else { 18 };
-                                    let flashloan_amount_val = if found_base_token_is_stable {
-                                        500f64
-                                    } else {
-                                        500f64 / eth_price
-                                    };
-                                    let flashloan_amount = ethers::types::U256::from(
-                                        (flashloan_amount_val
-                                            * 10f64.powi(base_token_decimals as i32))
-                                            as u64,
-                                    );
-                                    let is_2_hop = opp_clone.buy_pool.pool_token0
-                                        == opp_clone.sell_pool.pool_token0
-                                        && opp_clone.buy_pool.pool_token1
-                                            == opp_clone.sell_pool.pool_token1;
-
-                                    if is_2_hop {
-                                        info!(
-                                            "📊 Computing 2-hop arbitrage: {:?} -> {:?} -> {:?}",
-                                            token_x, token_a, token_x
-                                        );
-
-                                        // Compute arbitrage profit
-                                        let start_time = std::time::Instant::now();
-                                        match arbitrade_dex_eth::utils::compute_arbitrage_path(
-                                            provider_for_compute,
-                                            flashloan_amount,
-                                            token_x,
-                                            token_a,
-                                            &opp_clone.buy_pool,
-                                            &opp_clone.sell_pool,
-                                            &chain_config_clone,
-                                            quote_router_client_clone.as_deref(),
-                                        )
-                                        .await
-                                        {
-                                            Ok((amount_a, amount_x_out, net_profit)) => {
-                                                let elapsed = start_time.elapsed();
-                                                if net_profit > 0 {
-                                                    let net_profit_after_decimals = net_profit
-                                                        as f64
-                                                        / (10u128.pow(base_token_decimals as u32)
-                                                            as f64);
-                                                    let net_profit_value = net_profit_after_decimals
-                                                        * (if found_base_token_is_stable {
-                                                            1.0
-                                                        } else {
-                                                            eth_price
-                                                        });
-                                                    info!(
-                                                        "💰 PROFITABLE 2-HOP! {} -> {} -> {} | Net profit: {:.2} {} | Time: {:.2}ms",
-                                                        flashloan_amount,
-                                                        amount_a,
-                                                        amount_x_out,
-                                                        net_profit_value,
-                                                        if found_base_token_is_stable { "USDT" } else { "ETH" },
-                                                        elapsed.as_secs_f64() * 1000.0
-                                                    );
-
-                                                    if let Some(ref executor) = executor_clone {
-                                                        let hop1 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.buy_pool, token_x, token_a, &chain_config_clone);
-                                                        let hop2 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.sell_pool, token_a, token_x, &chain_config_clone);
-
-                                                        match (hop1, hop2) {
-                                                            (Ok(h1), Ok(h2)) => {
-                                                                match executor.execute_flashloan(opp_clone.clone(), vec![h1, h2], flashloan_amount, token_x, Some(net_profit_value)).await {
-                                                                    Ok(res) => info!("⚡️ 2-Hop Flashloan executed! Hash: {}", res.tx_hash),
-                                                                    Err(e) => warn!("⚠️ Flashloan aborted: {}", e),
-                                                                }
-                                                            }
-                                                            (e1, e2) => warn!("Failed building ExecHops: {:?} {:?}", e1.err(), e2.err())
-                                                        }
-                                                    }
-                                                } else {
-                                                    let net_profit_abs = net_profit.abs();
-                                                    let net_profit_after_decimals = net_profit_abs
-                                                        as f64
-                                                        / (10u128.pow(base_token_decimals as u32)
-                                                            as f64);
-                                                    let net_profit_value = net_profit_after_decimals
-                                                        * (if found_base_token_is_stable {
-                                                            1.0
-                                                        } else {
-                                                            eth_price
-                                                        });
-                                                    info!("2-hop unprofitable: net_profit = -{} | Time: {:.2}ms", net_profit_value, elapsed.as_secs_f64() * 1000.0);
-                                                }
-                                            }
-                                            Err(e) => {
-                                                let elapsed = start_time.elapsed();
-                                                warn!(
-                                                    "Failed to compute 2-hop arbitrage profit: {:?} | Time: {:.2}ms",
-                                                    e,
-                                                    elapsed.as_secs_f64() * 1000.0
-                                                );
-                                            }
-                                        }
-                                    } else {
-                                        // 3-hop: X -> A -> B -> X
-                                        // Use amm-eth API to find the best B -> X swap
-                                        info!(
-                                            "📊 Computing 3-hop arbitrage: {:?} -> {:?} -> {:?} -> {:?}",
-                                            token_x, token_a, other_token_in_sell_pool, token_x
-                                        );
-
-                                        // First, get the amount of token B we'll have after X -> A -> B
-                                        let token_b = other_token_in_sell_pool;
-                                        let start_time = std::time::Instant::now();
-                                        match arbitrade_dex_eth::utils::compute_arbitrage_path(
-                                            provider_for_compute.clone(),
-                                            flashloan_amount,
-                                            token_x,
-                                            token_a,
-                                            &opp_clone.buy_pool,
-                                            &opp_clone.sell_pool,
-                                            &chain_config_clone,
-                                            quote_router_client_clone.as_deref(),
-                                        )
-                                        .await
-                                        {
-                                            Ok((amount_a, amount_b, _profit_2hop)) => {
-                                                let elapsed_2hop = start_time.elapsed();
-                                                // Now find the best B -> X pool and compute final profit
-                                                let start_3hop_time = std::time::Instant::now();
-                                                match arbitrade_dex_eth::utils::find_best_b_to_x_swap(
-                                                    http_client_for_3hop.clone(),
-                                                    &dex_pair_api_for_3hop,
-                                                    token_b,
-                                                    token_x,
-                                                    amount_b,
-                                                    provider_for_compute.clone(),
-                                                    &chain_config_clone,
-                                                    quote_router_client_clone.as_deref(),
-                                                )
-                                                .await
-                                                {
-                                                    Ok((_best_pool, amount_x_final)) => {
-                                                        let elapsed_3hop = start_3hop_time.elapsed();
-                                                        // Calculate profit using U256 to avoid overflow
-                                                        let net_profit = if amount_x_final >= flashloan_amount {
-                                                            (amount_x_final - flashloan_amount).as_u128() as i128
-                                                        } else {
-                                                            -((flashloan_amount - amount_x_final).as_u128() as i128)
-                                                        };
-
-                                                        if net_profit > 0 {
-                                                            let net_profit_after_decimals = net_profit as f64
-                                                                / (10u128.pow(base_token_decimals as u32) as f64);
-                                                            let net_profit_value = net_profit_after_decimals * (if found_base_token_is_stable { 1.0 } else { eth_price });
-                                                            info!(
-                                                                "💰 PROFITABLE 3-HOP! {} -> {} -> {} -> {} | Net profit: {:.2} {} | X->A->B: {:.2}ms, B->X: {:.2}ms, Total: {:.2}ms",
-                                                                flashloan_amount,
-                                                                amount_a,
-                                                                amount_b,
-                                                                amount_x_final,
-                                                                net_profit_value,
-                                                                if found_base_token_is_stable { "USDT" } else { "ETH" },
-                                                                elapsed_2hop.as_secs_f64() * 1000.0,
-                                                                elapsed_3hop.as_secs_f64() * 1000.0,
-                                                                (elapsed_2hop + elapsed_3hop).as_secs_f64() * 1000.0
-                                                            );
-
-                                                            if let Some(ref executor) = executor_clone {
-                                                                let hop1 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.buy_pool, token_x, token_a, &chain_config_clone);
-                                                                let hop2 = arbitrade_dex_eth::utils::build_exec_hop(&opp_clone.sell_pool, token_a, token_b, &chain_config_clone);
-                                                                let hop3 = arbitrade_dex_eth::utils::build_exec_hop(&_best_pool, token_b, token_x, &chain_config_clone);
-
-
-                                                                match (hop1, hop2, hop3) {
-                                                                    (Ok(h1), Ok(h2), Ok(h3)) => {
-                                                                        match executor.execute_flashloan(opp_clone.clone(), vec![h1, h2, h3], flashloan_amount, token_x, Some(net_profit_value)).await {
-                                                                            Ok(res) => info!("⚡️ 3-Hop Flashloan executed! Hash: {}", res.tx_hash),
-                                                                            Err(e) => warn!("⚠️ Flashloan aborted: {}", e),
-                                                                        }
-                                                                    }
-                                                                    _ => warn!("Failed building 3-Hop ExecHops")
-                                                                }
-                                                            }
-                                                        } else {
-                                                            let net_profit_abs = net_profit.abs();
-                                                            let net_profit_after_decimals = net_profit_abs as f64
-                                                                / (10u128.pow(base_token_decimals as u32) as f64);
-                                                            let net_profit_value = net_profit_after_decimals * (if found_base_token_is_stable { 1.0 } else { eth_price });
-                                                            info!("3-hop unprofitable: net_profit = -{} | X->A->B: {:.2}ms, B->X: {:.2}ms, Total: {:.2}ms",
-                                                                net_profit_value,
-                                                                elapsed_2hop.as_secs_f64() * 1000.0,
-                                                                elapsed_3hop.as_secs_f64() * 1000.0,
-                                                                (elapsed_2hop + elapsed_3hop).as_secs_f64() * 1000.0
-                                                            );
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        let elapsed_3hop = start_3hop_time.elapsed();
-                                                        warn!(
-                                                            "Failed to find best B -> X swap: {:?} | X->A->B: {:.2}ms, B->X: {:.2}ms",
-                                                            e,
-                                                            elapsed_2hop.as_secs_f64() * 1000.0,
-                                                            elapsed_3hop.as_secs_f64() * 1000.0
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!(
-                                                    "Failed to compute X -> A -> B amounts: {:?}",
-                                                    e
-                                                );
-                                            }
-                                        }
-                                    }
-                                });
-
-                                // Store opportunity in memory (for API/dashboard later)
-                                let opp_key = format!(
-                                    "{}_{}",
-                                    opp.token_address,
-                                    SystemTime::now()
-                                        .duration_since(UNIX_EPOCH)
-                                        .unwrap()
-                                        .as_secs()
-                                );
-                                opps_detected.insert(opp_key, opp.clone());
-                            }
-
-                            executions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    });
+                    arbitrage_handler
+                        .handle_price_update_for_arbitrage(&price_update)
+                        .await;
                 }
             }
             Err(e) => error!("WebSocket error: {}", e),

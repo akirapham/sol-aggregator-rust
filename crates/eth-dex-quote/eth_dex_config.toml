@@ -50,13 +50,41 @@ fee_bps = 4
 [chains.arbitrum]
 chain_id = 42161
 chain_name = "arbitrum"
-rpc_url = "https://arbitrum-one-rpc.publicnode.com"
-quote_router = "0x09e2f790bD344cF842E1c5D37BAffB39f5c09985"
+rpc_url = "https://arb1.arbitrum.io/rpc"
+wss_url = "wss://arb1.arbitrum.io/feed"
+QuoteRouter = "0x09e2f790bD344cF842E1c5D37BAffB39f5c09985"
 base_tokens = [
     ["0x82af49447d8a07e3bd95bd0d56f35241523fbab1", false],  # WETH (not stable)
     ["0xaf88d065e77c8cc2239327c5edb3a432268e5831", true],   # USDC (native, stable)
     ["0xff970a61a04b1ca14834a43f5de4533ebddb5cc8", true],   # USDC.e (bridged, stable)
     ["0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", true],   # USDT (stable)
+]
+target_pools = [
+    "0x641c00a822e8b671738d32a431a4fb6074e5c79d", # WETH/USDT, Uniswap V3
+    "0xc6962004f452be9203591991d15f6b388e09e8d0", # WETH/USDC, Uniswap V3
+    "0xdd65ead5c92f22b357b1ae516362e4a98b1291ce", # OTM/USDT, Uniswap V3
+    "0xc6f780497a95e246eb9449f5e4770916dcd6396a", # WETH/ARB, Uniswap V3
+    "0x2f5e87c9312fa29aed5c179e456625d79015299c", # WBTC/WETH, Uniswap V3
+    "0xdaf544bcab17e2dcd293c3af28e67c7e8b5a49ee", # SOL/WETH, Uniswap V3
+    "0x4cef551255ec96d89fec975446301b5c4e164c59", # ZRO/WETH, Uniswap V3
+    "0x1e59fa2f0f4e34649fae55222eaf4d730ed35d95", # SOL/WETH, PancakeSwap V3
+    "0xc31e54c7a869b9fcbecc14363cf510d1c41fa443", # WETH/USDC.e, Uniswap V3
+    "0x6f38e884725a116c9c7fbf208e79fe8828a2595f", # WETH/USDC, Uniswap V3
+    "0x977f5d9a39049c73bc26edb3fa15d5f7c0ac82e9", # WETH/LINK, PancakeSwap V3
+    "0x36c46b34b306010136dd28bb3ba34f921dab53ba", # LYK/ARB, PancakeSwap V3
+    "0x770b4493fbed2584c47caeb8c8f7de74d810c49f", # #BTB/USDC, PancakeSwap V3
+    "0x0e65f47449920c4bc2127e5082d755286e07a01a", # #BTB/LYK, PancakeSwap V3
+    "0x04d1e97733131f8f9711d30aed1a7055832033cd", # HERMES/WETH, Uniswap V3
+    "0x72e68515fc898624930b0eafa502b4320b1ede46", # MAIA/HERMES, Uniswap V3
+    "0x5067384e6ad48de6f14732eabe749dc0f02f662f", # MAIA/WETH, Uniswap V3
+    "0xc1bf07800063efb46231029864cd22325ef8efe8", # @G/WETH, Uniswap V3
+    "0x80ceb98632409080924dce50c26acc25458dde17", # WETH/AAVE, PancakeSwap V3
+    "0x263f7b865de80355f91c00dfb975a821effbea24", # WETH/AAVE, Uniswap V3
+    "0xc868f85196facfbbc08b44975f83788dd922e482", # ZRO/USDT, Uniswap V3
+    "0xd13040d4fe917ee704158cfcb3338dcd2838b245", # RAIN/WETH, Uniswap V3
+    "0x2ad24e6cb77c2c7f09a5fa3fa5f23f3278046909", # WETH/SETH, Uniswap V3
+    "0xc82819f72a9e77e2c0c3a69b3196478f44303cf4", # WETH/USDT, Uniswap V3
+    "0x5969efdde3cf5c0d9a88ae51e47d721096a97203", # WBTC/USDT, Uniswap V3
 ]
 
 [chains.arbitrum.dexes.camelot_algebra]
@@ -66,13 +94,13 @@ fee_bps = 1
 
 [chains.arbitrum.dexes.uniswap_v3]
 router = "0xe592427a0aece92de3edee1f18e0157c05861564"
-quoter = "0xb27308f9f90d607463bb33ea1bebb41c27ce5ab6"
+quoter = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
 factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 fee_tiers = [100, 500, 3000, 10000]
 fee_bps = 1
 
 [chains.arbitrum.dexes.pancakeswap_v3]
-router = "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4"
+router = "0x32226588378236Fd0c7c4053999F88aC0e5cAc77"
 factory = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
 quoter = "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997"
 fee_tiers = [100, 500, 2500, 10000]
@@ -81,4 +109,9 @@ fee_bps = 1
 [chains.arbitrum.dexes.sushiswap_v2]
 router = "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
 factory = "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"
+fee_bps = 30
+
+[chains.arbitrum.dexes.uniswap_v2]
+router = "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24"
+factory = "0xf1D7CC68FB14022814A6E8B6327b9c3f4164e29A"
 fee_bps = 30

@@ -4,6 +4,8 @@ use ethers::types::Address;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::PriceCacheTrait;
+
 /// Thread-safe in-memory price cache for all pools
 /// Indexed by token address, then by pool address
 /// This cache stores TokenPriceUpdate directly from WebSocket messages
@@ -18,33 +20,6 @@ impl PriceCache {
         PriceCache {
             prices: Arc::new(DashMap::new()),
         }
-    }
-
-    /// Add or update a pool price from a TokenPriceUpdate
-    pub fn update_price(&self, price_update: TokenPriceUpdate) {
-        let token_addr = price_update.token_address.to_lowercase();
-        let pool_addr = price_update.pool_address.to_lowercase();
-
-        log::debug!(
-            "Storing price: token={}, pool={}, price_usd={:?}",
-            token_addr,
-            pool_addr,
-            price_update.price_in_usd
-        );
-
-        self.prices
-            .entry(token_addr.clone())
-            .or_insert_with(HashMap::new)
-            .insert(pool_addr, price_update);
-
-        // read price again
-        let prices_len = self.prices.get(&token_addr).unwrap().value().len();
-
-        log::debug!(
-            "Price stored. Cache now has {} for token {}",
-            prices_len,
-            token_addr
-        );
     }
 
     /// Get the best (lowest) price for a token across all pools
@@ -159,6 +134,26 @@ impl PriceCache {
             total_pools,
             tokens_with_multiple_pools: token_counts.iter().filter(|(_, c)| *c > 1).count(),
         }
+    }
+}
+
+impl PriceCacheTrait for PriceCache {
+    /// Add or update a pool price from a TokenPriceUpdate
+    fn update_price(&self, price_update: TokenPriceUpdate) {
+        let token_addr = price_update.token_address.to_lowercase();
+        let pool_addr = price_update.pool_address.to_lowercase();
+
+        log::debug!(
+            "Storing price: token={}, pool={}, price_usd={:?}",
+            token_addr,
+            pool_addr,
+            price_update.price_in_usd
+        );
+
+        self.prices
+            .entry(token_addr.clone())
+            .or_default()
+            .insert(pool_addr, price_update);
     }
 }
 

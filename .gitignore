@@ -30,8 +30,12 @@ logs
 *.log
 debug_dlmm
 *.txt
+.agents
 .agent
 .env.local
 .gitignore
 aws/
 k8s-manifests/
+out/
+cache/
+broadcast/

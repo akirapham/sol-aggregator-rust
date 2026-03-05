@@ -413,6 +413,10 @@ pub async fn compute_arbitrage_path<P: ethers::providers::Middleware + 'static>(
         -((flashloan_amount - amount_x_final).as_u128() as i128)
     };
 
+    if amount_x_final.is_zero() {
+        return Err(anyhow!("Swap output is zero, arbitrage failed"));
+    }
+
     Ok((amount_a, amount_x_final, net_profit))
 }
 
@@ -521,6 +525,10 @@ pub async fn compute_3hop_arbitrage_path<P: ethers::providers::Middleware + 'sta
         -((flashloan_amount - final_amount).as_u128() as i128)
     };
 
+    if final_amount.is_zero() {
+        return Err(anyhow!("Swap output is zero, 3-hop arbitrage failed"));
+    }
+
     Ok((amount_a, amount_b, final_amount, net_profit))
 }
 /// Helper function to compute swap output based on pool's dex_version
@@ -617,12 +625,123 @@ pub fn usdt_to_u256(amount: f64) -> U256 {
     U256::from(amount_with_decimals as u64)
 }
 
-/// Helper to convert f64 USDC amount to U256 with 6 decimals (USDC standard)
-pub fn usdc_to_u256(amount: f64) -> U256 {
-    let decimals = 6; // USDC has 6 decimals
-    let multiplier = 10_f64.powi(decimals);
-    let amount_with_decimals = amount * multiplier;
-    U256::from(amount_with_decimals as u64)
+/// Fetch available B->X pools from amm-eth API (no RPC calls)
+/// Returns vector of (pool, amount_out) for each pool (amount_out will be computed via quoteMultiPaths)
+pub async fn fetch_b_to_x_pools(
+    http_client: reqwest::Client,
+    dex_pair_api_url: &str,
+    token_b: Address,
+    token_x: Address,
+    _chain_config: &eth_dex_quote::config::ChainConfig,
+) -> Result<Vec<(TokenPriceUpdate, U256)>> {
+    let token_b_str = format!("{:?}", token_b).to_lowercase();
+    let url = format!("{}/pairs/{}", dex_pair_api_url, token_b_str);
+
+    let response = http_client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to fetch pairs from amm-eth: {}", e))?;
+
+    let pairs_data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| anyhow!("Failed to parse pairs response: {}", e))?;
+
+    let pairs_array = pairs_data
+        .get("pairs")
+        .and_then(|p| p.as_array())
+        .ok_or_else(|| anyhow!("No pairs found in response"))?;
+
+    if pairs_array.is_empty() {
+        return Err(anyhow!("No pairs available for token B"));
+    }
+
+    let token_x_str = format!("{:?}", token_x).to_lowercase();
+    let mut pools: Vec<(TokenPriceUpdate, U256)> = Vec::new();
+
+    for pair_json in pairs_array {
+        let pool_address = pair_json
+            .get("pool_address")
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
+        let token0 = pair_json
+            .get("pool_token0")
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
+        let token1 = pair_json
+            .get("pool_token1")
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
+        let dex_version = pair_json
+            .get("dex_version")
+            .and_then(|p| p.as_str())
+            .expect("Dex version missing");
+
+        let fee_tier = pair_json
+            .get("fee_tier")
+            .and_then(|p| p.as_u64())
+            .map(|f| f as u32);
+        let tick_spacing = pair_json
+            .get("tick_spacing")
+            .and_then(|p| p.as_i64())
+            .map(|t| t as i32);
+
+        let hooks = pair_json
+            .get("hooks")
+            .and_then(|p| p.as_str())
+            .and_then(|s| s.parse::<Address>().ok());
+
+        let decimals0 = pair_json
+            .get("decimals0")
+            .and_then(|p| p.as_u64())
+            .expect("Decimals0 missing") as u8;
+        let decimals1 = pair_json
+            .get("decimals1")
+            .and_then(|p| p.as_u64())
+            .expect("Decimals1 missing") as u8;
+
+        // Check if this pair can swap B -> X
+        let token_out_str;
+        let decimals_out;
+        if token0 == token_b_str && token1 == token_x_str {
+            token_out_str = token1.to_string();
+            decimals_out = decimals1;
+        } else if token1 == token_b_str && token0 == token_x_str {
+            token_out_str = token0.to_string();
+            decimals_out = decimals0;
+        } else {
+            continue;
+        };
+
+        let pool_update = TokenPriceUpdate {
+            token_address: token_out_str,
+            price_in_eth: 0.0,
+            price_in_usd: None,
+            pool_address: pool_address.to_string(),
+            dex_version: dex_version.to_string(),
+            decimals: decimals_out,
+            last_updated: 0,
+            pool_token0: token0.parse::<Address>().unwrap(),
+            pool_token1: token1.parse::<Address>().unwrap(),
+            eth_chain: eth_dex_quote::EthChain::Mainnet,
+            fee_tier,
+            tick_spacing,
+            hooks,
+            eth_price_usd: 2500.0,
+            reserve0: None,
+            reserve1: None,
+        };
+
+        // Just push the pool - amount_out will be computed via quoteMultiPaths
+        pools.push((pool_update, U256::zero()));
+    }
+
+    if pools.is_empty() {
+        return Err(anyhow!("No valid B->X pools found"));
+    }
+
+    Ok(pools)
 }
 
 /// Fetch available pairs for token B from amm-eth API and find best B -> X swap
@@ -793,6 +912,345 @@ pub async fn find_best_b_to_x_swap<P: ethers::providers::Middleware + 'static>(
 
     let pool = best_pool.ok_or_else(|| anyhow!("No valid pool found for B -> X swap"))?;
     Ok((pool, best_amount_out))
+}
+
+/// Helper to convert f64 USDC amount to U256 with 6 decimals (USDC standard)
+pub fn usdc_to_u256(amount: f64) -> U256 {
+    let decimals = 6; // USDC has 6 decimals
+    let multiplier = 10_f64.powi(decimals);
+    let amount_with_decimals = amount * multiplier;
+    U256::from(amount_with_decimals as u64)
+}
+
+use std::collections::HashSet;
+
+/// Build ALL possible 2-hop and 3-hop arbitrage paths for all base tokens
+/// and check them in a single RPC multicall
+#[allow(clippy::too_many_arguments)]
+pub async fn check_all_arbitrage_paths<P: ethers::providers::Middleware + 'static>(
+    http_client: reqwest::Client,
+    dex_pair_api_url: &str,
+    provider: Arc<P>,
+    base_tokens: Vec<(Address, bool)>, // (token_address, is_stable)
+    flashloan_amount: u64,
+    chain_config: &eth_dex_quote::config::ChainConfig,
+    quote_router_client: &eth_dex_quote::quote_router::QuoteRouterClient<P>,
+    eth_price: f64,
+) -> Result<Option<(Vec<eth_dex_quote::quote_router::ExecHop>, i128, Address, f64)>> {
+    let mut all_paths: Vec<eth_dex_quote::quote_router::PathQuote> = Vec::new();
+    // Metadata: (path_index, flashloan_token, is_stable, flashloan_wei)
+    let mut path_metadata: Vec<(usize, Address, bool, u64)> = Vec::new();
+
+    // Limit total paths to avoid RPC overload and invalid paths
+    const MAX_PATHS: usize = 200;
+
+    let mut path_count = 0;
+
+    for (token_x, is_stable) in &base_tokens {
+        if path_count >= MAX_PATHS {
+            break;
+        }
+        
+        let token_x_str = format!("{:?}", token_x).to_lowercase();
+        let url = format!("{}/pairs/{}", dex_pair_api_url, token_x_str);
+
+        let response = match http_client.get(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                log::debug!("Failed to fetch pairs for {}: {}", token_x_str, e);
+                continue;
+            }
+        };
+
+        let pairs_data: serde_json::Value = match response.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let pairs_array = match pairs_data.get("pairs").and_then(|p| p.as_array()) {
+            Some(arr) => arr,
+            None => continue,
+        };
+
+        // Collect all pools involving token_x
+        let mut pools_with_x: Vec<serde_json::Value> = Vec::new();
+        for pair in pairs_array {
+            let token0 = pair.get("pool_token0").and_then(|t| t.as_str()).unwrap_or("");
+            let token1 = pair.get("pool_token1").and_then(|t| t.as_str()).unwrap_or("");
+            if token0 == token_x_str || token1 == token_x_str {
+                pools_with_x.push(pair.clone());
+            }
+        }
+
+        // For each pool with X, get intermediate tokens and build 2-hop and 3-hop paths
+        for pool_with_x in &pools_with_x {
+            let token0 = pool_with_x.get("pool_token0").and_then(|t| t.as_str()).unwrap_or("");
+            let token1 = pool_with_x.get("pool_token1").and_then(|t| t.as_str()).unwrap_or("");
+            let pool_address = pool_with_x.get("pool_address").and_then(|t| t.as_str()).unwrap_or("");
+            let dex_version = pool_with_x.get("dex_version").and_then(|t| t.as_str()).unwrap_or("UniswapV3");
+            let fee_tier = pool_with_x.get("fee_tier").and_then(|t| t.as_u64()).map(|f| f as u32);
+            let tick_spacing = pool_with_x.get("tick_spacing").and_then(|t| t.as_i64()).map(|t| t as i32);
+            let hooks = pool_with_x.get("hooks").and_then(|t| t.as_str()).and_then(|s| s.parse::<Address>().ok());
+
+            // Determine which token is the intermediate (not token_x)
+            let token_a_str = if token0 == token_x_str { token1 } else { token0 };
+            let token_a: Address = match token_a_str.parse() {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+
+            // Build TokenPriceUpdate for this pool
+            let pool_update = TokenPriceUpdate {
+                token_address: token_a_str.to_string(),
+                price_in_eth: 0.0,
+                price_in_usd: None,
+                pool_address: pool_address.to_string(),
+                dex_version: dex_version.to_string(),
+                decimals: 18,
+                last_updated: 0,
+                pool_token0: token0.parse().unwrap_or_default(),
+                pool_token1: token1.parse().unwrap_or_default(),
+                eth_chain: eth_dex_quote::EthChain::Mainnet,
+                fee_tier,
+                tick_spacing,
+                hooks,
+                eth_price_usd: eth_price,
+                reserve0: None,
+                reserve1: None,
+            };
+
+            // Build hop for X -> A
+            let hop1 = match build_hop(&pool_update, *token_x, token_a, chain_config) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+
+            // 2-hop path: X -> A -> X
+            let hop1_rev = eth_dex_quote::quote_router::Hop {
+                pool_type: hop1.pool_type,
+                router: hop1.router,
+                token_in: token_a,
+                token_out: *token_x,
+                fee: hop1.fee,
+            };
+
+            let flashloan_wei = if *is_stable {
+                (flashloan_amount as f64 * 1_000_000f64) as u64
+            } else {
+                (flashloan_amount as f64 / eth_price * 1e18f64) as u64
+            };
+            let amount_in = U256::from(flashloan_wei);
+
+            let path_2hop = eth_dex_quote::quote_router::PathQuote {
+                hops: vec![hop1.clone(), hop1_rev],
+                amount_in,
+            };
+            all_paths.push(path_2hop);
+            path_metadata.push((all_paths.len() - 1, *token_x, *is_stable, flashloan_wei));
+            path_count += 1;
+
+            if path_count >= MAX_PATHS {
+                break;
+            }
+
+            // Fetch pools for token A to build 3-hop paths
+            let url_a = format!("{}/pairs/{}", dex_pair_api_url, token_a_str);
+            if let Ok(response_a) = http_client.get(&url_a).send().await {
+                if let Ok(pairs_data_a) = response_a.json::<serde_json::Value>().await {
+                    if let Some(pairs_array_a) = pairs_data_a.get("pairs").and_then(|p| p.as_array()) {
+                        // Use HashSet to avoid duplicate intermediate tokens
+                        let mut seen_tokens: HashSet<String> = HashSet::new();
+
+                        for pair_a in pairs_array_a {
+                            let token0_a = pair_a.get("pool_token0").and_then(|t| t.as_str()).unwrap_or("");
+                            let token1_a = pair_a.get("pool_token1").and_then(|t| t.as_str()).unwrap_or("");
+                            
+                            // Skip if both tokens are X or A
+                            if (token0_a == token_x_str && token1_a == token_a_str) || 
+                               (token1_a == token_x_str && token0_a == token_a_str) {
+                                continue;
+                            }
+
+                            // Get intermediate token B (not X, not A)
+                            let token_b_str = if token0_a == token_a_str { token1_a } else if token1_a == token_a_str { token0_a } else { continue };
+                            
+                            // Skip if we've already processed this token B for this path
+                            if !seen_tokens.insert(token_b_str.to_string()) {
+                                continue;
+                            }
+
+                            let token_b: Address = match token_b_str.parse() {
+                                Ok(b) => b,
+                                Err(_) => continue,
+                            };
+
+                            let pool_address_b = pair_a.get("pool_address").and_then(|t| t.as_str()).unwrap_or("");
+                            let dex_version_b = pair_a.get("dex_version").and_then(|t| t.as_str()).unwrap_or("UniswapV3");
+                            let fee_tier_b = pair_a.get("fee_tier").and_then(|t| t.as_u64()).map(|f| f as u32);
+                            let tick_spacing_b = pair_a.get("tick_spacing").and_then(|t| t.as_i64()).map(|t| t as i32);
+                            let hooks_b = pair_a.get("hooks").and_then(|t| t.as_str()).and_then(|s| s.parse::<Address>().ok());
+
+                            let pool_update_b = TokenPriceUpdate {
+                                token_address: token_b_str.to_string(),
+                                price_in_eth: 0.0,
+                                price_in_usd: None,
+                                pool_address: pool_address_b.to_string(),
+                                dex_version: dex_version_b.to_string(),
+                                decimals: 18,
+                                last_updated: 0,
+                                pool_token0: token0_a.parse().unwrap_or_default(),
+                                pool_token1: token1_a.parse().unwrap_or_default(),
+                                eth_chain: eth_dex_quote::EthChain::Mainnet,
+                                fee_tier: fee_tier_b,
+                                tick_spacing: tick_spacing_b,
+                                hooks: hooks_b,
+                                eth_price_usd: eth_price,
+                                reserve0: None,
+                                reserve1: None,
+                            };
+
+                            // Build hop for A -> B
+                            let hop2 = match build_hop(&pool_update_b, token_a, token_b, chain_config) {
+                                Ok(h) => h,
+                                Err(_) => continue,
+                            };
+
+                            // Build hop for B -> X
+                            // First need to find a pool with B -> X
+                            let url_bx = format!("{}/pairs/{}", dex_pair_api_url, token_b_str);
+                            if let Ok(response_bx) = http_client.get(&url_bx).send().await {
+                                if let Ok(pairs_data_bx) = response_bx.json::<serde_json::Value>().await {
+                                    if let Some(pairs_array_bx) = pairs_data_bx.get("pairs").and_then(|p| p.as_array()) {
+                                        for pair_bx in pairs_array_bx {
+                                            let token0_bx = pair_bx.get("pool_token0").and_then(|t| t.as_str()).unwrap_or("");
+                                            let token1_bx = pair_bx.get("pool_token1").and_then(|t| t.as_str()).unwrap_or("");
+                                            
+                                            // Check if this pool connects B to X
+                                            let pool_bx = if token0_bx == token_b_str && token1_bx == token_x_str {
+                                                pair_bx
+                                            } else if token1_bx == token_b_str && token0_bx == token_x_str {
+                                                pair_bx
+                                            } else {
+                                                continue;
+                                            };
+
+                                            let pool_address_bx = pool_bx.get("pool_address").and_then(|t| t.as_str()).unwrap_or("");
+                                            let dex_version_bx = pool_bx.get("dex_version").and_then(|t| t.as_str()).unwrap_or("UniswapV3");
+                                            let fee_tier_bx = pool_bx.get("fee_tier").and_then(|t| t.as_u64()).map(|f| f as u32);
+                                            let tick_spacing_bx = pool_bx.get("tick_spacing").and_then(|t| t.as_i64()).map(|t| t as i32);
+                                            let hooks_bx = pool_bx.get("hooks").and_then(|t| t.as_str()).and_then(|s| s.parse::<Address>().ok());
+
+                                            let pool_update_bx = TokenPriceUpdate {
+                                                token_address: token_x_str.clone(),
+                                                price_in_eth: 0.0,
+                                                price_in_usd: None,
+                                                pool_address: pool_address_bx.to_string(),
+                                                dex_version: dex_version_bx.to_string(),
+                                                decimals: 18,
+                                                last_updated: 0,
+                                                pool_token0: token0_bx.parse().unwrap_or_default(),
+                                                pool_token1: token1_bx.parse().unwrap_or_default(),
+                                                eth_chain: eth_dex_quote::EthChain::Mainnet,
+                                                fee_tier: fee_tier_bx,
+                                                tick_spacing: tick_spacing_bx,
+                                                hooks: hooks_bx,
+                                                eth_price_usd: eth_price,
+                                                reserve0: None,
+                                                reserve1: None,
+                                            };
+
+                                            let hop3 = match build_hop(&pool_update_bx, token_b, *token_x, chain_config) {
+                                                Ok(h) => h,
+                                                Err(_) => continue,
+                                            };
+
+                                            // 3-hop path: X -> A -> B -> X
+                                            let path_3hop = eth_dex_quote::quote_router::PathQuote {
+                                                hops: vec![hop1.clone(), hop2.clone(), hop3],
+                                                amount_in,
+                                            };
+                                            all_paths.push(path_3hop);
+                                            path_metadata.push((all_paths.len() - 1, *token_x, *is_stable, flashloan_wei));
+                                            path_count += 1;
+
+                                            if path_count >= MAX_PATHS {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if path_count >= MAX_PATHS {
+            break;
+        }
+    }
+
+    if all_paths.is_empty() {
+        return Ok(None);
+    }
+
+    log::info!("Checking {} total arbitrage paths (capped at {})", all_paths.len(), MAX_PATHS);
+
+    // Single RPC call to get all quotes
+    let results = quote_router_client.quote_multi_paths(all_paths).await
+        .map_err(|e| anyhow!("quote_multi_paths failed: {:?}", e))?;
+
+    // Find best profitable path
+    let mut best_idx: Option<usize> = None;
+    let mut best_profit: i128 = 0;
+    let mut best_flashloan_token = Address::zero();
+    let mut best_is_stable = false;
+
+    for (i, result) in results.iter().enumerate() {
+        if !result.success || result.amount_out.is_zero() {
+            continue;
+        }
+
+        let (_, flashloan_token, is_stable, flashloan_wei_val) = path_metadata.get(i).cloned()
+            .unwrap_or((0, Address::zero(), false, 0));
+
+        let profit = if result.amount_out >= U256::from(flashloan_wei_val) {
+            (result.amount_out - U256::from(flashloan_wei_val)).as_u128() as i128
+        } else {
+            -((U256::from(flashloan_wei_val) - result.amount_out).as_u128() as i128)
+        };
+
+        if profit > best_profit {
+            best_profit = profit;
+            best_idx = Some(i);
+            best_flashloan_token = flashloan_token;
+            best_is_stable = is_stable;
+        }
+    }
+
+    if let Some(idx) = best_idx {
+        if best_profit > 0 {
+            let profit_usd = if best_is_stable {
+                best_profit as f64 / 1_000_000f64
+            } else {
+                best_profit as f64 / 1e18f64 * eth_price
+            };
+
+            log::info!("💰 Found profitable path! Profit: {:.2} USD", profit_usd);
+
+            // Build execution hops for the best path
+            // Reconstruct the path using the metadata
+            let (_, token_x, is_stable, _) = path_metadata.get(idx).cloned()
+                .unwrap_or((0, Address::zero(), false, 0));
+            
+            // For now, return None - actual execution would need to rebuild the exact hops
+            // This is the comprehensive check function - execution can be added later
+            return Ok(Some((Vec::new(), best_profit, token_x, profit_usd)));
+        }
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]

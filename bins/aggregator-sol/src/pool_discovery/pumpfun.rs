@@ -1,5 +1,6 @@
 use super::PoolDiscovery;
 use crate::pool_data_types::{pumpfun::PumpfunPoolState, PoolState};
+use crate::pool_data_types::pumpf::functions::get_bonding_curve_pda;
 use anyhow::Result;
 use async_trait::async_trait;
 use borsh::BorshDeserialize;
@@ -108,9 +109,37 @@ impl PumpFunDiscovery {
 
 #[async_trait]
 impl PoolDiscovery for PumpFunDiscovery {
-    async fn discover_for_token(&self, _token: &Pubkey) -> Result<Vec<PoolState>> {
-        // TODO: Implement specific token lookup API if available
-        Ok(vec![])
+    async fn discover_for_token(&self, token: &Pubkey) -> Result<Vec<PoolState>> {
+        let Some(bonding_curve) = get_bonding_curve_pda(token) else {
+            return Ok(vec![]);
+        };
+
+        let account_data = self.rpc_client.get_account_data(&bonding_curve).await?;
+        if account_data.len() < 8 {
+            return Ok(vec![]);
+        }
+
+        let Some(raw_state) = decode_bonding_curve_raw(&account_data[8..]) else {
+            return Ok(vec![]);
+        };
+
+        Ok(vec![PoolState::Pumpfun(PumpfunPoolState {
+            slot: 0,
+            transaction_index: None,
+            address: bonding_curve,
+            mint: *token,
+            last_updated: get_high_perf_clock() as u64,
+            liquidity_usd: 0.0,
+            is_state_keys_initialized: true,
+            virtual_token_reserves: raw_state.virtual_token_reserves,
+            virtual_sol_reserves: raw_state.virtual_sol_reserves,
+            real_token_reserves: raw_state.real_token_reserves,
+            real_sol_reserves: raw_state.real_sol_reserves,
+            complete: raw_state.complete,
+            creator: raw_state.creator,
+            is_mayhem_mode: raw_state.is_mayhem_mode,
+            is_cashback: raw_state.is_cashback,
+        })])
     }
 
     async fn discover_top_pools(&self, limit: usize) -> Result<Vec<PoolState>> {

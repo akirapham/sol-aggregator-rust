@@ -163,6 +163,120 @@ async fn test_pumpfun_quote_simulation() {
 }
 
 #[tokio::test]
+async fn test_pumpfun_quote_hydrates_missing_token_and_pool() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    let token_mint_address =
+        Pubkey::from_str("7JnSRL1kFKBhQKW4B4BusYcTq5mXPtjnC5pnqqLFpump").unwrap();
+    let bonding_curve_address = get_bonding_curve_pda(&token_mint_address).unwrap();
+
+    pool_manager.inject_token(wsol_token()).await;
+
+    assert!(pool_manager.get_token(&token_mint_address).await.is_none());
+    assert!(pool_manager.get_pool(&bonding_curve_address).is_none());
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client,
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let request = QuoteRequest {
+        input_token: wsol_token().address.to_string(),
+        output_token: token_mint_address.to_string(),
+        user_wallet: "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string(),
+        input_amount: 100_000_000,
+        slippage_bps: 500,
+    };
+
+    let response =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await
+            .expect("Quote should hydrate missing PumpFun token/pool");
+
+    assert!(response.0.output_amount > 0);
+    assert!(pool_manager.get_token(&token_mint_address).await.is_some());
+    assert!(pool_manager.get_pool(&bonding_curve_address).is_some());
+}
+
+#[tokio::test]
+async fn test_pumpfun_quote_hydrates_missing_token_and_pool_simulation() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    let token_mint_address =
+        Pubkey::from_str("7JnSRL1kFKBhQKW4B4BusYcTq5mXPtjnC5pnqqLFpump").unwrap();
+    let bonding_curve_address = get_bonding_curve_pda(&token_mint_address).unwrap();
+
+    pool_manager.inject_token(wsol_token()).await;
+
+    assert!(pool_manager.get_token(&token_mint_address).await.is_none());
+    assert!(pool_manager.get_pool(&bonding_curve_address).is_none());
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client: rpc_client.clone(),
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let request = QuoteRequest {
+        input_token: wsol_token().address.to_string(),
+        output_token: token_mint_address.to_string(),
+        user_wallet: "DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm".to_string(),
+        input_amount: 100_000_000,
+        slippage_bps: 500,
+    };
+
+    let response =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await
+            .expect("Quote should hydrate and simulate missing PumpFun token/pool")
+            .0;
+
+    assert!(response.output_amount > 0);
+    assert!(pool_manager.get_token(&token_mint_address).await.is_some());
+    assert!(pool_manager.get_pool(&bonding_curve_address).is_some());
+
+    let tx_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&response.transaction)
+        .expect("Failed to decode base64 transaction");
+
+    let (transaction, _): (Transaction, usize) =
+        bincode::serde::decode_from_slice(&tx_bytes, bincode::config::standard())
+            .expect("Failed to deserialize transaction");
+
+    let simulation = rpc_client
+        .simulate_transaction(&transaction)
+        .await
+        .expect("Simulation RPC call failed");
+
+    assert!(
+        simulation.value.err.is_none(),
+        "Simulation should succeed. Error: {:?}",
+        simulation.value.err
+    );
+    assert!(
+        simulation.value.units_consumed.unwrap_or_default() > 0,
+        "Should consume compute units"
+    );
+}
+
+#[tokio::test]
 async fn test_pumpfun_quote() {
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
 

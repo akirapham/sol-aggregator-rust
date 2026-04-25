@@ -148,6 +148,36 @@ pub async fn get_quote(
     let output_token_key = parse_pubkey_with_error(request.output_token.as_str(), "output_token")?;
     let user_wallet = parse_pubkey_with_error(request.user_wallet.as_str(), "user_wallet")?;
 
+    if input_token_key == crate::constants::WSOL_PUBKEY && output_token_key != crate::constants::WSOL_PUBKEY {
+        if let Err(err) = state
+            .aggregator
+            .get_pool_manager()
+            .ensure_pumpfun_pool_for_token(&output_token_key)
+            .await
+        {
+            log::debug!(
+                "PumpFun quote hydration for output token {} failed: {}",
+                output_token_key,
+                err
+            );
+        }
+    } else if output_token_key == crate::constants::WSOL_PUBKEY
+        && input_token_key != crate::constants::WSOL_PUBKEY
+    {
+        if let Err(err) = state
+            .aggregator
+            .get_pool_manager()
+            .ensure_pumpfun_pool_for_token(&input_token_key)
+            .await
+        {
+            log::debug!(
+                "PumpFun quote hydration for input token {} failed: {}",
+                input_token_key,
+                err
+            );
+        }
+    }
+
     // Get tokens from pool manager
     let input_token = get_token_with_error(
         &state.aggregator,

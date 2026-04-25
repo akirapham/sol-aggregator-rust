@@ -133,6 +133,7 @@ pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
     async fn remove_arbitrage_token(&self, token: &Pubkey) -> Result<(), String>;
     async fn get_chain_state(&self) -> ChainStateUpdate;
     fn get_rpc_client(&self) -> Option<&Arc<RpcClient>>;
+    async fn ensure_pumpfun_pool_for_token(&self, token_address: &Pubkey) -> Result<bool, String>;
 }
 
 /// In-memory pool state manager with real-time updates
@@ -1513,6 +1514,81 @@ impl PoolStateManager {
         cache.insert(token.address, token);
     }
 
+    pub async fn ensure_pumpfun_pool_for_token(
+        &self,
+        token_address: &Pubkey,
+    ) -> Result<bool, String> {
+        if *token_address == crate::constants::WSOL_PUBKEY {
+            return Ok(false);
+        }
+
+        let bonding_curve_address =
+            crate::pool_data_types::pumpf::functions::get_bonding_curve_pda(token_address)
+                .ok_or_else(|| {
+                    format!(
+                        "Failed to derive PumpFun bonding curve PDA for token {}",
+                        token_address
+                    )
+                })?;
+
+        let token_missing = self.get_token(token_address).await.is_none();
+        let pool_missing = self.get_pool(&bonding_curve_address).is_none();
+
+        if !token_missing && !pool_missing {
+            return Ok(false);
+        }
+
+        let mut hydrated = false;
+
+        if pool_missing {
+            let discovered_pools = self
+                .pumpfun_discovery
+                .discover_for_token(token_address)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Failed to discover PumpFun pool for token {}: {}",
+                        token_address, e
+                    )
+                })?;
+
+            let sol_price = self.get_sol_price();
+            let min_fresh_timestamp = self
+                .startup_time
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64
+                + Duration::from_secs(11).as_micros() as u64;
+            for mut pool_state in discovered_pools {
+                if let PoolState::Pumpfun(state) = &mut pool_state {
+                    state.liquidity_usd =
+                        state.virtual_sol_reserves as f64 / 1_000_000_000_f64 * sol_price;
+                    state.last_updated = state.last_updated.max(min_fresh_timestamp);
+                }
+                Self::insert_new_pool(
+                    pool_state,
+                    self.pools.clone(),
+                    self.pair_to_pools.clone(),
+                    self.dex_pools.clone(),
+                    self.token_cache.clone(),
+                    self.rpc_client.clone(),
+                )
+                .await;
+                hydrated = true;
+            }
+        }
+
+        if self.get_token(token_address).await.is_none() {
+            let token = fetch_token(token_address, &self.rpc_client)
+                .await
+                .map_err(|e| format!("Failed to fetch token metadata {}: {}", token_address, e))?;
+            self.store_token(token).await;
+            hydrated = true;
+        }
+
+        Ok(hydrated)
+    }
+
     /// Get pools for a specific DEX (excluding stale pools)
     pub fn get_pools_for_dex(&self, dex: DexType) -> Vec<PoolState> {
         // Step 1: Get pool addresses for this DEX
@@ -2133,5 +2209,9 @@ impl PoolDataProvider for PoolStateManager {
 
     fn get_rpc_client(&self) -> Option<&Arc<RpcClient>> {
         Some(&self.rpc_client)
+    }
+
+    async fn ensure_pumpfun_pool_for_token(&self, token_address: &Pubkey) -> Result<bool, String> {
+        self.ensure_pumpfun_pool_for_token(token_address).await
     }
 }

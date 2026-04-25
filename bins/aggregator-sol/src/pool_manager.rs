@@ -20,8 +20,8 @@ use crate::utils::{pool_update_event_to_pool_state, update_pool_state_by_event};
 use anyhow::Result;
 use async_trait::async_trait;
 use borsh::BorshDeserialize;
-use futures::stream::{self, StreamExt};
 use dashmap::{DashMap, DashSet};
+use futures::stream::{self, StreamExt};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ pub struct ArbitragePoolUpdate {
 /// Type alias for pool storage — DashMap for lock-free per-shard concurrent access
 type PoolStorage = Arc<DashMap<Pubkey, PoolState>>;
 /// Type alias for token pair to pool addresses mapping
-type PairToPoolsMap = Arc<DashMap<(Pubkey, Pubkey), HashSet<Pubkey>>>;
+type PairToPoolsMap = Arc<DashMap<(Pubkey, Pubkey), Vec<Pubkey>>>;
 /// Type alias for DEX to pool addresses mapping
 type DexPoolsMap = Arc<DashMap<DexType, HashSet<Pubkey>>>;
 /// Type alias for pending pool updates buffer
@@ -86,6 +86,31 @@ pub struct PoolForTickFetching {
 /// Type alias for pending pools to fetch tick arrays (pool address + DEX type)
 /// Pending pools for tick fetching
 type PendingPoolsForTickFetching = Arc<Mutex<HashSet<PoolForTickFetching>>>;
+
+fn normalized_pair(token_a: Pubkey, token_b: Pubkey) -> (Pubkey, Pubkey) {
+    if token_a < token_b {
+        (token_a, token_b)
+    } else {
+        (token_b, token_a)
+    }
+}
+
+fn push_unique_pool_address(pool_addresses: &mut Vec<Pubkey>, pool_address: Pubkey) {
+    if !pool_addresses.iter().any(|addr| *addr == pool_address) {
+        pool_addresses.push(pool_address);
+    }
+}
+
+fn insert_pair_mapping(
+    pair_to_pools: &PairToPoolsMap,
+    token_a: Pubkey,
+    token_b: Pubkey,
+    pool_address: Pubkey,
+) {
+    let key = normalized_pair(token_a, token_b);
+    let mut pool_addresses = pair_to_pools.entry(key).or_default();
+    push_unique_pool_address(&mut pool_addresses, pool_address);
+}
 
 #[async_trait]
 pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
@@ -229,38 +254,67 @@ impl PoolStateManager {
                 interval.tick().await;
                 log::info!("Starting periodic save to Postgres...");
 
-                // Collect tokens
-                let tokens: Vec<Token> = {
+                const SAVE_CHUNK_SIZE: usize = 500;
+
+                let token_keys: Vec<Pubkey> = {
                     let token_read = token_cache_clone.read().await;
-                    token_read.values().cloned().collect()
+                    token_read.keys().copied().collect()
                 };
 
-                // Collect pools
-                let pools: Vec<PoolState> = {
-                    pools_clone.iter().map(|entry| entry.value().clone()).collect()
-                };
+                let mut saved_tokens = 0usize;
+                for chunk in token_keys.chunks(SAVE_CHUNK_SIZE) {
+                    let tokens: Vec<Token> = {
+                        let token_read = token_cache_clone.read().await;
+                        chunk
+                            .iter()
+                            .filter_map(|address| token_read.get(address).cloned())
+                            .collect()
+                    };
 
-                if let Err(e) = db_clone.save_tokens(&tokens).await {
-                    log::error!("Failed to save tokens to Postgres: {}", e);
-                } else {
-                    log::info!("Saved {} tokens to Postgres", tokens.len());
-                }
-                if let Err(e) = db_clone.save_pools(&pools).await {
-                    // Check if it's a foreign key violation (Postgres error code 23503)
-                    let error_msg = e.to_string();
-                    if error_msg.contains("violates foreign key constraint") {
-                        // This is expected during startup/high load when tokens haven't been fetched yet
-                        // We can just log a warning and retry next time
-                        log::warn!(
-                            "Skipping pool save due to missing tokens (FK violation). Will retry next cycle. Error: {}",
-                            error_msg
-                        );
-                    } else {
-                        log::error!("Failed to save pools to Postgres: {}", e);
+                    if tokens.is_empty() {
+                        continue;
                     }
-                } else {
-                    log::info!("Saved {} pools to Postgres", pools.len());
+
+                    if let Err(e) = db_clone.save_tokens(&tokens).await {
+                        log::error!("Failed to save tokens to Postgres: {}", e);
+                    } else {
+                        saved_tokens += tokens.len();
+                    }
                 }
+                log::info!("Saved {} tokens to Postgres", saved_tokens);
+
+                let pool_keys: Vec<Pubkey> = pools_clone.iter().map(|entry| *entry.key()).collect();
+                let mut saved_pools = 0usize;
+                for chunk in pool_keys.chunks(SAVE_CHUNK_SIZE) {
+                    let pools: Vec<PoolState> = chunk
+                        .iter()
+                        .filter_map(|address| {
+                            pools_clone.get(address).map(|entry| entry.value().clone())
+                        })
+                        .collect();
+
+                    if pools.is_empty() {
+                        continue;
+                    }
+
+                    if let Err(e) = db_clone.save_pools(&pools).await {
+                        // Check if it's a foreign key violation (Postgres error code 23503)
+                        let error_msg = e.to_string();
+                        if error_msg.contains("violates foreign key constraint") {
+                            // This is expected during startup/high load when tokens haven't been fetched yet
+                            // We can just log a warning and retry next time
+                            log::warn!(
+                                "Skipping pool save chunk due to missing tokens (FK violation). Will retry next cycle. Error: {}",
+                                error_msg
+                            );
+                        } else {
+                            log::error!("Failed to save pools to Postgres: {}", e);
+                        }
+                    } else {
+                        saved_pools += pools.len();
+                    }
+                }
+                log::info!("Saved {} pools to Postgres", saved_pools);
             }
         });
 
@@ -276,18 +330,7 @@ impl PoolStateManager {
 
         self.pools.insert(pool_address, pool);
 
-        // Insert both directions
-        self.pair_to_pools
-            .entry((token_a, token_b))
-            .or_insert_with(HashSet::new)
-            .insert(pool_address);
-
-        if token_a != token_b {
-            self.pair_to_pools
-                .entry((token_b, token_a))
-                .or_insert_with(HashSet::new)
-                .insert(pool_address);
-        }
+        insert_pair_mapping(&self.pair_to_pools, token_a, token_b, pool_address);
 
         self.tick_synced_pools.insert(pool_address);
     }
@@ -382,18 +425,12 @@ impl PoolStateManager {
 
                                     pools_cache.insert(pool_address, pool.clone());
 
-                                    // Update pair map
-                                    pair_to_pools_cache
-                                        .entry((token_a, token_b))
-                                        .or_insert_with(HashSet::new)
-                                        .insert(pool_address);
-
-                                    if token_a != token_b {
-                                        pair_to_pools_cache
-                                            .entry((token_b, token_a))
-                                            .or_insert_with(HashSet::new)
-                                            .insert(pool_address);
-                                    }
+                                    insert_pair_mapping(
+                                        &pair_to_pools_cache,
+                                        token_a,
+                                        token_b,
+                                        pool_address,
+                                    );
 
                                     // Update dex map
                                     dex_pools_cache
@@ -1210,7 +1247,8 @@ impl PoolStateManager {
         if pool_exists {
             // Update pool in-place via DashMap RefMut
             if let Some(mut pool_ref) = pools.get_mut(&pool_address) {
-                pool_with_ticks = update_pool_state_by_event(update, pool_ref.value_mut(), sol_price);
+                pool_with_ticks =
+                    update_pool_state_by_event(update, pool_ref.value_mut(), sol_price);
                 pool_dex_type = Some(pool_ref.value().dex());
             }
         } else {
@@ -1242,7 +1280,7 @@ impl PoolStateManager {
 
         if pool_with_ticks {
             if let Some(dex_type) = pool_dex_type {
-            if !tick_synced_pools.contains(&pool_address) {
+                if !tick_synced_pools.contains(&pool_address) {
                     let mut pending_fetch = pending_pools_to_fetch_tick_arrays.lock().await;
                     pending_fetch.insert(PoolForTickFetching {
                         address: pool_address,
@@ -1336,17 +1374,7 @@ impl PoolStateManager {
             }
         }
 
-        // Update mappings
-        pair_to_pools
-            .entry((token_a, token_b))
-            .or_insert_with(HashSet::new)
-            .insert(pool_address);
-        if (token_a, token_b) != (token_b, token_a) {
-            pair_to_pools
-                .entry((token_b, token_a))
-                .or_insert_with(HashSet::new)
-                .insert(pool_address);
-        }
+        insert_pair_mapping(&pair_to_pools, token_a, token_b, pool_address);
 
         dex_pools
             .entry(dex)
@@ -1394,11 +1422,7 @@ impl PoolStateManager {
     /// Get all pools for a token pair (excluding stale pools)
     pub fn get_pools_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> Vec<PoolState> {
         // Step 1: Get pool addresses (quick map read)
-        let key = if token_a < token_b {
-            (*token_a, *token_b)
-        } else {
-            (*token_b, *token_a)
-        };
+        let key = normalized_pair(*token_a, *token_b);
         let pool_addresses = self
             .pair_to_pools
             .get(&key)
@@ -1462,23 +1486,15 @@ impl PoolStateManager {
         token_a: &Pubkey,
         token_b: &Pubkey,
     ) -> HashSet<Pubkey> {
-        let key = if token_a < token_b {
-            (*token_a, *token_b)
-        } else {
-            (*token_b, *token_a)
-        };
+        let key = normalized_pair(*token_a, *token_b);
         self.pair_to_pools
             .get(&key)
-            .map(|r| r.value().clone())
+            .map(|r| r.value().iter().copied().collect())
             .unwrap_or_default()
     }
 
     pub fn get_pool_count_for_pair(&self, token_a: &Pubkey, token_b: &Pubkey) -> usize {
-        let key = if token_a < token_b {
-            (*token_a, *token_b)
-        } else {
-            (*token_b, *token_a)
-        };
+        let key = normalized_pair(*token_a, *token_b);
         self.pair_to_pools
             .get(&key)
             .map(|r| r.value().len())
@@ -1539,7 +1555,8 @@ impl PoolStateManager {
             total_pools: self.pools.len(),
             total_pairs: self.pair_to_pools.len(),
             total_tokens: token_cache.len(),
-            pools_by_dex: self.dex_pools
+            pools_by_dex: self
+                .dex_pools
                 .iter()
                 .map(|entry| (*entry.key(), entry.value().len()))
                 .collect(),
@@ -1612,7 +1629,7 @@ impl PoolStateManager {
 
     /// Rebuild pair_to_pools and dex_pools mappings from existing pools
     async fn rebuild_mappings_from_pools(&self) {
-        let mut pair_to_pools_map: HashMap<(Pubkey, Pubkey), HashSet<Pubkey>> = HashMap::new();
+        let mut pair_to_pools_map: HashMap<(Pubkey, Pubkey), Vec<Pubkey>> = HashMap::new();
         let mut dex_pools_map: HashMap<DexType, HashSet<Pubkey>> = HashMap::new();
         let mut raydium_clmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
         let mut raydium_cpmm_amm_configs_set: HashSet<Pubkey> = HashSet::new();
@@ -1704,18 +1721,10 @@ impl PoolStateManager {
                 continue;
             }
 
-            // Add to pair_to_pools mapping (both directions)
-            pair_to_pools_map
-                .entry((token_a, token_b))
-                .or_default()
-                .insert(*pool_address);
-
-            if (token_a, token_b) != (token_b, token_a) {
-                pair_to_pools_map
-                    .entry((token_b, token_a))
-                    .or_default()
-                    .insert(*pool_address);
-            }
+            // Add one normalized pair mapping. Lookups normalize the same way.
+            let pair_key = normalized_pair(token_a, token_b);
+            let pool_addresses = pair_to_pools_map.entry(pair_key).or_default();
+            push_unique_pool_address(pool_addresses, *pool_address);
 
             // Add to dex_pools mapping
             dex_pools_map
@@ -1853,17 +1862,36 @@ impl PoolStateManager {
         let msg = "Saving pools to database...";
         log::info!("{}", msg);
 
-        // Collect tokens
-        let tokens: Vec<Token> = {
+        const SAVE_CHUNK_SIZE: usize = 500;
+
+        let token_keys: Vec<Pubkey> = {
             let token_read = self.token_cache.read().await;
-            token_read.values().cloned().collect()
+            token_read.keys().copied().collect()
         };
 
-        // Collect pools
-        let pools: Vec<PoolState> = self.pools.iter().map(|entry| entry.value().clone()).collect();
+        for chunk in token_keys.chunks(SAVE_CHUNK_SIZE) {
+            let tokens: Vec<Token> = {
+                let token_read = self.token_cache.read().await;
+                chunk
+                    .iter()
+                    .filter_map(|address| token_read.get(address).cloned())
+                    .collect()
+            };
+            if !tokens.is_empty() {
+                self.db.save_tokens(&tokens).await?;
+            }
+        }
 
-        self.db.save_tokens(&tokens).await?;
-        self.db.save_pools(&pools).await?;
+        let pool_keys: Vec<Pubkey> = self.pools.iter().map(|entry| *entry.key()).collect();
+        for chunk in pool_keys.chunks(SAVE_CHUNK_SIZE) {
+            let pools: Vec<PoolState> = chunk
+                .iter()
+                .filter_map(|address| self.pools.get(address).map(|entry| entry.value().clone()))
+                .collect();
+            if !pools.is_empty() {
+                self.db.save_pools(&pools).await?;
+            }
+        }
         Ok(())
     }
 
@@ -1913,7 +1941,8 @@ impl PoolStateManager {
         // 2. Save Pools
         let mut pool_count: usize = 0;
 
-        let pool_entries: Vec<PoolState> = pools.iter().map(|entry| entry.value().clone()).collect();
+        let pool_entries: Vec<PoolState> =
+            pools.iter().map(|entry| entry.value().clone()).collect();
 
         for chunk in pool_entries.chunks(500) {
             // We can't easily use UNNEST with heterogeneous JSON types unless we serialize to a specific struct

@@ -157,9 +157,7 @@ async fn test_orca_whirlpool_quote() {
     pool_manager.inject_pool(pool_state).await;
 
     // Verify pool was injected
-    let pools = pool_manager
-        .get_pools_for_pair(&wsol_token().address, &bonk_mint)
-        .await;
+    let pools = pool_manager.get_pools_for_pair(&wsol_token().address, &bonk_mint);
     println!(
         "Found {} pools for SOL-BONK pair after injection",
         pools.len()

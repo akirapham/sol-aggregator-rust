@@ -953,7 +953,7 @@ async fn test_meteora_damm_quote_simulation() {
     // For single hop, we can assume route has 1 path, 1 step
     let _step = &quote.paths[0].steps[0];
     // Find the pool state again (we injected it, but aggregator might have cloned it)
-    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let pool = pool_manager.get_pool(&pool_address).unwrap();
 
     let instructions = pool
         .build_swap_instruction(&swap_params, &*pool_manager, None)
@@ -1094,7 +1094,7 @@ async fn test_meteora_damm_quote_simulation_reverse() {
     println!("Simulating Composite Transaction (Buy -> Sell)...");
 
     // Find the pool state again
-    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let pool = pool_manager.get_pool(&pool_address).unwrap();
 
     // 4.1 Build BUY Instruction (SOL -> RALPH)
     let buy_amount_in = 1_000_000_000; // 1 SOL
@@ -1314,7 +1314,7 @@ async fn test_meteora_dbc_quote_simulation() {
         .expect("Failed to get buy quote");
 
     // Get instructions
-    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let pool = pool_manager.get_pool(&pool_address).unwrap();
     let instructions = pool
         .build_swap_instruction(&swap_params, &*pool_manager, None)
         .await
@@ -1472,7 +1472,7 @@ async fn test_meteora_dbc_quote_simulation_reverse() {
         priority: crate::types::ExecutionPriority::Medium,
     };
 
-    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let pool = pool_manager.get_pool(&pool_address).unwrap();
     let buy_instructions = pool
         .build_swap_instruction(&buy_params, &*pool_manager, None)
         .await
@@ -1556,9 +1556,9 @@ async fn test_meteora_dlmm_quote_simulation() {
 
     let (pool_manager, config) = create_test_setup(vec!["meteora_dlmm"]).await;
 
-    // Meteora DLMM Pool: SOL-RALPH
-    let pool_address = Pubkey::from_str("2NeCmKGXrcCa4aQhKdjdhY728565YsFcxNbD1JPcGDkh").unwrap();
-    let token_mint = Pubkey::from_str("DLJjXt2BmoeWMBuvuvBnuLZZGPiG5wFt8mVDWXnbVvnH").unwrap();
+    // Meteora DLMM Pool: SOL-BURNIE
+    let pool_address = Pubkey::from_str("6Q3k9uLd3kbEPZV37P4uKjXUHrhZPEK85P62QTNAj49e").unwrap();
+    let token_mint = Pubkey::from_str("CGEDT9QZDvvH5GmVkWJH2BXiMJqMJySC9ihWyr7Spump").unwrap();
     let _sol_mint = Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
 
     let rpc_client = pool_manager.get_rpc_client();
@@ -1636,9 +1636,9 @@ async fn test_meteora_dlmm_quote_simulation() {
     pool_manager
         .inject_token(Token {
             address: token_mint,
-            symbol: Some("RALPH".to_string()),
-            name: Some("Ralph Token".to_string()),
-            decimals: 9,
+            symbol: Some("BURNIE".to_string()),
+            name: Some("BURNIE".to_string()),
+            decimals: 6,
             is_token_2022: true,
             logo_uri: None,
         })
@@ -1654,9 +1654,9 @@ async fn test_meteora_dlmm_quote_simulation() {
         input_token: wsol_token(),
         output_token: Token {
             address: token_mint,
-            symbol: Some("RALPH".to_string()),
-            name: Some("Ralph Token".to_string()),
-            decimals: 9,
+            symbol: Some("BURNIE".to_string()),
+            name: Some("BURNIE".to_string()),
+            decimals: 6,
             is_token_2022: true,
             logo_uri: None,
         },
@@ -1676,7 +1676,7 @@ async fn test_meteora_dlmm_quote_simulation() {
         .await
         .expect("Failed to get quote");
 
-    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let pool = pool_manager.get_pool(&pool_address).unwrap();
     let swap_instructions = pool
         .build_swap_instruction(&swap_params, &*pool_manager, None)
         .await
@@ -1833,7 +1833,7 @@ async fn test_meteora_dlmm_quote_simulation_reverse() {
         priority: crate::types::ExecutionPriority::Medium,
     };
 
-    let pool = pool_manager.get_pool(&pool_address).await.unwrap();
+    let pool = pool_manager.get_pool(&pool_address).unwrap();
     let buy_instructions = pool
         .build_swap_instruction(&buy_params, &*pool_manager, None)
         .await

@@ -1,8 +1,8 @@
 #![allow(clippy::manual_div_ceil)]
 use std::collections::HashMap;
 
+use meteora_dlmm_sdk::BinArrayExtension;
 use solana_sdk::pubkey::Pubkey;
-
 
 use crate::constants::is_base_token;
 use crate::pool_data_types::{
@@ -12,6 +12,34 @@ use crate::pool_data_types::{
 use crate::pool_data_types::{PoolState, PoolUpdateEventType, WhirlpoolPoolState};
 use crate::types::PoolUpdateEvent;
 use crate::utils::{get_sol_mint, tokens_equal};
+
+const MAX_DLMM_BIN_ARRAYS_PER_POOL: usize = 16;
+
+fn prune_dlmm_bin_arrays(
+    bin_arrays: &mut HashMap<
+        i32,
+        solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::BinArray,
+    >,
+    active_id: i32,
+) {
+    if bin_arrays.len() <= MAX_DLMM_BIN_ARRAYS_PER_POOL {
+        return;
+    }
+
+    let active_bin_array_index =
+        meteora_dlmm_sdk::dlmm::accounts::BinArray::bin_id_to_bin_array_index(active_id).ok();
+
+    let mut keys: Vec<i32> = bin_arrays.keys().copied().collect();
+    keys.sort_by_key(|index| {
+        active_bin_array_index
+            .map(|active_index| index.abs_diff(active_index))
+            .unwrap_or(index.unsigned_abs())
+    });
+
+    for key in keys.into_iter().skip(MAX_DLMM_BIN_ARRAYS_PER_POOL) {
+        bin_arrays.remove(&key);
+    }
+}
 
 fn compute_pool_liquidity_usd(
     token0: &Pubkey,
@@ -530,16 +558,19 @@ pub fn pool_update_event_to_pool_state(
                 0.0
             };
 
+            let mut bin_arrays = meteora_dlmm_pool_update
+                .bin_arrays
+                .clone()
+                .unwrap_or_default();
+            prune_dlmm_bin_arrays(&mut bin_arrays, meteora_dlmm_pool_update.lbpair.active_id);
+
             (
                 Some(PoolState::MeteoraDlmm(Box::new(MeteoraDlmmPoolState {
                     slot: meteora_dlmm_pool_update.slot,
                     transaction_index: meteora_dlmm_pool_update.transaction_index,
                     address: meteora_dlmm_pool_update.address,
                     lbpair: meteora_dlmm_pool_update.lbpair.clone(),
-                    bin_arrays: meteora_dlmm_pool_update
-                        .bin_arrays
-                        .clone()
-                        .unwrap_or_default(),
+                    bin_arrays,
                     bitmap_extension: meteora_dlmm_pool_update.bitmap_extension.clone(),
                     is_state_keys_initialized: true,
                     reserve_x: meteora_dlmm_pool_update.reserve_x,
@@ -1062,6 +1093,7 @@ pub fn update_pool_state_by_event(
                         for (index, bin_array) in bin_arrays {
                             state.bin_arrays.insert(*index, bin_array.clone());
                         }
+                        prune_dlmm_bin_arrays(&mut state.bin_arrays, state.lbpair.active_id);
                     }
                 } else if meteora_dlmm_pool_update.pool_update_event_type
                     == PoolUpdateEventType::MeteoraDlmmBinArrayBitmapExtensionAccount

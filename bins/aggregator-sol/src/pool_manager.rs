@@ -353,6 +353,13 @@ impl PoolStateManager {
     }
 
     #[cfg(test)]
+    pub async fn store_pool_only_for_test(&self, pool: PoolState) {
+        let pool_address = pool.address();
+        self.pools.insert(pool_address, pool);
+        self.tick_synced_pools.insert(pool_address);
+    }
+
+    #[cfg(test)]
     pub async fn inject_token(&self, token: Token) {
         let mut tokens = self.token_cache.write().await;
         tokens.insert(token.address, token);
@@ -1264,9 +1271,23 @@ impl PoolStateManager {
         if pool_exists {
             // Update pool in-place via DashMap RefMut
             if let Some(mut pool_ref) = pools.get_mut(&pool_address) {
+                let old_tokens = pool_ref.value().get_tokens();
                 pool_with_ticks =
                     update_pool_state_by_event(update, pool_ref.value_mut(), sol_price);
+                let new_tokens = pool_ref.value().get_tokens();
                 pool_dex_type = Some(pool_ref.value().dex());
+
+                if old_tokens != new_tokens {
+                    remove_pair_mapping(&pair_to_pools, old_tokens.0, old_tokens.1, pool_address);
+                    if new_tokens.0 != Pubkey::default() && new_tokens.1 != Pubkey::default() {
+                        insert_pair_mapping(
+                            &pair_to_pools,
+                            new_tokens.0,
+                            new_tokens.1,
+                            pool_address,
+                        );
+                    }
+                }
             }
         } else {
             // Insert new pool
@@ -1564,10 +1585,12 @@ impl PoolStateManager {
 
         let token_missing = self.get_token(token_address).await.is_none();
         let existing_pool = self.get_pool(&bonding_curve_address);
+        let pair_missing =
+            self.get_pool_count_for_pair(token_address, &crate::constants::WSOL_PUBKEY) == 0;
         let pool_needs_hydration = match existing_pool.as_ref() {
             None => true,
             Some(pool @ PoolState::Pumpfun(state)) => {
-                state.mint != *token_address || self.is_pool_stale(pool)
+                state.mint != *token_address || pair_missing || self.is_pool_stale(pool)
             }
             Some(_) => true,
         };

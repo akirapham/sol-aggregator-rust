@@ -208,6 +208,137 @@ async fn test_pumpfun_quote_hydrates_missing_token_and_pool() {
 }
 
 #[tokio::test]
+async fn test_pumpfun_quote_hydrates_cashback_sell_token_and_pool() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    let token_mint_address =
+        Pubkey::from_str("J7xppwhH1WBzjthJsbvPi9bZ5bVUnSdzhoMwSLRGPsMW").unwrap();
+    let bonding_curve_address = get_bonding_curve_pda(&token_mint_address).unwrap();
+
+    pool_manager.inject_token(wsol_token()).await;
+
+    assert!(pool_manager.get_token(&token_mint_address).await.is_none());
+    assert!(pool_manager.get_pool(&bonding_curve_address).is_none());
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client,
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let request = QuoteRequest {
+        input_token: token_mint_address.to_string(),
+        output_token: wsol_token().address.to_string(),
+        user_wallet: "HCp3JTAW85o9pCKqP7enJRiKWaVrbufVQRzaXAi3Du6X".to_string(),
+        input_amount: 84_895_713_871,
+        slippage_bps: 1000,
+    };
+
+    let response =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await
+            .expect("Quote should hydrate missing cashback PumpFun token/pool");
+
+    assert!(response.0.output_amount > 0);
+    assert!(pool_manager.get_token(&token_mint_address).await.is_some());
+    assert!(pool_manager.get_pool(&bonding_curve_address).is_some());
+}
+
+#[tokio::test]
+async fn test_pumpfun_quote_repairs_cached_pool_with_missing_mint() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    let token_mint_address =
+        Pubkey::from_str("J7xppwhH1WBzjthJsbvPi9bZ5bVUnSdzhoMwSLRGPsMW").unwrap();
+    let bonding_curve_address = get_bonding_curve_pda(&token_mint_address).unwrap();
+
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: token_mint_address,
+            symbol: Some("Predator".to_string()),
+            name: Some("Super Predator".to_string()),
+            decimals: 6,
+            is_token_2022: true,
+            logo_uri: None,
+        })
+        .await;
+    pool_manager
+        .inject_pool(PoolState::Pumpfun(PumpfunPoolState {
+            slot: 0,
+            transaction_index: None,
+            address: bonding_curve_address,
+            mint: Pubkey::default(),
+            last_updated: u64::MAX,
+            liquidity_usd: 1.0,
+            is_state_keys_initialized: true,
+            virtual_token_reserves: 1,
+            virtual_sol_reserves: 1,
+            real_token_reserves: 1,
+            real_sol_reserves: 1,
+            complete: false,
+            creator: Pubkey::default(),
+            is_mayhem_mode: false,
+            is_cashback: false,
+        }))
+        .await;
+
+    assert!(pool_manager.get_pool(&bonding_curve_address).is_some());
+    assert_eq!(
+        pool_manager.get_pool_count_for_pair(&token_mint_address, &wsol_token().address),
+        0
+    );
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client,
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let request = QuoteRequest {
+        input_token: token_mint_address.to_string(),
+        output_token: wsol_token().address.to_string(),
+        user_wallet: "HCp3JTAW85o9pCKqP7enJRiKWaVrbufVQRzaXAi3Du6X".to_string(),
+        input_amount: 84_895_713_871,
+        slippage_bps: 1000,
+    };
+
+    let response =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await
+            .expect("Quote should repair cached PumpFun pool with missing mint");
+
+    assert!(response.0.output_amount > 0);
+    assert_eq!(
+        pool_manager.get_pool_count_for_pair(&token_mint_address, &wsol_token().address),
+        1
+    );
+    match pool_manager.get_pool(&bonding_curve_address).unwrap() {
+        PoolState::Pumpfun(pool) => {
+            assert_eq!(pool.mint, token_mint_address);
+            assert!(pool.is_cashback);
+        }
+        _ => panic!("Expected PumpFun pool"),
+    }
+}
+
+#[tokio::test]
 async fn test_pumpfun_quote_hydrates_missing_token_and_pool_simulation() {
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
 

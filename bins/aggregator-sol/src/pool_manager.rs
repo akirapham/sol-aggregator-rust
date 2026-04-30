@@ -96,7 +96,7 @@ fn normalized_pair(token_a: Pubkey, token_b: Pubkey) -> (Pubkey, Pubkey) {
 }
 
 fn push_unique_pool_address(pool_addresses: &mut Vec<Pubkey>, pool_address: Pubkey) {
-    if !pool_addresses.iter().any(|addr| *addr == pool_address) {
+    if !pool_addresses.contains(&pool_address) {
         pool_addresses.push(pool_address);
     }
 }
@@ -110,6 +110,22 @@ fn insert_pair_mapping(
     let key = normalized_pair(token_a, token_b);
     let mut pool_addresses = pair_to_pools.entry(key).or_default();
     push_unique_pool_address(&mut pool_addresses, pool_address);
+}
+
+fn remove_pair_mapping(
+    pair_to_pools: &PairToPoolsMap,
+    token_a: Pubkey,
+    token_b: Pubkey,
+    pool_address: Pubkey,
+) {
+    let key = normalized_pair(token_a, token_b);
+    if let Some(mut pool_addresses) = pair_to_pools.get_mut(&key) {
+        pool_addresses.retain(|addr| *addr != pool_address);
+        if pool_addresses.is_empty() {
+            drop(pool_addresses);
+            pair_to_pools.remove(&key);
+        }
+    }
 }
 
 #[async_trait]
@@ -1322,13 +1338,7 @@ impl PoolStateManager {
                     let (price_a, price_b) =
                         pool_state.calculate_token_prices(sol_price, decimals_a, decimals_b);
 
-                    // Calculate prices in both directions
-                    let (forward_price, reverse_price) =
-                        if arbitrage_monitored_tokens.contains(&token_a) {
-                            (price_b, price_a)
-                        } else {
-                            (price_b, price_a)
-                        };
+                    let (forward_price, reverse_price) = (price_b, price_a);
 
                     let broadcast_event = ArbitragePoolUpdate {
                         pool_address,
@@ -1514,6 +1524,27 @@ impl PoolStateManager {
         cache.insert(token.address, token);
     }
 
+    async fn upsert_pool(&self, pool_state: PoolState) {
+        let pool_address = pool_state.address();
+        let dex = pool_state.dex();
+        let (token_a, token_b) = pool_state.get_tokens();
+
+        if let Some((_, old_pool)) = self.pools.remove(&pool_address) {
+            let (old_token_a, old_token_b) = old_pool.get_tokens();
+            remove_pair_mapping(&self.pair_to_pools, old_token_a, old_token_b, pool_address);
+            if let Some(mut dex_pool_addresses) = self.dex_pools.get_mut(&old_pool.dex()) {
+                dex_pool_addresses.remove(&pool_address);
+            }
+        }
+
+        self.pools.insert(pool_address, pool_state);
+        insert_pair_mapping(&self.pair_to_pools, token_a, token_b, pool_address);
+        self.dex_pools
+            .entry(dex)
+            .or_insert_with(HashSet::new)
+            .insert(pool_address);
+    }
+
     pub async fn ensure_pumpfun_pool_for_token(
         &self,
         token_address: &Pubkey,
@@ -1532,15 +1563,22 @@ impl PoolStateManager {
                 })?;
 
         let token_missing = self.get_token(token_address).await.is_none();
-        let pool_missing = self.get_pool(&bonding_curve_address).is_none();
+        let existing_pool = self.get_pool(&bonding_curve_address);
+        let pool_needs_hydration = match existing_pool.as_ref() {
+            None => true,
+            Some(pool @ PoolState::Pumpfun(state)) => {
+                state.mint != *token_address || self.is_pool_stale(pool)
+            }
+            Some(_) => true,
+        };
 
-        if !token_missing && !pool_missing {
+        if !token_missing && !pool_needs_hydration {
             return Ok(false);
         }
 
         let mut hydrated = false;
 
-        if pool_missing {
+        if pool_needs_hydration {
             let discovered_pools = self
                 .pumpfun_discovery
                 .discover_for_token(token_address)
@@ -1565,15 +1603,7 @@ impl PoolStateManager {
                         state.virtual_sol_reserves as f64 / 1_000_000_000_f64 * sol_price;
                     state.last_updated = state.last_updated.max(min_fresh_timestamp);
                 }
-                Self::insert_new_pool(
-                    pool_state,
-                    self.pools.clone(),
-                    self.pair_to_pools.clone(),
-                    self.dex_pools.clone(),
-                    self.token_cache.clone(),
-                    self.rpc_client.clone(),
-                )
-                .await;
+                self.upsert_pool(pool_state).await;
                 hydrated = true;
             }
         }

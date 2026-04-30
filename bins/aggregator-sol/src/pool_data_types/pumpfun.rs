@@ -175,6 +175,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
         };
 
         let token_program_meta = AccountMeta::new_readonly(token_program, false);
+        let buyback_fee_recipient = constants::pick_buyback_fee_recipient();
 
         let fee_recipient_meta = if is_mayhem_mode {
             constants::MAYHEM_FEE_RECIPIENT_META
@@ -309,6 +310,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 constants::PUMPFUN_FEE_PROGRAM_META,
             ];
             buy_accounts.push(AccountMeta::new_readonly(bonding_curve_v2, false));
+            buy_accounts.push(constants::buyback_fee_recipient_meta(buyback_fee_recipient));
 
             instructions.push(Instruction::new_with_bytes(
                 Self::get_program_id(),
@@ -427,6 +429,7 @@ impl BuildSwapInstruction for PumpfunPoolState {
                 sell_accounts.push(AccountMeta::new(user_volume_accumulator, false));
             }
             sell_accounts.push(AccountMeta::new_readonly(bonding_curve_v2, false));
+            sell_accounts.push(constants::buyback_fee_recipient_meta(buyback_fee_recipient));
 
             instructions.push(Instruction::new_with_bytes(
                 Self::get_program_id(),

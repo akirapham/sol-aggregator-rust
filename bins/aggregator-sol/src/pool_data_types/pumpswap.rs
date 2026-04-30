@@ -262,6 +262,16 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             &quote_mint_anchor,
         );
         let fee_recipient_ata = functions::to_address(&fee_recipient_ata_anchor);
+        let buyback_fee_recipient = constants::pick_buyback_fee_recipient();
+        let buyback_fee_recipient_anchor = functions::to_pubkey(&buyback_fee_recipient);
+        let buyback_fee_recipient_quote_ata_anchor =
+            spl_associated_token_account::get_associated_token_address_with_program_id(
+                &buyback_fee_recipient_anchor,
+                &quote_mint_anchor,
+                &quote_token_program_anchor,
+            );
+        let buyback_fee_recipient_quote_ata =
+            functions::to_address(&buyback_fee_recipient_quote_ata_anchor);
 
         // ========================================
         // Build instructions
@@ -382,6 +392,10 @@ impl BuildSwapInstruction for PumpSwapPoolState {
             &pumpf_functions::accounts::AMM_PROGRAM,
         );
         accounts.push(AccountMeta::new_readonly(pool_v2, false));
+        accounts.push(constants::buyback_fee_recipient_readonly_meta(
+            buyback_fee_recipient,
+        ));
+        accounts.push(AccountMeta::new(buyback_fee_recipient_quote_ata, false));
 
         // Create instruction data dynamically based on buy/sell sizes
         let mut data = Vec::with_capacity(26);

@@ -1,5 +1,6 @@
 use solana_sdk::pubkey;
 use solana_sdk::pubkey::Pubkey;
+use solana_streamer_sdk::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
 
 pub const FEE_RECIPIENT: Pubkey = pubkey!("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV");
 pub const FEE_RECIPIENT_META: solana_sdk::instruction::AccountMeta =
@@ -15,6 +16,40 @@ pub const MAYHEM_FEE_RECIPIENT_META: solana_sdk::instruction::AccountMeta =
         is_signer: false,
         is_writable: true,
     };
+
+pub const BUYBACK_FEE_RECIPIENTS: [Pubkey; 8] = [
+    pubkey!("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD"),
+    pubkey!("9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7"),
+    pubkey!("GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL"),
+    pubkey!("3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR"),
+    pubkey!("5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6"),
+    pubkey!("EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL"),
+    pubkey!("5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD"),
+    pubkey!("A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"),
+];
+
+pub fn pick_buyback_fee_recipient() -> Pubkey {
+    let idx = (get_high_perf_clock() as usize) % BUYBACK_FEE_RECIPIENTS.len();
+    BUYBACK_FEE_RECIPIENTS[idx]
+}
+
+pub fn buyback_fee_recipient_meta(recipient: Pubkey) -> solana_sdk::instruction::AccountMeta {
+    solana_sdk::instruction::AccountMeta {
+        pubkey: recipient,
+        is_signer: false,
+        is_writable: true,
+    }
+}
+
+pub fn buyback_fee_recipient_readonly_meta(
+    recipient: Pubkey,
+) -> solana_sdk::instruction::AccountMeta {
+    solana_sdk::instruction::AccountMeta {
+        pubkey: recipient,
+        is_signer: false,
+        is_writable: false,
+    }
+}
 
 // PumpFun constants
 pub const PUMPFUN_GLOBAL_ACCOUNT: Pubkey = pubkey!("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf");

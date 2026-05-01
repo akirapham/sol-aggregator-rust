@@ -503,19 +503,32 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
         // Build instruction list
         let mut instructions = Vec::new();
 
+        let input_is_wsol = params.input_token.address == crate::constants::WSOL_PUBKEY;
+        let output_is_wsol = params.output_token.address == crate::constants::WSOL_PUBKEY;
+
+        if input_is_wsol {
+            instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
+                &params.user_wallet,
+                params.input_amount,
+            ));
+        }
+
         // Determine token programs for ATAs
         // Determine the correct token type for each ATA
         // Fix: Use params directly instead of inferring from X/Y which was buggy for !swap_for_y
         let input_is_token_2022 = params.input_token.is_token_2022;
         let output_is_token_2022 = params.output_token.is_token_2022;
 
-        // Create ATA for input token (ensures account exists for transfer)
-        instructions.push(common_functions::create_ata_instruction(
-            params.user_wallet,
-            common_functions::to_address(&user_token_in),
-            input_mint,
-            input_is_token_2022,
-        ));
+        // Create ATA for input token (ensures account exists for transfer).
+        // WSOL input is handled above because the account must also be funded and synced.
+        if !input_is_wsol {
+            instructions.push(common_functions::create_ata_instruction(
+                params.user_wallet,
+                common_functions::to_address(&user_token_in),
+                input_mint,
+                input_is_token_2022,
+            ));
+        }
 
         // Create ATA for output token (ensures account exists to receive tokens)
         let output_mint = if swap_for_y {
@@ -532,6 +545,12 @@ impl BuildSwapInstruction for MeteoraDlmmPoolState {
 
         // Add swap instruction
         instructions.push(swap_ix);
+
+        if output_is_wsol {
+            instructions.extend(sol_trade_sdk::trading::common::close_wsol(
+                &params.user_wallet,
+            ));
+        }
 
         Ok(instructions)
     }

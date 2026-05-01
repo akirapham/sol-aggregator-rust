@@ -1320,12 +1320,9 @@ async fn test_meteora_dbc_quote_simulation() {
         .await
         .expect("Failed to build swap instruction");
 
-    // Add WSOL wrapping for SOL input (prepend to instructions)
-    let wsol_instructions = sol_trade_sdk::trading::common::handle_wsol(&payer, amount_in);
     let mut all_instructions = Vec::new();
-    all_instructions.extend(wsol_instructions);
     all_instructions.extend(instructions);
-    // Add WSOL unwrapping (close WSOL account)
+    // The DLMM builder wraps SOL input; close the WSOL account after this single swap.
     all_instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
 
     println!("Simulating transaction...");
@@ -1503,21 +1500,9 @@ async fn test_meteora_dbc_quote_simulation_reverse() {
         .await
         .expect("Failed to build sell instruction");
 
-    // Combine instructions with WSOL handling
     let mut instructions = Vec::new();
-
-    // Add WSOL wrapping for buy (SOL -> Token)
-    instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
-        &payer,
-        buy_amount_in,
-    ));
     instructions.extend(buy_instructions);
-
-    // Add sell instructions (Token -> SOL)
     instructions.extend(sell_instructions);
-
-    // Close WSOL account at the end
-    instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
 
     // Simulate
     let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
@@ -1682,12 +1667,9 @@ async fn test_meteora_dlmm_quote_simulation() {
         .await
         .expect("Failed to build swap instruction");
 
-    // Add WSOL wrapping for SOL input
     let mut all_instructions = Vec::new();
-    all_instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
-        &payer, amount_in,
-    ));
     all_instructions.extend(swap_instructions);
+    // The DLMM builder wraps SOL input; close the WSOL account after this single swap.
     all_instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
 
     println!("Simulating transaction...");
@@ -1863,21 +1845,9 @@ async fn test_meteora_dlmm_quote_simulation_reverse() {
         .await
         .expect("Failed to build sell instruction");
 
-    // Combine instructions with WSOL handling
     let mut instructions = Vec::new();
-
-    // Add WSOL wrapping for buy (SOL -> RALPH)
-    instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
-        &payer,
-        buy_amount_in,
-    ));
     instructions.extend(buy_instructions);
-
-    // Add sell instructions (RALPH -> SOL)
     instructions.extend(sell_instructions);
-
-    // Close WSOL account at the end
-    instructions.extend(sol_trade_sdk::trading::common::close_wsol(&payer));
 
     // Simulate
     let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();

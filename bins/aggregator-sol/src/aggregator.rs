@@ -11,6 +11,11 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 
+fn passes_route_liquidity_filter(pool_state: &PoolState, min_liquidity_usd: f64) -> bool {
+    matches!(pool_state.dex(), DexType::PumpFun)
+        || pool_state.get_liquidity_usd() > min_liquidity_usd
+}
+
 #[allow(unused)]
 /// Main DEX aggregator that finds the best routes across multiple DEXs with real-time data
 pub struct DexAggregator {
@@ -171,7 +176,7 @@ impl DexAggregator {
                 {
                     continue;
                 }
-                if pool_state.get_liquidity_usd() < min_liquidity_usd {
+                if !passes_route_liquidity_filter(&pool_state, min_liquidity_usd) {
                     continue;
                 }
                 all_pool_state.insert(*pool_address, Arc::new(pool_state));
@@ -195,7 +200,12 @@ impl DexAggregator {
             .collect::<Vec<_>>();
         top_direct_paths.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         // truncate pool liquidity less than 1000 USD
-        top_direct_paths.retain(|(_, liquidity)| *liquidity > min_liquidity_usd);
+        top_direct_paths.retain(|(pool_address, _)| {
+            all_pool_state
+                .get(*pool_address)
+                .map(|pool_state| passes_route_liquidity_filter(pool_state, min_liquidity_usd))
+                .unwrap_or(false)
+        });
 
         // with 100% input amount
         let mut all_routes_with_out_amounts: Vec<(Vec<SwapStepInternal>, u64)> = vec![];
@@ -254,8 +264,7 @@ impl DexAggregator {
                                         .map(|pool_state| (pool_addr, pool_state))
                                 })
                                 .filter(|(_, pool_state)| {
-                                    // Filter out pools with very low liquidity
-                                    pool_state.get_liquidity_usd() > min_liquidity_usd
+                                    passes_route_liquidity_filter(pool_state, min_liquidity_usd)
                                 })
                                 .collect()
                         })
@@ -274,8 +283,7 @@ impl DexAggregator {
                                         .map(|pool_state| (pool_addr, pool_state))
                                 })
                                 .filter(|(_, pool_state)| {
-                                    // Filter out pools with very low liquidity
-                                    pool_state.get_liquidity_usd() > min_liquidity_usd
+                                    passes_route_liquidity_filter(pool_state, min_liquidity_usd)
                                 })
                                 .collect()
                         })

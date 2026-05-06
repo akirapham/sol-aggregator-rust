@@ -426,6 +426,82 @@ async fn test_pumpfun_quote_repairs_missing_pair_index_for_cached_pool() {
 }
 
 #[tokio::test]
+async fn test_pumpfun_low_liquidity_pool_still_routes_for_exit() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
+
+    let token_mint_address =
+        Pubkey::from_str("4eF7M4NTV5t1sQFLrnP6cEZNG5WFqE4rSmeM5uN9pump").unwrap();
+    let bonding_curve_address = get_bonding_curve_pda(&token_mint_address).unwrap();
+    let token = Token {
+        address: token_mint_address,
+        symbol: Some("ticker?".to_string()),
+        name: Some("i dont remember my name".to_string()),
+        decimals: 6,
+        is_token_2022: true,
+        logo_uri: None,
+    };
+
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager.inject_token(token.clone()).await;
+    pool_manager
+        .inject_pool(PoolState::Pumpfun(PumpfunPoolState {
+            slot: 0,
+            transaction_index: None,
+            address: bonding_curve_address,
+            mint: token_mint_address,
+            last_updated: u64::MAX,
+            liquidity_usd: 371.0,
+            is_state_keys_initialized: true,
+            virtual_token_reserves: 1_078_150_626_423_461,
+            virtual_sol_reserves: 4_621_389_660,
+            real_token_reserves: 798_250_626_423_461,
+            real_sol_reserves: 665_253,
+            complete: false,
+            creator: Pubkey::from_str("9iaawVBEsFG35PSwd4PahwT8fYNQe9XYuRdWm872dUqY").unwrap(),
+            is_mayhem_mode: true,
+            is_cashback: false,
+        }))
+        .await;
+
+    let aggregator = DexAggregator::new(config, pool_manager);
+    let sell_params = crate::types::SwapParams {
+        input_token: token.clone(),
+        output_token: wsol_token(),
+        input_amount: 130_852_026_257,
+        slippage_bps: 1500,
+        user_wallet: Pubkey::from_str("HCp3JTAW85o9pCKqP7enJRiKWaVrbufVQRzaXAi3Du6X").unwrap(),
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let route = aggregator
+        .get_swap_route(&sell_params)
+        .await
+        .expect("low-liquidity PumpFun bonding curve should still be routable");
+
+    assert!(route.output_amount > 0);
+    assert_eq!(route.paths[0].steps[0].dex, DexType::PumpFun);
+    assert_eq!(route.paths[0].steps[0].pool_address, bonding_curve_address);
+
+    let buy_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token: token,
+        input_amount: 5_000_000,
+        slippage_bps: 1500,
+        user_wallet: Pubkey::from_str("HCp3JTAW85o9pCKqP7enJRiKWaVrbufVQRzaXAi3Du6X").unwrap(),
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let route = aggregator
+        .get_swap_route(&buy_params)
+        .await
+        .expect("low-liquidity PumpFun bonding curve should still be buyable");
+
+    assert!(route.output_amount > 0);
+    assert_eq!(route.paths[0].steps[0].dex, DexType::PumpFun);
+    assert_eq!(route.paths[0].steps[0].pool_address, bonding_curve_address);
+}
+
+#[tokio::test]
 async fn test_pumpfun_quote_hydrates_missing_token_and_pool_simulation() {
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
 

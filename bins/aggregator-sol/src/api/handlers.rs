@@ -148,7 +148,21 @@ pub async fn get_quote(
     let output_token_key = parse_pubkey_with_error(request.output_token.as_str(), "output_token")?;
     let user_wallet = parse_pubkey_with_error(request.user_wallet.as_str(), "user_wallet")?;
 
-    if input_token_key == crate::constants::WSOL_PUBKEY && output_token_key != crate::constants::WSOL_PUBKEY {
+    if input_token_key == crate::constants::WSOL_PUBKEY
+        && output_token_key != crate::constants::WSOL_PUBKEY
+    {
+        if let Err(err) = state
+            .aggregator
+            .get_pool_manager()
+            .ensure_pumpswap_pool_for_token(&output_token_key)
+            .await
+        {
+            log::debug!(
+                "PumpSwap quote hydration for output token {} failed: {}",
+                output_token_key,
+                err
+            );
+        }
         if let Err(err) = state
             .aggregator
             .get_pool_manager()
@@ -164,6 +178,18 @@ pub async fn get_quote(
     } else if output_token_key == crate::constants::WSOL_PUBKEY
         && input_token_key != crate::constants::WSOL_PUBKEY
     {
+        if let Err(err) = state
+            .aggregator
+            .get_pool_manager()
+            .ensure_pumpswap_pool_for_token(&input_token_key)
+            .await
+        {
+            log::debug!(
+                "PumpSwap quote hydration for input token {} failed: {}",
+                input_token_key,
+                err
+            );
+        }
         if let Err(err) = state
             .aggregator
             .get_pool_manager()

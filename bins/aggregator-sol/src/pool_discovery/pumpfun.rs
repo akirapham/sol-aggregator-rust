@@ -1,6 +1,6 @@
 use super::PoolDiscovery;
-use crate::pool_data_types::{pumpfun::PumpfunPoolState, PoolState};
 use crate::pool_data_types::pumpf::functions::get_bonding_curve_pda;
+use crate::pool_data_types::{pumpfun::PumpfunPoolState, PoolState};
 use anyhow::Result;
 use async_trait::async_trait;
 use borsh::BorshDeserialize;
@@ -8,7 +8,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::types::{BondingCurve, BondingCurveLegacy};
+use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::types::{
+    BondingCurve, BondingCurveLegacy,
+};
 use std::collections::HashSet;
 use std::sync::Arc;
 

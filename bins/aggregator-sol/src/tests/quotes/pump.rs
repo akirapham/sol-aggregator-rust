@@ -711,6 +711,250 @@ async fn test_pumpswap_quote() {
 }
 
 #[tokio::test]
+async fn test_pumpswap_quote_hydrates_completed_pump_token_pool() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpswap"]).await;
+
+    let token_mint_address =
+        Pubkey::from_str("21rKrtBzibPAZHAHQRzGiGDSh7XimCKB2a8VgsjZpump").unwrap();
+    let expected_pool = Pubkey::from_str("GyqM8Pe9FUbkk5hCw7ffpeUt6F6WcHnc8pPdMYcnShiS").unwrap();
+
+    pool_manager.inject_token(wsol_token()).await;
+    assert_eq!(
+        pool_manager.get_pool_count_for_pair(&token_mint_address, &wsol_token().address),
+        0
+    );
+
+    let rpc_url = std::env::var("RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let rpc_client = Arc::new(solana_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.clone(),
+    ));
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client,
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let request = QuoteRequest {
+        input_token: wsol_token().address.to_string(),
+        output_token: token_mint_address.to_string(),
+        user_wallet: "DiFhFXQ79qXXerFEzBZoD3JBAUSi7zbFtW2KGw1vrvn3".to_string(),
+        input_amount: 10_000_000_000,
+        slippage_bps: 20,
+    };
+
+    let response =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await
+            .expect("Quote should hydrate completed Pump token's PumpSwap pool");
+
+    assert!(response.0.output_amount > 0);
+    assert!(pool_manager.get_pool(&expected_pool).is_some());
+    assert!(response.0.routes.iter().any(|route| {
+        route.dex == DexType::PumpFunSwap && route.pool_address == expected_pool.to_string()
+    }));
+}
+
+#[tokio::test]
+async fn test_quote_endpoint_selects_pumpswap_when_dlmm_pool_also_exists() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpswap", "meteora_dlmm"]).await;
+
+    let token_mint = Pubkey::from_str("21rKrtBzibPAZHAHQRzGiGDSh7XimCKB2a8VgsjZpump").unwrap();
+    let pumpswap_pool = Pubkey::from_str("GyqM8Pe9FUbkk5hCw7ffpeUt6F6WcHnc8pPdMYcnShiS").unwrap();
+    let dlmm_pool = Pubkey::from_str("6jSFZ7p2EEALRD5BeufzjxEpYgaskcTvBKSPzX4ivz4p").unwrap();
+
+    let rpc_client = pool_manager.get_rpc_client();
+
+    let pumpswap_state = fetch_pumpswap_pool_state(&rpc_client, pumpswap_pool).await;
+    let dlmm_state = fetch_dlmm_pool_state(&rpc_client, dlmm_pool).await;
+
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: token_mint,
+            symbol: Some("PUMP".to_string()),
+            name: Some("Pump Token".to_string()),
+            decimals: 6,
+            is_token_2022: false,
+            logo_uri: None,
+        })
+        .await;
+    pool_manager.inject_pool(pumpswap_state).await;
+    pool_manager.inject_pool(dlmm_state).await;
+
+    assert_eq!(
+        pool_manager.get_pool_count_for_pair(&wsol_token().address, &token_mint),
+        2
+    );
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client,
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let pair_pools = crate::api::handlers::get_pools(
+        axum::extract::State(state.clone()),
+        axum::extract::Path((wsol_token().address.to_string(), token_mint.to_string())),
+    )
+    .await
+    .expect("Pair pools endpoint should handle DLMM pools with missing reserve snapshots");
+    assert_eq!(pair_pools.0.pools.len(), 2);
+    assert!(pair_pools.0.pools.iter().any(|pool| {
+        pool.address == dlmm_pool.to_string() && pool.base_reserve == 0 && pool.quote_reserve == 0
+    }));
+
+    let token_pools = crate::api::handlers::get_token_pools(
+        axum::extract::State(state.clone()),
+        axum::extract::Path(token_mint.to_string()),
+    )
+    .await
+    .expect("Token pools endpoint should handle DLMM pools with missing reserve snapshots");
+    assert_eq!(token_pools.0.total_pools, 2);
+
+    let request = QuoteRequest {
+        input_token: wsol_token().address.to_string(),
+        output_token: token_mint.to_string(),
+        user_wallet: "DiFhFXQ79qXXerFEzBZoD3JBAUSi7zbFtW2KGw1vrvn3".to_string(),
+        input_amount: 10_000_000_000,
+        slippage_bps: 20,
+    };
+
+    let response =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await
+            .expect("Quote should route with both PumpSwap and DLMM pools injected");
+
+    assert!(response.0.output_amount > 0);
+    assert_eq!(response.0.routes[0].dex, DexType::PumpFunSwap);
+    assert_eq!(response.0.routes[0].pool_address, pumpswap_pool.to_string());
+    assert!(
+        response.0.routes.iter().any(|route| {
+            route.dex == DexType::PumpFunSwap && route.pool_address == pumpswap_pool.to_string()
+        }),
+        "expected PumpSwap pool in quote routes, got {:?}",
+        response.0.routes
+    );
+}
+
+async fn fetch_pumpswap_pool_state(
+    rpc_client: &Arc<solana_client::nonblocking::rpc_client::RpcClient>,
+    pool_address: Pubkey,
+) -> PoolState {
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch PumpSwap pool account");
+    let pumpswap_pool = PumpSwapPoolRaw::try_from_slice(&account.data[8..8 + POOL_SIZE])
+        .expect("Failed to deserialize PumpSwap pool");
+
+    let vault_base_account = rpc_client
+        .get_account(&pumpswap_pool.pool_base_token_account)
+        .await
+        .expect("Failed to fetch PumpSwap base vault");
+    let vault_quote_account = rpc_client
+        .get_account(&pumpswap_pool.pool_quote_token_account)
+        .await
+        .expect("Failed to fetch PumpSwap quote vault");
+    let base_reserve = u64::from_le_bytes(vault_base_account.data[64..72].try_into().unwrap());
+    let quote_reserve = u64::from_le_bytes(vault_quote_account.data[64..72].try_into().unwrap());
+
+    PoolState::PumpSwap(PumpSwapPoolState {
+        slot: 0,
+        transaction_index: None,
+        address: pool_address,
+        index: pumpswap_pool.index,
+        creator: Some(pumpswap_pool.creator),
+        base_mint: pumpswap_pool.base_mint,
+        quote_mint: pumpswap_pool.quote_mint,
+        pool_base_token_account: pumpswap_pool.pool_base_token_account,
+        pool_quote_token_account: pumpswap_pool.pool_quote_token_account,
+        last_updated: u64::MAX,
+        base_reserve,
+        quote_reserve,
+        liquidity_usd: (quote_reserve as f64 * 2.0) / 1e9 * 150.0,
+        is_state_keys_initialized: true,
+        coin_creator: pumpswap_pool.coin_creator,
+        protocol_fee_recipient: crate::pool_data_types::pumpf::constants::FEE_RECIPIENT,
+        is_cashback: pumpswap_pool.is_cashback,
+    })
+}
+
+async fn fetch_dlmm_pool_state(
+    rpc_client: &Arc<solana_client::nonblocking::rpc_client::RpcClient>,
+    pool_address: Pubkey,
+) -> PoolState {
+    use crate::fetchers::meteora_dlmm_bin_array_fetcher::MeteoraDlmmBinArrayFetcher;
+    use crate::tests::quotes::meteora::LbPairRaw;
+    use solana_streamer_sdk::streaming::event_parser::protocols::meteora_dlmm::types::{
+        BinArrayBitmapExtension as SdkBitmapExtension, LbPair as SdkLbPair,
+    };
+
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch DLMM pool account");
+    let raw_pool =
+        LbPairRaw::try_from_slice(&account.data).expect("Failed to deserialize DLMM pool");
+
+    let mut sdk_lb_pair: SdkLbPair =
+        unsafe { (account.data[8..].as_ptr() as *const SdkLbPair).read_unaligned() };
+    sdk_lb_pair.token_x_mint = raw_pool.token_x_mint;
+    sdk_lb_pair.token_y_mint = raw_pool.token_y_mint;
+    sdk_lb_pair.active_id = raw_pool.active_id;
+    sdk_lb_pair.bin_step = raw_pool.bin_step;
+    sdk_lb_pair.parameters.min_bin_id = raw_pool.parameters.min_bin_id;
+    sdk_lb_pair.parameters.max_bin_id = raw_pool.parameters.max_bin_id;
+    sdk_lb_pair.parameters.base_factor = raw_pool.parameters.base_factor;
+    sdk_lb_pair.bin_array_bitmap = raw_pool.bin_array_bitmap;
+
+    let program_id = MeteoraDlmmPoolState::get_program_id();
+    let (bitmap_pubkey, _) =
+        Pubkey::find_program_address(&[b"bitmap", pool_address.as_ref()], &program_id);
+    let bitmap_extension = match rpc_client.get_account(&bitmap_pubkey).await {
+        Ok(bitmap_acc)
+            if bitmap_acc.data.len() >= 8 + std::mem::size_of::<SdkBitmapExtension>() =>
+        {
+            Some(unsafe {
+                (bitmap_acc.data[8..].as_ptr() as *const SdkBitmapExtension).read_unaligned()
+            })
+        }
+        _ => None,
+    };
+
+    let mut pool_state = MeteoraDlmmPoolState {
+        slot: 0,
+        transaction_index: None,
+        address: pool_address,
+        lbpair: sdk_lb_pair,
+        bin_arrays: std::collections::HashMap::new(),
+        bitmap_extension,
+        reserve_x: None,
+        reserve_y: None,
+        liquidity_usd: 1_000_000.0,
+        is_state_keys_initialized: true,
+        last_updated: u64::MAX,
+    };
+
+    let fetcher = MeteoraDlmmBinArrayFetcher::new(rpc_client.clone());
+    let bin_arrays = fetcher
+        .fetch_all_bin_arrays(pool_address, &pool_state)
+        .await
+        .expect("Failed to fetch DLMM bin arrays");
+    for bin_array in bin_arrays {
+        pool_state
+            .bin_arrays
+            .insert(bin_array.index as i32, bin_array);
+    }
+
+    PoolState::MeteoraDlmm(Box::new(pool_state))
+}
+
+#[tokio::test]
 async fn test_pumpfun_quote_reverse() {
     let (pool_manager, config) = create_test_setup(vec!["pumpfun"]).await;
 

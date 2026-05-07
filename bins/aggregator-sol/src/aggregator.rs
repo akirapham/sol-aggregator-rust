@@ -183,12 +183,6 @@ impl DexAggregator {
             }
         }
 
-        // 0. prepare percent distribution for smart routing
-        let base_percent = 5; // 5% per base token
-                              // generate percent distribution array [0, 5, 10, ..., 100]
-        let percent_distribution: Vec<u64> =
-            (0..=100 / base_percent).map(|i| i * base_percent).collect();
-
         // 1. Find best direct paths
         let mut top_direct_paths = direct_pool_addresses
             .iter()
@@ -350,194 +344,31 @@ impl DexAggregator {
             }
         } // End of if !direct_only block
 
-        // filter top 2 routes by output amount
+        // Select the single best route by output amount. The swap builder currently
+        // supports one executable route, so do not split across multiple pools.
         all_routes_with_out_amounts.sort_by(|a, b| b.1.cmp(&a.1));
-        all_routes_with_out_amounts.truncate(2);
         if all_routes_with_out_amounts.is_empty() {
             return None;
         }
 
-        if all_routes_with_out_amounts.len() == 1 {
-            // return the only route
-            let (steps, output_amount) = &all_routes_with_out_amounts[0];
-            return Some(SwapRoute {
-                paths: vec![SwapPath {
-                    steps: steps.clone(),
-                    input_amount: swap_param.input_amount,
-                    output_amount: *output_amount,
-                }],
-                input_token: swap_param.input_token.address,
-                output_token: swap_param.output_token.address,
+        let (steps, output_amount) = &all_routes_with_out_amounts[0];
+        Some(SwapRoute {
+            paths: vec![SwapPath {
+                steps: steps.clone(),
                 input_amount: swap_param.input_amount,
                 output_amount: *output_amount,
-                other_output_amount: calculate_min_output_amount(
-                    *output_amount,
-                    swap_param.slippage_bps as u64,
-                ),
-                slippage_bps: swap_param.slippage_bps,
-                context_slot: self.pool_manager.get_chain_state().await.slot,
-            });
-        }
-
-        // smart route with 2 splits
-        let mut splits_with_distributions: Vec<Vec<Option<SwapPath>>> = vec![
-            vec![None; percent_distribution.len()],
-            vec![None; percent_distribution.len()],
-        ];
-
-        for (split_index, (split, _)) in all_routes_with_out_amounts.iter().enumerate() {
-            if split.len() == 1 {
-                // direct route
-                let swap_step = &split[0];
-                for (i, percent) in percent_distribution.iter().enumerate() {
-                    let input_amount = swap_param.input_amount * percent / 100;
-                    let output_amount = swap_step
-                        .pool_state
-                        .calculate_output_amount(
-                            &swap_param.input_token.address,
-                            input_amount,
-                            amm_config_fetcher,
-                        )
-                        .await;
-                    splits_with_distributions[0][i] = Some(SwapPath {
-                        steps: vec![SwapStepInternal {
-                            dex: swap_step.dex,
-                            input_token: swap_step.input_token,
-                            output_token: swap_step.output_token,
-                            pool_address: swap_step.pool_address,
-                            input_amount,
-                            output_amount,
-                            percent: *percent,
-                            pool_state: swap_step.pool_state.clone(),
-                        }],
-                        input_amount,
-                        output_amount,
-                    });
-                }
-            } else if split.len() == 2 {
-                // hop route
-                let swap_step_1 = &split[0];
-                let swap_step_2 = &split[1];
-                for (i, percent) in percent_distribution.iter().enumerate() {
-                    let input_amount = swap_param.input_amount * percent / 100;
-                    let intermediate_amount = swap_step_1
-                        .pool_state
-                        .calculate_output_amount(
-                            &swap_param.input_token.address,
-                            input_amount,
-                            amm_config_fetcher,
-                        )
-                        .await;
-                    let output_amount = swap_step_2
-                        .pool_state
-                        .calculate_output_amount(
-                            &swap_step_1.output_token,
-                            intermediate_amount,
-                            amm_config_fetcher,
-                        )
-                        .await;
-                    splits_with_distributions[split_index][i] = Some(SwapPath {
-                        steps: vec![
-                            SwapStepInternal {
-                                dex: swap_step_1.dex,
-                                input_token: swap_step_1.input_token,
-                                output_token: swap_step_1.output_token,
-                                pool_address: swap_step_1.pool_address,
-                                input_amount,
-                                output_amount: intermediate_amount,
-                                percent: *percent,
-                                pool_state: swap_step_1.pool_state.clone(),
-                            },
-                            SwapStepInternal {
-                                dex: swap_step_2.dex,
-                                input_token: swap_step_2.input_token,
-                                output_token: swap_step_2.output_token,
-                                pool_address: swap_step_2.pool_address,
-                                input_amount: intermediate_amount,
-                                output_amount,
-                                percent: *percent, // TODO: what percent to use here?
-                                pool_state: swap_step_2.pool_state.clone(),
-                            },
-                        ],
-                        input_amount,
-                        output_amount,
-                    });
-                }
-            }
-        }
-
-        // Combine: smart routing with 2 splits
-        let mut swap_route: SwapRoute = SwapRoute {
-            paths: vec![],
+            }],
             input_token: swap_param.input_token.address,
             output_token: swap_param.output_token.address,
             input_amount: swap_param.input_amount,
-            output_amount: 0,
-            other_output_amount: 0,
+            output_amount: *output_amount,
+            other_output_amount: calculate_min_output_amount(
+                *output_amount,
+                swap_param.slippage_bps as u64,
+            ),
             slippage_bps: swap_param.slippage_bps,
             context_slot: self.pool_manager.get_chain_state().await.slot,
-        };
-
-        let len = percent_distribution.len();
-        for i in 0..len {
-            let mut combined_output_amount = 0;
-            let mut current_paths = vec![];
-
-            // Check if we can combine these paths (they shouldn't share pools)
-            let mut can_combine = true;
-            let mut used_pools = HashSet::new();
-
-            if let Some(direct_path) = &splits_with_distributions[0][i] {
-                if direct_path.output_amount > 0 {
-                    // Collect pools from this path
-                    for step in &direct_path.steps {
-                        used_pools.insert(step.pool_address);
-                    }
-                    current_paths.push(direct_path.clone());
-                    combined_output_amount += direct_path.output_amount;
-                }
-            }
-
-            if let Some(hop_path) = &splits_with_distributions[1][len - 1 - i] {
-                if hop_path.output_amount > 0 {
-                    // Check if this path shares any pools with already added paths
-                    for step in &hop_path.steps {
-                        if used_pools.contains(&step.pool_address) {
-                            can_combine = false;
-                            break;
-                        }
-                    }
-
-                    if can_combine {
-                        current_paths.push(hop_path.clone());
-                        combined_output_amount += hop_path.output_amount;
-                    } else {
-                        // If we can't combine, just use the path with better output
-                        if let Some(direct_path) = &splits_with_distributions[0][i] {
-                            if hop_path.output_amount > direct_path.output_amount {
-                                current_paths.clear();
-                                current_paths.push(hop_path.clone());
-                                combined_output_amount = hop_path.output_amount;
-                            }
-                            // Otherwise keep the direct path we already added
-                        } else {
-                            current_paths.push(hop_path.clone());
-                            combined_output_amount = hop_path.output_amount;
-                        }
-                    }
-                }
-            }
-
-            if combined_output_amount > swap_route.output_amount {
-                swap_route.output_amount = combined_output_amount;
-                swap_route.paths = current_paths;
-            }
-        }
-
-        swap_route.other_output_amount =
-            calculate_min_output_amount(swap_route.output_amount, swap_param.slippage_bps as u64);
-        // Return smart route with split paths
-        Some(swap_route)
+        })
     }
 
     /// Calculate arbitrage profit for a round-trip swap: tokenA -> tokenB -> tokenA

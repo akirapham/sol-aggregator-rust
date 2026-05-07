@@ -64,7 +64,10 @@ impl DatabaseTrait for Database {
             }
         }
         if skipped > 0 {
-            log::warn!("Skipped {} pools due to schema changes (will be overwritten on next save)", skipped);
+            log::warn!(
+                "Skipped {} pools due to schema changes (will be overwritten on next save)",
+                skipped
+            );
         }
         Ok(pools)
     }

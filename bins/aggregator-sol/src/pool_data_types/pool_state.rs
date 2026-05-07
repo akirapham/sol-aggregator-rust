@@ -246,7 +246,9 @@ impl PoolState {
 
                 (reserve_a, reserve_b)
             }
-            PoolState::MeteoraDlmm(state) => (state.reserve_x.unwrap(), state.reserve_y.unwrap()),
+            PoolState::MeteoraDlmm(state) => {
+                (state.reserve_x.unwrap_or(0), state.reserve_y.unwrap_or(0))
+            }
         }
     }
 

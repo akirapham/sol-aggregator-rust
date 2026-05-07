@@ -10,8 +10,8 @@ use crate::fetchers::tick_array_fetcher::TickArrayFetcher;
 use crate::grpc::BatchProcessor;
 use crate::pool_data_types::{
     dbc, DexType, GetAmmConfig, MeteoraDlmmPoolUpdate, PoolState, PoolUpdateEventType,
-    RaydiumClmmAmmConfig, RaydiumClmmPoolState, RaydiumClmmPoolUpdate, RaydiumCpmmAmmConfig,
-    WhirlpoolPoolState, WhirlpoolPoolUpdate,
+    PumpSwapPoolState, RaydiumClmmAmmConfig, RaydiumClmmPoolState, RaydiumClmmPoolUpdate,
+    RaydiumCpmmAmmConfig, WhirlpoolPoolState, WhirlpoolPoolUpdate,
 };
 use crate::pool_discovery::PoolDiscovery;
 use crate::types::Token;
@@ -150,6 +150,7 @@ pub trait PoolDataProvider: GetAmmConfig + Send + Sync {
     async fn get_chain_state(&self) -> ChainStateUpdate;
     fn get_rpc_client(&self) -> Option<&Arc<RpcClient>>;
     async fn ensure_pumpfun_pool_for_token(&self, token_address: &Pubkey) -> Result<bool, String>;
+    async fn ensure_pumpswap_pool_for_token(&self, token_address: &Pubkey) -> Result<bool, String>;
 }
 
 /// In-memory pool state manager with real-time updates
@@ -1642,6 +1643,117 @@ impl PoolStateManager {
         Ok(hydrated)
     }
 
+    pub async fn ensure_pumpswap_pool_for_token(
+        &self,
+        token_address: &Pubkey,
+    ) -> Result<bool, String> {
+        if *token_address == crate::constants::WSOL_PUBKEY {
+            return Ok(false);
+        }
+
+        let has_fresh_pumpswap_pool = self
+            .get_pools_for_pair(token_address, &crate::constants::WSOL_PUBKEY)
+            .into_iter()
+            .any(|pool| matches!(pool, PoolState::PumpSwap(_)) && !self.is_pool_stale(&pool));
+        if has_fresh_pumpswap_pool {
+            return Ok(false);
+        }
+
+        #[derive(Deserialize)]
+        struct PumpCoinResponse {
+            #[serde(default)]
+            complete: bool,
+            pool_address: Option<String>,
+            pump_swap_pool: Option<String>,
+        }
+
+        let pump_api_url = format!("https://frontend-api-v3.pump.fun/coins/{}", token_address);
+        let pump_coin = reqwest::get(&pump_api_url)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to fetch Pump token {} metadata: {}",
+                    token_address, e
+                )
+            })?
+            .json::<PumpCoinResponse>()
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to parse Pump token {} metadata: {}",
+                    token_address, e
+                )
+            })?;
+        let pool_address = pump_coin
+            .pump_swap_pool
+            .or_else(|| {
+                pump_coin
+                    .complete
+                    .then_some(pump_coin.pool_address)
+                    .flatten()
+            })
+            .ok_or_else(|| format!("Pump token {} has no PumpSwap pool address", token_address))?
+            .parse::<Pubkey>()
+            .map_err(|e| {
+                format!(
+                    "Failed to parse PumpSwap pool address for token {}: {}",
+                    token_address, e
+                )
+            })?;
+
+        let pool = sol_trade_sdk::instruction::utils::pumpswap::fetch_pool(
+            &self.rpc_client,
+            &pool_address,
+        )
+        .await
+        .map_err(|e| format!("Failed to fetch PumpSwap pool {}: {}", pool_address, e))?;
+
+        let (base_reserve, quote_reserve) =
+            sol_trade_sdk::instruction::utils::pumpswap::get_token_balances(
+                &pool,
+                &self.rpc_client,
+            )
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to fetch PumpSwap reserves for pool {}: {}",
+                    pool_address, e
+                )
+            })?;
+
+        let sol_price = self.get_sol_price();
+        let liquidity_usd = if pool.quote_mint == crate::constants::WSOL_PUBKEY {
+            quote_reserve as f64 / 1_000_000_000_f64 * sol_price * 2.0
+        } else if pool.base_mint == crate::constants::WSOL_PUBKEY {
+            base_reserve as f64 / 1_000_000_000_f64 * sol_price * 2.0
+        } else {
+            0.0
+        };
+
+        self.upsert_pool(PoolState::PumpSwap(PumpSwapPoolState {
+            slot: 0,
+            transaction_index: None,
+            address: pool_address,
+            index: pool.index,
+            creator: Some(pool.creator),
+            base_mint: pool.base_mint,
+            quote_mint: pool.quote_mint,
+            pool_base_token_account: pool.pool_base_token_account,
+            pool_quote_token_account: pool.pool_quote_token_account,
+            last_updated: u64::MAX,
+            base_reserve,
+            quote_reserve,
+            liquidity_usd,
+            is_state_keys_initialized: true,
+            coin_creator: pool.coin_creator,
+            protocol_fee_recipient: crate::pool_data_types::pumpf::constants::FEE_RECIPIENT,
+            is_cashback: false,
+        }))
+        .await;
+
+        Ok(true)
+    }
+
     /// Get pools for a specific DEX (excluding stale pools)
     pub fn get_pools_for_dex(&self, dex: DexType) -> Vec<PoolState> {
         // Step 1: Get pool addresses for this DEX
@@ -2266,5 +2378,9 @@ impl PoolDataProvider for PoolStateManager {
 
     async fn ensure_pumpfun_pool_for_token(&self, token_address: &Pubkey) -> Result<bool, String> {
         self.ensure_pumpfun_pool_for_token(token_address).await
+    }
+
+    async fn ensure_pumpswap_pool_for_token(&self, token_address: &Pubkey) -> Result<bool, String> {
+        self.ensure_pumpswap_pool_for_token(token_address).await
     }
 }

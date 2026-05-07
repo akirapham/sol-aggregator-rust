@@ -18,9 +18,8 @@ pub fn wsol() -> Pubkey {
 }
 
 /// Pre-computed base token Pubkeys for fast iteration in routing
-pub static BASE_TOKEN_PUBKEYS: LazyLock<Vec<Pubkey>> = LazyLock::new(|| {
-    vec![WSOL_PUBKEY, USDC_PUBKEY, USDT_PUBKEY, USD1_PUBKEY]
-});
+pub static BASE_TOKEN_PUBKEYS: LazyLock<Vec<Pubkey>> =
+    LazyLock::new(|| vec![WSOL_PUBKEY, USDC_PUBKEY, USDT_PUBKEY, USD1_PUBKEY]);
 
 pub static BASE_TOKENS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     let mut set = HashSet::new();

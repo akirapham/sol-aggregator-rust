@@ -9,7 +9,7 @@ use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::event_parser::protocols::pumpfun::types::{
-    BondingCurve, BondingCurveLegacy,
+    bonding_curve_decode, BondingCurve,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -40,28 +40,60 @@ struct TopRunnerItem {
     coin: CoinRecord,
 }
 
-fn decode_bonding_curve_raw(data: &[u8]) -> Option<BondingCurve> {
-    // Try new format first (with is_cashback)
-    let mut slice = data;
-    if let Ok(raw) = <BondingCurve as BorshDeserialize>::deserialize(&mut slice) {
-        return Some(raw);
+#[derive(BorshDeserialize)]
+struct BondingCurveExtended {
+    virtual_token_reserves: u64,
+    virtual_sol_reserves: u64,
+    real_token_reserves: u64,
+    real_sol_reserves: u64,
+    token_total_supply: u64,
+    complete: bool,
+    creator: Pubkey,
+    is_mayhem_mode: bool,
+    is_cashback: bool,
+    quote_mint: Pubkey,
+}
+
+struct DecodedBondingCurve {
+    state: BondingCurve,
+    quote_mint: Pubkey,
+}
+
+fn decode_bonding_curve_raw(data: &[u8]) -> Option<DecodedBondingCurve> {
+    const EXTENDED_BONDING_CURVE_SIZE: usize = 8 * 5 + 3 + 32 * 2;
+
+    if data.len() >= EXTENDED_BONDING_CURVE_SIZE {
+        let mut slice = &data[..EXTENDED_BONDING_CURVE_SIZE];
+        if let Ok(raw) = BondingCurveExtended::deserialize(&mut slice) {
+            return Some(DecodedBondingCurve {
+                state: BondingCurve {
+                    virtual_token_reserves: raw.virtual_token_reserves,
+                    virtual_sol_reserves: raw.virtual_sol_reserves,
+                    real_token_reserves: raw.real_token_reserves,
+                    real_sol_reserves: raw.real_sol_reserves,
+                    token_total_supply: raw.token_total_supply,
+                    complete: raw.complete,
+                    creator: raw.creator,
+                    is_mayhem_mode: raw.is_mayhem_mode,
+                    is_cashback: raw.is_cashback,
+                },
+                quote_mint: raw.quote_mint,
+            });
+        }
     }
-    // Fallback to legacy format
-    let mut slice = data;
-    if let Ok(legacy) = <BondingCurveLegacy as BorshDeserialize>::deserialize(&mut slice) {
-        return Some(BondingCurve {
-            virtual_token_reserves: legacy.virtual_token_reserves,
-            virtual_sol_reserves: legacy.virtual_sol_reserves,
-            real_token_reserves: legacy.real_token_reserves,
-            real_sol_reserves: legacy.real_sol_reserves,
-            token_total_supply: legacy.token_total_supply,
-            complete: legacy.complete,
-            creator: legacy.creator,
-            is_mayhem_mode: legacy.is_mayhem_mode,
-            is_cashback: false,
-        });
+
+    bonding_curve_decode(data).map(|state| DecodedBondingCurve {
+        state,
+        quote_mint: Pubkey::default(),
+    })
+}
+
+fn resolve_quote_mint(decoded: &DecodedBondingCurve) -> Pubkey {
+    if decoded.quote_mint == Pubkey::default() {
+        crate::pool_data_types::common::constants::WSOL_TOKEN_ACCOUNT
+    } else {
+        decoded.quote_mint
     }
-    None
 }
 
 pub struct PumpFunDiscovery {
@@ -121,15 +153,18 @@ impl PoolDiscovery for PumpFunDiscovery {
             return Ok(vec![]);
         }
 
-        let Some(raw_state) = decode_bonding_curve_raw(&account_data[8..]) else {
+        let Some(decoded) = decode_bonding_curve_raw(&account_data[8..]) else {
             return Ok(vec![]);
         };
+        let quote_mint = resolve_quote_mint(&decoded);
+        let raw_state = decoded.state;
 
         Ok(vec![PoolState::Pumpfun(PumpfunPoolState {
             slot: 0,
             transaction_index: None,
             address: bonding_curve,
             mint: *token,
+            quote_mint,
             last_updated: get_high_perf_clock() as u64,
             liquidity_usd: 0.0,
             is_state_keys_initialized: true,
@@ -210,13 +245,16 @@ impl PoolDiscovery for PumpFunDiscovery {
 
                     let data_slice = &data[8..];
                     match decode_bonding_curve_raw(data_slice) {
-                        Some(raw_state) => {
+                        Some(decoded) => {
+                            let quote_mint = resolve_quote_mint(&decoded);
+                            let raw_state = decoded.state;
                             if let Ok(mint) = Pubkey::try_from(coin.mint.as_str()) {
                                 let state = PumpfunPoolState {
                                     slot: 0,
                                     transaction_index: None,
                                     address: curve_pubkey,
                                     mint,
+                                    quote_mint,
                                     last_updated: get_high_perf_clock() as u64,
                                     liquidity_usd: coin.market_cap,
                                     is_state_keys_initialized: true,

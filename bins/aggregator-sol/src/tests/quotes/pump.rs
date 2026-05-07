@@ -2,9 +2,10 @@ use crate::aggregator::DexAggregator;
 use crate::api::dto::QuoteRequest;
 use crate::api::AppState;
 use crate::pool_data_types::pumpf::functions::get_bonding_curve_pda;
+use crate::pool_data_types::traits::BuildSwapInstruction;
 use crate::pool_data_types::*;
 use crate::tests::quotes::common::*;
-use crate::types::Token;
+use crate::types::{ExecutionPriority, SwapParams, Token};
 use base64::Engine;
 use borsh::BorshDeserialize;
 use solana_client::rpc_config::RpcSimulateTransactionConfig;
@@ -18,6 +19,107 @@ use solana_streamer_sdk::streaming::event_parser::protocols::pumpswap::types::{
 };
 use std::str::FromStr;
 use std::sync::Arc;
+
+fn mock_pumpfun_pool(base_mint: Pubkey, quote_mint: Pubkey) -> PumpfunPoolState {
+    let bonding_curve = get_bonding_curve_pda(&base_mint).unwrap();
+    PumpfunPoolState {
+        slot: 100,
+        transaction_index: None,
+        address: bonding_curve,
+        mint: base_mint,
+        quote_mint,
+        last_updated: u64::MAX,
+        liquidity_usd: 30_000.0,
+        is_state_keys_initialized: true,
+        virtual_token_reserves: 1_000_000_000_000_000,
+        virtual_sol_reserves: 30_000_000_000,
+        real_token_reserves: 900_000_000_000_000,
+        real_sol_reserves: 20_000_000_000,
+        complete: false,
+        creator: Pubkey::new_unique(),
+        is_mayhem_mode: false,
+        is_cashback: false,
+    }
+}
+
+fn pump_base_token(address: Pubkey) -> Token {
+    Token {
+        address,
+        symbol: Some("PUMP".to_string()),
+        name: Some("Pump Token".to_string()),
+        decimals: 6,
+        is_token_2022: true,
+        logo_uri: None,
+    }
+}
+
+#[tokio::test]
+async fn test_pumpfun_builds_buy_exact_quote_in_v2_for_sol_quote() {
+    let (pool_manager, _) = create_test_setup(vec!["pumpfun"]).await;
+    let user_wallet = Pubkey::new_unique();
+    let base_mint = Pubkey::new_unique();
+    let pool = mock_pumpfun_pool(base_mint, common::constants::WSOL_TOKEN_ACCOUNT);
+
+    let instructions = pool
+        .build_swap_instruction(
+            &SwapParams {
+                input_token: wsol_token(),
+                output_token: pump_base_token(base_mint),
+                input_amount: 1_000_000_000,
+                slippage_bps: 100,
+                user_wallet,
+                priority: ExecutionPriority::Medium,
+            },
+            &*pool_manager,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let swap_ix = instructions.last().unwrap();
+    assert_eq!(&swap_ix.data[..8], &[194, 171, 28, 70, 104, 77, 91, 47]);
+    assert_eq!(swap_ix.accounts.len(), 27);
+    assert_eq!(swap_ix.accounts[1].pubkey, base_mint);
+    assert_eq!(
+        swap_ix.accounts[2].pubkey,
+        common::constants::WSOL_TOKEN_ACCOUNT
+    );
+    assert_eq!(swap_ix.accounts[4].pubkey, common::constants::TOKEN_PROGRAM);
+}
+
+#[tokio::test]
+async fn test_pumpfun_builds_sell_v2_with_usdc_quote_mint() {
+    let (pool_manager, _) = create_test_setup(vec!["pumpfun"]).await;
+    let user_wallet = Pubkey::new_unique();
+    let base_mint = Pubkey::new_unique();
+    let pool = mock_pumpfun_pool(base_mint, common::constants::USDC_TOKEN_ACCOUNT);
+
+    let instructions = pool
+        .build_swap_instruction(
+            &SwapParams {
+                input_token: pump_base_token(base_mint),
+                output_token: usdc_token(),
+                input_amount: 10_000_000,
+                slippage_bps: 100,
+                user_wallet,
+                priority: ExecutionPriority::Medium,
+            },
+            &*pool_manager,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let swap_ix = instructions.last().unwrap();
+    assert_eq!(&swap_ix.data[..8], &[93, 246, 130, 60, 231, 233, 64, 178]);
+    assert_eq!(swap_ix.accounts.len(), 26);
+    assert_eq!(swap_ix.accounts[1].pubkey, base_mint);
+    assert_eq!(
+        swap_ix.accounts[2].pubkey,
+        common::constants::USDC_TOKEN_ACCOUNT
+    );
+    assert_eq!(swap_ix.accounts[4].pubkey, common::constants::TOKEN_PROGRAM);
+}
 
 #[tokio::test]
 async fn test_pumpfun_quote_simulation() {
@@ -60,6 +162,7 @@ async fn test_pumpfun_quote_simulation() {
         transaction_index: None,
         address: bonding_curve_address,
         mint: token_mint_address,
+        quote_mint: common::constants::WSOL_TOKEN_ACCOUNT,
         last_updated: u64::MAX,
         liquidity_usd: 30000.0,
         is_state_keys_initialized: true,
@@ -277,6 +380,7 @@ async fn test_pumpfun_quote_repairs_cached_pool_with_missing_mint() {
             transaction_index: None,
             address: bonding_curve_address,
             mint: Pubkey::default(),
+            quote_mint: common::constants::WSOL_TOKEN_ACCOUNT,
             last_updated: u64::MAX,
             liquidity_usd: 1.0,
             is_state_keys_initialized: true,
@@ -377,6 +481,7 @@ async fn test_pumpfun_quote_repairs_missing_pair_index_for_cached_pool() {
             transaction_index: None,
             address: bonding_curve_address,
             mint: token_mint_address,
+            quote_mint: common::constants::WSOL_TOKEN_ACCOUNT,
             last_updated: u64::MAX,
             liquidity_usd: 1.0,
             is_state_keys_initialized: true,
@@ -449,6 +554,7 @@ async fn test_pumpfun_low_liquidity_pool_still_routes_for_exit() {
             transaction_index: None,
             address: bonding_curve_address,
             mint: token_mint_address,
+            quote_mint: common::constants::WSOL_TOKEN_ACCOUNT,
             last_updated: u64::MAX,
             liquidity_usd: 371.0,
             is_state_keys_initialized: true,
@@ -599,6 +705,7 @@ async fn test_pumpfun_quote() {
         transaction_index: None,
         address: bonding_curve_address,
         mint: token_mint_address,
+        quote_mint: common::constants::WSOL_TOKEN_ACCOUNT,
         last_updated: u64::MAX,
         liquidity_usd: 30000.0,
         is_state_keys_initialized: true,
@@ -983,6 +1090,7 @@ async fn test_pumpfun_quote_reverse() {
         transaction_index: None,
         address: bonding_curve_address,
         mint: token_mint_address,
+        quote_mint: common::constants::WSOL_TOKEN_ACCOUNT,
         last_updated: u64::MAX,
         liquidity_usd: 30000.0,
         is_state_keys_initialized: true,
@@ -1132,6 +1240,7 @@ async fn test_pumpfun_quote_simulation_reverse() {
         transaction_index: None,
         address: bonding_curve_address,
         mint: token_mint_address,
+        quote_mint: common::constants::WSOL_TOKEN_ACCOUNT,
         last_updated: u64::MAX,
         liquidity_usd: 30000.0,
         is_state_keys_initialized: true,

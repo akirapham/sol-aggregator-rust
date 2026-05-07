@@ -123,6 +123,7 @@ pub fn pool_update_event_to_pool_state(
                     * sol_price,
                 complete: pumpfun_pool_update.complete,
                 mint: pumpfun_pool_update.mint,
+                quote_mint: pumpfun_pool_update.quote_mint,
                 virtual_sol_reserves: pumpfun_pool_update.virtual_sol_reserves,
                 virtual_token_reserves: pumpfun_pool_update.virtual_token_reserves,
                 real_sol_reserves: pumpfun_pool_update.real_sol_reserves,
@@ -606,6 +607,9 @@ pub fn update_pool_state_by_event(
                 state.real_token_reserves = pumpfun_pool_update.real_token_reserves;
                 state.slot = pumpfun_pool_update.slot;
                 state.transaction_index = pumpfun_pool_update.transaction_index;
+                if pumpfun_pool_update.quote_mint != Pubkey::default() {
+                    state.quote_mint = pumpfun_pool_update.quote_mint;
+                }
                 if pumpfun_pool_update.creator != Pubkey::default() {
                     state.creator = pumpfun_pool_update.creator;
                 }

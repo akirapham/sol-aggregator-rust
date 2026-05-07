@@ -19,12 +19,58 @@ use solana_sdk::instruction::AccountMeta;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 
+const BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR: [u8; 8] = [194, 171, 28, 70, 104, 77, 91, 47];
+const SELL_V2_DISCRIMINATOR: [u8; 8] = [93, 246, 130, 60, 231, 233, 64, 178];
+
+fn default_quote_mint() -> Pubkey {
+    common::constants::WSOL_TOKEN_ACCOUNT
+}
+
+fn associated_token_address(owner: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
+    let owner_anchor = functions::to_pubkey(owner);
+    let mint_anchor = functions::to_pubkey(mint);
+    let token_program_anchor = functions::to_pubkey(token_program);
+    let ata = spl_associated_token_account::get_associated_token_address_with_program_id(
+        &owner_anchor,
+        &mint_anchor,
+        &token_program_anchor,
+    );
+    functions::to_address(&ata)
+}
+
+fn create_ata_instruction_for_owner(
+    funder: Pubkey,
+    owner: Pubkey,
+    token_account: Pubkey,
+    mint: Pubkey,
+    token_program: Pubkey,
+) -> Instruction {
+    Instruction {
+        program_id: common::constants::ASSOCIATED_TOKEN_PROGRAM,
+        accounts: vec![
+            AccountMeta::new(funder, true),
+            AccountMeta::new(token_account, false),
+            AccountMeta::new_readonly(owner, false),
+            AccountMeta::new_readonly(mint, false),
+            common::constants::SYSTEM_PROGRAM_META,
+            AccountMeta::new_readonly(token_program, false),
+        ],
+        data: vec![1],
+    }
+}
+
+fn is_native_quote_mint(quote_mint: &Pubkey) -> bool {
+    tokens_equal(quote_mint, &common::constants::WSOL_TOKEN_ACCOUNT)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PumpfunPoolState {
     pub slot: u64,
     pub transaction_index: Option<u64>,
     pub address: Pubkey, // bonding curve address
     pub mint: Pubkey,
+    #[serde(default = "default_quote_mint")]
+    pub quote_mint: Pubkey,
     pub last_updated: u64,
     pub liquidity_usd: f64,
     pub is_state_keys_initialized: bool,
@@ -45,6 +91,7 @@ pub struct PumpfunPoolUpdate {
     pub transaction_index: Option<u64>,
     pub address: Pubkey,
     pub mint: Pubkey,
+    pub quote_mint: Pubkey,
     pub virtual_token_reserves: u64,
     pub virtual_sol_reserves: u64,
     pub real_token_reserves: u64,
@@ -77,7 +124,15 @@ impl PumpfunPoolState {
             return 0;
         }
 
-        let is_buy = tokens_equal(input_token, &get_sol_mint());
+        let quote_mint = if self.quote_mint == Pubkey::default() {
+            default_quote_mint()
+        } else {
+            self.quote_mint
+        };
+        let is_buy = tokens_equal(input_token, &quote_mint);
+        if !is_buy && self.mint != Pubkey::default() && !tokens_equal(input_token, &self.mint) {
+            return 0;
+        }
         if is_buy {
             let x = self.virtual_token_reserves as u128;
             let y = self.virtual_sol_reserves as u128;
@@ -151,8 +206,18 @@ impl BuildSwapInstruction for PumpfunPoolState {
     ) -> std::result::Result<Vec<Instruction>, String> {
         let _ = amm_config_fetcher;
         let _ = rpc_client;
-        // Determine if this is a buy (SOL -> Token) or sell (Token -> SOL)
-        let is_buy = tokens_equal(&params.input_token.address, &get_sol_mint());
+        let quote_mint = if self.quote_mint == Pubkey::default() {
+            get_sol_mint()
+        } else {
+            self.quote_mint
+        };
+        let is_buy = tokens_equal(&params.input_token.address, &quote_mint);
+        if !is_buy && !tokens_equal(&params.output_token.address, &quote_mint) {
+            return Err(format!(
+                "PumpFun swap must be between base mint and quote mint {}",
+                quote_mint
+            ));
+        }
 
         let creator_vault_pda =
             sol_trade_sdk::instruction::utils::pumpfun::get_creator_vault_pda(&self.creator)
@@ -176,22 +241,118 @@ impl BuildSwapInstruction for PumpfunPoolState {
 
         let token_program_meta = AccountMeta::new_readonly(token_program, false);
         let buyback_fee_recipient = constants::pick_buyback_fee_recipient();
+        let fee_recipient = if is_mayhem_mode {
+            constants::MAYHEM_FEE_RECIPIENT
+        } else {
+            constants::FEE_RECIPIENT
+        };
 
         let fee_recipient_meta = if is_mayhem_mode {
             constants::MAYHEM_FEE_RECIPIENT_META
         } else {
             constants::FEE_RECIPIENT_META
         };
+
+        let quote_token_program = common::constants::TOKEN_PROGRAM;
+        let quote_token_program_meta = common::constants::TOKEN_PROGRAM_META;
+
+        let base_mint = if is_buy {
+            params.output_token.address
+        } else {
+            params.input_token.address
+        };
+        let bonding_curve_addr = if self.address == Pubkey::default() {
+            pumpf_functions::get_bonding_curve_pda(&base_mint)
+                .ok_or("Failed to get bonding curve PDA".to_string())?
+        } else {
+            self.address
+        };
+
+        let associated_base_bonding_curve =
+            associated_token_address(&bonding_curve_addr, &base_mint, &token_program);
+        let associated_quote_bonding_curve =
+            associated_token_address(&bonding_curve_addr, &quote_mint, &quote_token_program);
+        let associated_base_user =
+            associated_token_address(&params.user_wallet, &base_mint, &token_program);
+        let associated_quote_user =
+            associated_token_address(&params.user_wallet, &quote_mint, &quote_token_program);
+        let associated_quote_fee_recipient =
+            associated_token_address(&fee_recipient, &quote_mint, &quote_token_program);
+        let associated_quote_buyback_fee_recipient =
+            associated_token_address(&buyback_fee_recipient, &quote_mint, &quote_token_program);
+        let associated_creator_vault =
+            associated_token_address(&creator_vault_pda, &quote_mint, &quote_token_program);
+
+        let (sharing_config, _) = Pubkey::find_program_address(
+            &[b"sharing-config", base_mint.as_ref()],
+            &constants::PUMPFUN_FEE_PROGRAM,
+        );
+        let (user_volume_accumulator, _) = Pubkey::find_program_address(
+            &[b"user_volume_accumulator", params.user_wallet.as_ref()],
+            &pumpf_functions::accounts::PUMPFUN,
+        );
+        let (global_volume_accumulator, _) = Pubkey::find_program_address(
+            &[b"global_volume_accumulator"],
+            &pumpf_functions::accounts::PUMPFUN,
+        );
+        let associated_user_volume_accumulator =
+            associated_token_address(&user_volume_accumulator, &quote_mint, &quote_token_program);
+
+        let mut instructions = Vec::with_capacity(6);
+
+        if is_buy {
+            instructions.push(create_ata_instruction_for_owner(
+                params.user_wallet,
+                params.user_wallet,
+                associated_base_user,
+                base_mint,
+                token_program,
+            ));
+        }
+
+        if !is_native_quote_mint(&quote_mint) {
+            instructions.push(create_ata_instruction_for_owner(
+                params.user_wallet,
+                params.user_wallet,
+                associated_quote_user,
+                quote_mint,
+                quote_token_program,
+            ));
+            instructions.push(create_ata_instruction_for_owner(
+                params.user_wallet,
+                creator_vault_pda,
+                associated_creator_vault,
+                quote_mint,
+                quote_token_program,
+            ));
+            instructions.push(create_ata_instruction_for_owner(
+                params.user_wallet,
+                bonding_curve_addr,
+                associated_quote_bonding_curve,
+                quote_mint,
+                quote_token_program,
+            ));
+            if self.is_cashback {
+                instructions.push(create_ata_instruction_for_owner(
+                    params.user_wallet,
+                    user_volume_accumulator,
+                    associated_user_volume_accumulator,
+                    quote_mint,
+                    quote_token_program,
+                ));
+            }
+        }
+
         if is_buy {
             // ========================================
-            // BUY: SOL -> Token (Exact SOL In)
+            // BUY: Quote -> Token (Exact Quote In)
             // ========================================
-            // 1. Calculate expected token output for the given input SOL
+            // 1. Calculate expected token output for the given input quote amount
             // Note: pumpf_functions::get_buy_token_amount_from_sol_amount calculates the virtual curve output.
             // Manual calc consistent with calculate_output_amount
             let x = self.virtual_token_reserves as u128;
             let y = self.virtual_sol_reserves as u128;
-            let dy = params.input_amount as u128; // Input SOL
+            let dy = params.input_amount as u128; // Input quote amount
 
             let fee = dy / 100;
             let dy_net = dy.saturating_sub(fee);
@@ -205,112 +366,42 @@ impl BuildSwapInstruction for PumpfunPoolState {
             let min_tokens_out =
                 functions::calculate_slippage(expected_token_amount, params.slippage_bps)?;
 
-            let bonding_curve_addr = if self.address == Pubkey::default() {
-                pumpf_functions::get_bonding_curve_pda(&params.output_token.address)
-                    .ok_or("Failed to get bonding curve PDA".to_string())?
-            } else {
-                self.address
-            };
-
-            // Convert Address types to anchor_lang Pubkey for compatibility
-            let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
-            let output_mint_anchor = functions::to_pubkey(&params.output_token.address);
-            let bonding_curve_anchor = functions::to_pubkey(&bonding_curve_addr);
-            // Use the token_program we determined earlier
-            let token_program_anchor = functions::to_pubkey(&token_program);
-
-            // Get associated token accounts
-            let associated_bonding_curve_anchor =
-                spl_associated_token_account::get_associated_token_address_with_program_id(
-                    &bonding_curve_anchor,
-                    &output_mint_anchor,
-                    &token_program_anchor,
-                );
-            let user_token_account_anchor =
-                spl_associated_token_account::get_associated_token_address_with_program_id(
-                    &user_wallet_anchor,
-                    &output_mint_anchor,
-                    &token_program_anchor,
-                );
-
-            // Convert back to Address for AccountMeta
-            let associated_bonding_curve = functions::to_address(&associated_bonding_curve_anchor);
-            let user_token_account = functions::to_address(&user_token_account_anchor);
-
-            let mut instructions = Vec::with_capacity(2);
-
-            // Create ATA using common function
-            instructions.push(functions::create_ata_instruction(
-                params.user_wallet,
-                user_token_account,
-                params.output_token.address,
-                is_token_2022,
-            ));
-
-            // Derive user_volume_accumulator from PumpFun Program ID
-            let (user_volume_accumulator, _) = Pubkey::find_program_address(
-                &[b"user_volume_accumulator", params.user_wallet.as_ref()],
-                &pumpf_functions::accounts::PUMPFUN,
-            );
-
-            // Derive global_volume_accumulator from PumFun Program ID
-            let (global_volume_accumulator, _) = Pubkey::find_program_address(
-                &[b"global_volume_accumulator"],
-                &pumpf_functions::accounts::PUMPFUN,
-            );
-
-            // Build instruction data for buy_exact_sol_in
-            // Discriminator: [56, 252, 116, 8, 158, 223, 205, 95]
-            // Args: spendable_sol_in (u64), min_tokens_out (u64), track_volume (OptionBool)
-            let mut buy_data = Vec::with_capacity(25);
-            buy_data.extend_from_slice(&[56, 252, 116, 8, 158, 223, 205, 95]);
-            buy_data.extend_from_slice(&params.input_amount.to_le_bytes()); // spendable_sol_in
+            // Build instruction data for buy_exact_quote_in_v2
+            // Args: spendable_quote_in (u64), min_tokens_out (u64)
+            let mut buy_data = Vec::with_capacity(24);
+            buy_data.extend_from_slice(&BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR);
+            buy_data.extend_from_slice(&params.input_amount.to_le_bytes()); // spendable_quote_in
             buy_data.extend_from_slice(&min_tokens_out.to_le_bytes()); // min_tokens_out
-            buy_data.push(0); // track_volume: OptionBool { val: false } (encoded as 0u8)
 
-            // Build accounts array
-            // Account Structure for buy_exact_sol_in (Same as buy):
-            // 0: Global
-            // 1: Fee Recipient
-            // 2: Mint
-            // 3: Bonding Curve
-            // 4: Associated Bonding Curve
-            // 5: Associated User
-            // 6: User
-            // 7: System Program
-            // 8: Token Program
-            // 9: Creator Vault
-            // 10: Event Authority
-            // 11: Program
-            // 12: Global Volume Accumulator
-            // 13: User Volume Accumulator
-            // 14: Fee Config
-            // 15: Fee Program
-            let (bonding_curve_v2, _) = Pubkey::find_program_address(
-                &[b"bonding-curve-v2", params.output_token.address.as_ref()],
-                &pumpf_functions::accounts::PUMPFUN,
-            );
-
-            let mut buy_accounts: Vec<AccountMeta> = vec![
+            let buy_accounts: Vec<AccountMeta> = vec![
                 constants::PUMPFUN_GLOBAL_ACCOUNT_META,
-                fee_recipient_meta,
-                AccountMeta::new_readonly(params.output_token.address, false),
-                AccountMeta::new(bonding_curve_addr, false),
-                AccountMeta::new(associated_bonding_curve, false),
-                AccountMeta::new(user_token_account, false),
-                AccountMeta::new(params.user_wallet, true),
-                common::constants::SYSTEM_PROGRAM_META,
+                AccountMeta::new_readonly(base_mint, false),
+                AccountMeta::new_readonly(quote_mint, false),
                 token_program_meta,
+                quote_token_program_meta,
+                common::constants::ASSOCIATED_TOKEN_PROGRAM_META,
+                fee_recipient_meta,
+                AccountMeta::new(associated_quote_fee_recipient, false),
+                constants::buyback_fee_recipient_meta(buyback_fee_recipient),
+                AccountMeta::new(associated_quote_buyback_fee_recipient, false),
+                AccountMeta::new(bonding_curve_addr, false),
+                AccountMeta::new(associated_base_bonding_curve, false),
+                AccountMeta::new(associated_quote_bonding_curve, false),
+                AccountMeta::new(params.user_wallet, true),
+                AccountMeta::new(associated_base_user, false),
+                AccountMeta::new(associated_quote_user, false),
                 AccountMeta::new(creator_vault_pda, false),
-                constants::PUMPFUN_EVENT_AUTHORITY_META,
-                constants::PUMPFUN_META,
-                AccountMeta::new(global_volume_accumulator, false),
+                AccountMeta::new(associated_creator_vault, false),
+                AccountMeta::new_readonly(sharing_config, false),
+                AccountMeta::new_readonly(global_volume_accumulator, false),
                 AccountMeta::new(user_volume_accumulator, false),
+                AccountMeta::new(associated_user_volume_accumulator, false),
                 constants::PUMPFUN_FEE_CONFIG_META,
                 constants::PUMPFUN_FEE_PROGRAM_META,
+                common::constants::SYSTEM_PROGRAM_META,
+                constants::PUMPFUN_EVENT_AUTHORITY_META,
+                constants::PUMPFUN_META,
             ];
-            buy_accounts.push(AccountMeta::new_readonly(bonding_curve_v2, false));
-            buy_accounts.push(constants::buyback_fee_recipient_meta(buyback_fee_recipient));
 
             instructions.push(Instruction::new_with_bytes(
                 Self::get_program_id(),
@@ -320,116 +411,52 @@ impl BuildSwapInstruction for PumpfunPoolState {
             Ok(instructions)
         } else {
             // ========================================
-            // SELL: Token -> SOL
+            // SELL: Token -> Quote
             // ========================================
-            // Calculate expected SOL output
-            let sol_amount = get_sell_sol_amount_from_token_amount(
+            // Calculate expected quote output
+            let quote_amount = get_sell_sol_amount_from_token_amount(
                 self.virtual_token_reserves as u128,
                 self.virtual_sol_reserves as u128,
                 self.creator,
                 params.input_amount,
             );
-            // Calculate minimum SOL output with slippage
-            let min_sol_output = functions::calculate_slippage(sol_amount, params.slippage_bps)?;
-            // Get bonding curve PDA
-            let bonding_curve_addr = if self.address == Pubkey::default() {
-                pumpf_functions::get_bonding_curve_pda(&params.input_token.address)
-                    .ok_or("Failed to get bonding curve PDA".to_string())?
-            } else {
-                self.address
-            };
-
-            // Convert Address types to anchor_lang Pubkey for compatibility
-            let user_wallet_anchor = functions::to_pubkey(&params.user_wallet);
-            let input_mint_anchor = functions::to_pubkey(&params.input_token.address);
-            let bonding_curve_anchor = functions::to_pubkey(&bonding_curve_addr);
-            // Use the token_program we determined earlier
-            let token_program_anchor = functions::to_pubkey(&token_program);
-
-            // Get associated token accounts
-            let associated_bonding_curve_anchor =
-                spl_associated_token_account::get_associated_token_address_with_program_id(
-                    &bonding_curve_anchor,
-                    &input_mint_anchor,
-                    &token_program_anchor,
-                );
-            let user_token_account_anchor =
-                spl_associated_token_account::get_associated_token_address_with_program_id(
-                    &user_wallet_anchor,
-                    &input_mint_anchor,
-                    &token_program_anchor,
-                );
-
-            // Convert back to Address for AccountMeta
-            let associated_bonding_curve = functions::to_address(&associated_bonding_curve_anchor);
-            let user_token_account = functions::to_address(&user_token_account_anchor);
-
-            // ========================================
-            // Build instructions
-            // ========================================
-            let mut instructions = Vec::with_capacity(2);
-
-            // Create ATA using common function
-            instructions.push(functions::create_ata_instruction(
-                params.user_wallet,
-                user_token_account,
-                params.input_token.address,
-                is_token_2022,
-            ));
-            // Derive user_volume_accumulator from PumpFun Program ID
-            let (_user_volume_accumulator, _) = Pubkey::find_program_address(
-                &[b"user_volume_accumulator", params.user_wallet.as_ref()],
-                &pumpf_functions::accounts::PUMPFUN,
-            );
-
-            // Derive global_volume_accumulator from PumpFun Program ID
-            let (_global_volume_accumulator, _) = Pubkey::find_program_address(
-                &[b"global_volume_accumulator"],
-                &pumpf_functions::accounts::PUMPFUN,
-            );
+            let min_quote_output =
+                functions::calculate_slippage(quote_amount, params.slippage_bps)?;
 
             // Build instruction data (8 byte discriminator + 8 byte amount + 8 byte min output)
             let mut sell_data = [0u8; 24];
-            sell_data[..8].copy_from_slice(&[51, 230, 133, 164, 1, 127, 131, 173]); // Sell method ID
+            sell_data[..8].copy_from_slice(&SELL_V2_DISCRIMINATOR);
             sell_data[8..16].copy_from_slice(&params.input_amount.to_le_bytes());
-            sell_data[16..24].copy_from_slice(&min_sol_output.to_le_bytes());
+            sell_data[16..24].copy_from_slice(&min_quote_output.to_le_bytes());
 
-            // Account Structure for Standard Sell (Post-Migration):
-            // 0..7: Standard
-            // 8: Associated Token Program
-            // 9: Token Program
-            // 10: Creator Vault
-            // ...
-            let (bonding_curve_v2, _) = Pubkey::find_program_address(
-                &[b"bonding-curve-v2", params.input_token.address.as_ref()],
-                &pumpf_functions::accounts::PUMPFUN,
-            );
-
-            let mut sell_accounts: Vec<AccountMeta> = vec![
+            let sell_accounts: Vec<AccountMeta> = vec![
                 constants::PUMPFUN_GLOBAL_ACCOUNT_META,
-                fee_recipient_meta,
-                AccountMeta::new_readonly(params.input_token.address, false),
-                AccountMeta::new(bonding_curve_addr, false),
-                AccountMeta::new(associated_bonding_curve, false),
-                AccountMeta::new(user_token_account, false),
-                AccountMeta::new(params.user_wallet, true),
-                common::constants::SYSTEM_PROGRAM_META,
-                AccountMeta::new(creator_vault_pda, false),
+                AccountMeta::new_readonly(base_mint, false),
+                AccountMeta::new_readonly(quote_mint, false),
                 token_program_meta,
-                constants::PUMPFUN_EVENT_AUTHORITY_META,
-                constants::PUMPFUN_META,
+                quote_token_program_meta,
+                common::constants::ASSOCIATED_TOKEN_PROGRAM_META,
+                fee_recipient_meta,
+                AccountMeta::new(associated_quote_fee_recipient, false),
+                constants::buyback_fee_recipient_meta(buyback_fee_recipient),
+                AccountMeta::new(associated_quote_buyback_fee_recipient, false),
+                AccountMeta::new(bonding_curve_addr, false),
+                AccountMeta::new(associated_base_bonding_curve, false),
+                AccountMeta::new(associated_quote_bonding_curve, false),
+                AccountMeta::new(params.user_wallet, true),
+                AccountMeta::new(associated_base_user, false),
+                AccountMeta::new(associated_quote_user, false),
+                AccountMeta::new(creator_vault_pda, false),
+                AccountMeta::new(associated_creator_vault, false),
+                AccountMeta::new_readonly(sharing_config, false),
+                AccountMeta::new(user_volume_accumulator, false),
+                AccountMeta::new(associated_user_volume_accumulator, false),
                 constants::PUMPFUN_FEE_CONFIG_META,
                 constants::PUMPFUN_FEE_PROGRAM_META,
+                common::constants::SYSTEM_PROGRAM_META,
+                constants::PUMPFUN_EVENT_AUTHORITY_META,
+                constants::PUMPFUN_META,
             ];
-            if self.is_cashback {
-                let (user_volume_accumulator, _) = Pubkey::find_program_address(
-                    &[b"user_volume_accumulator", params.user_wallet.as_ref()],
-                    &pumpf_functions::accounts::PUMPFUN,
-                );
-                sell_accounts.push(AccountMeta::new(user_volume_accumulator, false));
-            }
-            sell_accounts.push(AccountMeta::new_readonly(bonding_curve_v2, false));
-            sell_accounts.push(constants::buyback_fee_recipient_meta(buyback_fee_recipient));
 
             instructions.push(Instruction::new_with_bytes(
                 Self::get_program_id(),

@@ -22,6 +22,9 @@ target/
 
 # Env
 .env
+.env.*
+!.env.example
+!.env.*.example
 
 # Config
 config.yaml
@@ -30,3 +33,19 @@ logs
 *.log
 debug_dlmm
 *.txt
+
+# Local agent/tooling state
+.agent/
+.agents/
+
+# Local deployment material
+aws/
+k8s-manifests/aggregator-sol-*.yaml
+k8s-manifests/arbitrum-stack.yaml
+k8s-manifests/postgres.yaml
+
+# Foundry / Solidity generated artifacts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/

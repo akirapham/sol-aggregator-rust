@@ -16,8 +16,8 @@ pub struct AuthConfig {
 impl AuthConfig {
     pub fn from_env() -> Self {
         let username = std::env::var("DASHBOARD_USERNAME").unwrap_or_else(|_| "admin".to_string());
-        let password =
-            std::env::var("DASHBOARD_PASSWORD").unwrap_or_else(|_| "password".to_string());
+        let password = std::env::var("DASHBOARD_PASSWORD")
+            .expect("DASHBOARD_PASSWORD must be set; refusing to start dashboard auth with a default password");
 
         log::info!("Dashboard auth configured for user: {}", username);
 

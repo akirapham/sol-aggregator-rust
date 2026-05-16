@@ -948,6 +948,64 @@ async fn test_quote_endpoint_selects_pumpswap_when_dlmm_pool_also_exists() {
     );
 }
 
+#[tokio::test]
+async fn test_quote_endpoint_ignores_incomplete_dlmm_quote_for_pump_token_sell() {
+    let (pool_manager, config) = create_test_setup(vec!["pumpswap", "meteora_dlmm"]).await;
+
+    let token_mint = Pubkey::from_str("EtFGtydo45GxPqe6md9i1v43tCydKWFNQc35LtPSpump").unwrap();
+    let pumpswap_pool = Pubkey::from_str("3eZZeSWonS4Phu1nVY6wsCQWftajKrgEeLiai63f9u9s").unwrap();
+    let dlmm_pool = Pubkey::from_str("Uc6fNMo3CboUfvMq8njCq4KHPtM2RhAArz2wAHirHat").unwrap();
+
+    let rpc_client = pool_manager.get_rpc_client();
+    let pumpswap_state = fetch_pumpswap_pool_state(&rpc_client, pumpswap_pool).await;
+    let dlmm_state = fetch_dlmm_pool_state(&rpc_client, dlmm_pool).await;
+
+    pool_manager.inject_token(wsol_token()).await;
+    pool_manager
+        .inject_token(Token {
+            address: token_mint,
+            symbol: Some("PUMP".to_string()),
+            name: Some("Pump Token".to_string()),
+            decimals: 6,
+            is_token_2022: true,
+            logo_uri: None,
+        })
+        .await;
+    let sell_amount = 2_525_139_415;
+    let dlmm_output = dlmm_state
+        .calculate_output_amount(&token_mint, sell_amount, &*pool_manager)
+        .await;
+    assert_eq!(dlmm_output, 0);
+
+    pool_manager.inject_pool(pumpswap_state).await;
+    pool_manager.inject_pool(dlmm_state).await;
+
+    let aggregator = Arc::new(DexAggregator::new(config, pool_manager.clone()));
+    let state = Arc::new(AppState {
+        aggregator,
+        rpc_client,
+        arbitrage_config: None,
+        arbitrage_monitor: None,
+    });
+
+    let request = QuoteRequest {
+        input_token: token_mint.to_string(),
+        output_token: wsol_token().address.to_string(),
+        user_wallet: "762eoqKc7oHxzvYeE4DrRP5VbWj5bYi7mxitG1DdGh4d".to_string(),
+        input_amount: sell_amount,
+        slippage_bps: 1000,
+    };
+
+    let response =
+        crate::api::handlers::get_quote(axum::extract::State(state), axum::extract::Query(request))
+            .await
+            .expect("Quote should route Pump token sells through indexed PumpSwap pool");
+
+    assert!(response.0.output_amount > 0);
+    assert_eq!(response.0.routes[0].dex, DexType::PumpFunSwap);
+    assert_eq!(response.0.routes[0].pool_address, pumpswap_pool.to_string());
+}
+
 async fn fetch_pumpswap_pool_state(
     rpc_client: &Arc<solana_client::nonblocking::rpc_client::RpcClient>,
     pool_address: Pubkey,

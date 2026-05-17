@@ -317,22 +317,25 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
         let amount_out =
             common_functions::calculate_slippage(estimated_output, params.slippage_bps)?;
 
+        let token_a_program = if self.token_a_flag == 1 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id()
+        };
+        let token_b_program = if self.token_b_flag == 1 {
+            spl_token_2022::id()
+        } else {
+            spl_token::id()
+        };
+
         let protocol_params = Box::new(MeteoraDammV2Params {
             pool: self.address,
             token_a_vault: self.token_a_vault,
             token_b_vault: self.token_b_vault,
             token_a_mint: self.token_a_mint,
             token_b_mint: self.token_b_mint,
-            token_a_program: if self.token_a_flag == 1 {
-                spl_token_2022::id().to_bytes().into()
-            } else {
-                spl_token::id().to_bytes().into()
-            },
-            token_b_program: if self.token_b_flag == 1 {
-                spl_token_2022::id().to_bytes().into()
-            } else {
-                spl_token::id().to_bytes().into()
-            },
+            token_a_program: token_a_program.to_bytes().into(),
+            token_b_program: token_b_program.to_bytes().into(),
         });
 
         let trade_type = if params.input_token.address == self.token_b_mint {
@@ -388,7 +391,7 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
             with_tip: false,
             create_input_mint_ata: false,
             close_input_mint_ata: false,
-            create_output_mint_ata: true,
+            create_output_mint_ata: false,
             close_output_mint_ata: false,
             fixed_output_amount: Some(amount_out),
             gas_fee_strategy: GasFeeStrategy::new(),
@@ -413,39 +416,39 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
         );
 
         // Patch Instructions: Replace Derived ATAs
-        // 1. Output ATA
-        let dummy_output_ata_anchor = get_associated_token_address_with_program_id(
-            &to_anchor(dummy_payer.pubkey().to_bytes()), // Anchor
-            &to_anchor(params.output_token.address.to_bytes()), // Anchor
-            &to_anchor(output_program_id.to_bytes()),    // Anchor
-        );
         let user_output_ata_anchor = get_associated_token_address_with_program_id(
             &to_anchor(params.user_wallet.to_bytes()),
             &to_anchor(params.output_token.address.to_bytes()),
             &to_anchor(output_program_id.to_bytes()),
         );
 
-        let dummy_output_ata = to_sdk(dummy_output_ata_anchor.to_bytes());
         let user_output_ata = to_sdk(user_output_ata_anchor.to_bytes());
 
-        replace_key_in_instructions(&mut instructions, &dummy_output_ata, &user_output_ata);
-
-        // 2. Input ATA
-        let dummy_input_ata_anchor = get_associated_token_address_with_program_id(
-            &to_anchor(dummy_payer.pubkey().to_bytes()),
-            &to_anchor(params.input_token.address.to_bytes()),
-            &to_anchor(input_program_id.to_bytes()),
-        );
         let user_input_ata_anchor = get_associated_token_address_with_program_id(
             &to_anchor(params.user_wallet.to_bytes()),
             &to_anchor(params.input_token.address.to_bytes()),
             &to_anchor(input_program_id.to_bytes()),
         );
 
-        let dummy_input_ata = to_sdk(dummy_input_ata_anchor.to_bytes());
         let user_input_ata = to_sdk(user_input_ata_anchor.to_bytes());
 
-        replace_key_in_instructions(&mut instructions, &dummy_input_ata, &user_input_ata);
+        for token_program in [token_a_program, token_b_program] {
+            let dummy_output_ata_anchor = get_associated_token_address_with_program_id(
+                &to_anchor(dummy_payer.pubkey().to_bytes()),
+                &to_anchor(params.output_token.address.to_bytes()),
+                &to_anchor(token_program.to_bytes()),
+            );
+            let dummy_output_ata = to_sdk(dummy_output_ata_anchor.to_bytes());
+            replace_key_in_instructions(&mut instructions, &dummy_output_ata, &user_output_ata);
+
+            let dummy_input_ata_anchor = get_associated_token_address_with_program_id(
+                &to_anchor(dummy_payer.pubkey().to_bytes()),
+                &to_anchor(params.input_token.address.to_bytes()),
+                &to_anchor(token_program.to_bytes()),
+            );
+            let dummy_input_ata = to_sdk(dummy_input_ata_anchor.to_bytes());
+            replace_key_in_instructions(&mut instructions, &dummy_input_ata, &user_input_ata);
+        }
 
         // Handle WSOL Wrapping/Unwrapping logic
         let mut final_instructions = Vec::new();
@@ -457,6 +460,26 @@ impl BuildSwapInstruction for MeteoraDammV2PoolState {
             final_instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
                 &params.user_wallet,
                 params.input_amount,
+            ));
+        } else {
+            final_instructions.push(common_functions::create_ata_instruction(
+                params.user_wallet,
+                user_input_ata,
+                params.input_token.address,
+                input_program_id == spl_token_2022::id(),
+            ));
+        }
+
+        if is_output_wsol {
+            final_instructions.extend(
+                sol_trade_sdk::trading::common::wsol_manager::create_wsol_ata(&params.user_wallet),
+            );
+        } else {
+            final_instructions.push(common_functions::create_ata_instruction(
+                params.user_wallet,
+                user_output_ata,
+                params.output_token.address,
+                output_program_id == spl_token_2022::id(),
             ));
         }
 

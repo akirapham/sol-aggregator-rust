@@ -73,6 +73,45 @@ impl MeteoraDammV2PoolRaw {
     }
 }
 
+fn damm_v2_pool_state(pool_address: Pubkey, raw_pool: &MeteoraDammV2PoolRaw) -> PoolState {
+    PoolState::MeteoraDammV2(Box::new(crate::pool_data_types::MeteoraDammV2PoolState {
+        slot: u64::MAX,
+        transaction_index: Some(0),
+        address: pool_address,
+        pool_fees: raw_pool.pool_fees.clone(),
+        token_a_mint: raw_pool.token_a_mint,
+        token_b_mint: raw_pool.token_b_mint,
+        token_a_vault: raw_pool.token_a_vault,
+        token_b_vault: raw_pool.token_b_vault,
+        whitelisted_vault: raw_pool.whitelisted_vault,
+        partner: raw_pool.partner,
+        liquidity: raw_pool.liquidity,
+        protocol_a_fee: raw_pool.protocol_a_fee,
+        protocol_b_fee: raw_pool.protocol_b_fee,
+        partner_a_fee: raw_pool.partner_a_fee,
+        partner_b_fee: raw_pool.partner_b_fee,
+        sqrt_min_price: raw_pool.sqrt_min_price,
+        sqrt_max_price: raw_pool.sqrt_max_price,
+        sqrt_price: raw_pool.sqrt_price,
+        activation_point: raw_pool.activation_point,
+        activation_type: raw_pool.activation_type,
+        pool_status: raw_pool.pool_status,
+        token_a_flag: raw_pool.token_a_flag,
+        token_b_flag: raw_pool.token_b_flag,
+        collect_fee_mode: raw_pool.collect_fee_mode,
+        pool_type: raw_pool.pool_type,
+        version: raw_pool.version,
+        fee_a_per_liquidity: raw_pool.fee_a_per_liquidity,
+        fee_b_per_liquidity: raw_pool.fee_b_per_liquidity,
+        permanent_lock_liquidity: raw_pool.permanent_lock_liquidity,
+        metrics: raw_pool.metrics.clone(),
+        creator: raw_pool.creator,
+        reward_infos: raw_pool.reward_infos.clone(),
+        liquidity_usd: 1_000_000.0,
+        last_updated: u64::MAX,
+    }))
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ProtocolFeeRaw {
@@ -988,6 +1027,93 @@ async fn test_meteora_damm_quote_simulation() {
     }
 
     println!("Simulation successful! Logs: {:#?}", result.value.logs);
+}
+
+#[tokio::test]
+async fn test_meteora_damm_quote_simulation_token_2022_output() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .is_test(true)
+        .try_init();
+
+    let (pool_manager, _config) = create_test_setup(vec!["meteora_dammv2"]).await;
+
+    let pool_address = Pubkey::from_str("3ncbq8cchAwZvU3527GU9QV8s8cwH1ocYCFKeihoMgtq").unwrap();
+    let token_mint = Pubkey::from_str("Fsw3qwgU6tVKzRXmmKSaRdi4wbMsYaRf81F36xLD4JN4").unwrap();
+
+    let rpc_client = pool_manager.get_rpc_client();
+    let account = rpc_client
+        .get_account(&pool_address)
+        .await
+        .expect("Failed to fetch pool account");
+    let raw_pool = MeteoraDammV2PoolRaw::try_from_slice(&account.data)
+        .expect("Failed to deserialize DAMM V2 pool");
+
+    pool_manager
+        .inject_pool(damm_v2_pool_state(pool_address, &raw_pool))
+        .await;
+
+    pool_manager.inject_token(wsol_token()).await;
+    let output_token = Token {
+        address: token_mint,
+        symbol: Some("TEST".to_string()),
+        name: Some("Meteora DAMM V2 Token-2022 Token".to_string()),
+        decimals: 6,
+        is_token_2022: true,
+        logo_uri: None,
+    };
+    pool_manager.inject_token(output_token.clone()).await;
+
+    let payer = Pubkey::from_str("DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm").unwrap();
+    let swap_params = crate::types::SwapParams {
+        input_token: wsol_token(),
+        output_token,
+        input_amount: 100_000_000,
+        slippage_bps: 300,
+        user_wallet: payer,
+        priority: crate::types::ExecutionPriority::Medium,
+    };
+
+    let pool = pool_manager.get_pool(&pool_address).unwrap();
+    let instructions = pool
+        .build_swap_instruction(&swap_params, &*pool_manager, None)
+        .await
+        .expect("Failed to build swap instruction");
+
+    let recent_blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+    let mut message = solana_sdk::message::Message::new(&instructions, Some(&payer));
+    message.recent_blockhash = recent_blockhash;
+    let transaction = Transaction::new_unsigned(message);
+
+    let config = RpcSimulateTransactionConfig {
+        sig_verify: false,
+        replace_recent_blockhash: true,
+        commitment: Some(CommitmentConfig::confirmed()),
+        encoding: None,
+        accounts: None,
+        min_context_slot: None,
+        inner_instructions: true,
+    };
+
+    let result = rpc_client
+        .simulate_transaction_with_config(&transaction, config)
+        .await
+        .expect("Simulation failed");
+
+    if let Some(logs) = &result.value.logs {
+        assert!(
+            !logs
+                .iter()
+                .any(|log| log.contains("AccountNotInitialized")
+                    || log.contains("Error Number: 3012")),
+            "Simulation should not fail account initialization after explicit ATA setup: {logs:#?}"
+        );
+    }
+
+    if let Some(err) = result.value.err {
+        println!("Simulation Logs: {:#?}", result.value.logs);
+        panic!("Simulation error: {:?}", err);
+    }
 }
 
 #[tokio::test]

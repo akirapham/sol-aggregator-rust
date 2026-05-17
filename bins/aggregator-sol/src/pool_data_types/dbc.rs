@@ -505,14 +505,38 @@ impl BuildSwapInstruction for DbcPoolState {
 
         // Build instruction list with ATA creation
         let mut instructions = Vec::new();
+        let input_is_wsol = input_mint == crate::constants::WSOL_PUBKEY;
+        let output_is_wsol = output_mint == crate::constants::WSOL_PUBKEY;
+
+        if input_is_wsol {
+            instructions.extend(sol_trade_sdk::trading::common::handle_wsol(
+                &params.user_wallet,
+                params.input_amount,
+            ));
+        }
 
         // Determine output token details
+        let input_token_program_id = if input_mint == base_mint {
+            base_program_pubkey
+        } else {
+            quote_program_pubkey
+        };
         let output_token_program_id = if output_mint == base_mint {
             base_program_pubkey
         } else {
             quote_program_pubkey
         };
+        let is_input_token_2022 = input_token_program_id == spl_token_2022::id();
         let is_output_token_2022 = output_token_program_id == spl_token_2022::id();
+
+        if !input_is_wsol {
+            instructions.push(common_functions::create_ata_instruction(
+                params.user_wallet,
+                input_token_account,
+                input_mint,
+                is_input_token_2022,
+            ));
+        }
 
         // Create ATA for output token if needed (idempotent)
         instructions.push(common_functions::create_ata_instruction(
@@ -523,6 +547,12 @@ impl BuildSwapInstruction for DbcPoolState {
         ));
 
         instructions.push(swap_ix);
+
+        if output_is_wsol {
+            instructions.extend(sol_trade_sdk::trading::common::close_wsol(
+                &params.user_wallet,
+            ));
+        }
 
         Ok(instructions)
     }
